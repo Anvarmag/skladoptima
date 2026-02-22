@@ -1,0 +1,70 @@
+// Prisma schema — описывает базу данных и её модели
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Используем SQLite
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// Модель пользователя
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  stores    Store[]
+  createdAt DateTime @default(now())
+}
+
+// Модель магазина (Store)
+model Store {
+  id              String    @id @default(uuid())
+  name            String
+  
+  // Wildberries
+  wbToken         String?
+  wbWarehouseId   String?
+  
+  // Ozon
+  ozonClientId    String?
+  ozonApiKey      String?
+  ozonWarehouseId String?
+
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+  products        Product[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// Модель товара
+model Product {
+  id           String   @id @default(uuid())
+  sku          String   // Больше не уникален глобально
+  barcode      String?
+  name         String
+  stock_master Int      @default(0)
+  stock_wb     Int      @default(0)
+  stock_ozon   Int      @default(0)
+  storeId      String
+  store        Store    @relation(fields: [storeId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // SKU уникален только в рамках одного магазина
+  @@unique([sku, storeId])
+}
+
+// Настройки (устарело, перейдет в Store, но пока оставим для совместимости миграции если нужно)
+model Settings {
+  id              String   @id @default("global")
+  wbToken         String?
+  wbWarehouseId   String?
+  ozonClientId    String?
+  ozonApiKey      String?
+  ozonWarehouseId String?
+  updatedAt       DateTime @updatedAt
+}

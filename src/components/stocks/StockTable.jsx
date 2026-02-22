@@ -1,12 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import useStocksStore from '../../store/stocksStore';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { ArrowUpDown, Search, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { useToast } from '../ui/Toast';
 
 export const StockTable = () => {
-    const { items, updateItem, visibleColumns, viewSettings, deleteItem, deleteMultipleItems } = useStocksStore();
+    const toast = useToast();
+    const { items, updateItem, visibleColumns, viewSettings, deleteItem, deleteMultipleItems, loadProducts, updateStockOnServer } = useStocksStore();
+
+    // Загружаем товары с бэкенда при монтировании компонента
+    useEffect(() => {
+        loadProducts(toast);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
     const [search, setSearch] = useState('');
     const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
     const [page, setPage] = useState(1);
@@ -100,7 +107,16 @@ export const StockTable = () => {
         if (editingCell) {
             let val = Number(editValue);
             if (val < 0) val = 0;
+
+            // 1. Обновляем локальный стейт сразу (optimistic update)
             updateItem(editingCell.barcode, editingCell.field, val);
+
+            // 2. Находим sku товара для PUT-запроса
+            const item = items.find(i => i.barcode === editingCell.barcode);
+            if (item?.sellerSku) {
+                updateStockOnServer(item.sellerSku, editingCell.field, val, toast);
+            }
+
             setEditingCell(null);
         }
     };
@@ -193,10 +209,10 @@ export const StockTable = () => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                        {currentItems.length === 0 ? (
+                        {(!currentItems || currentItems.length === 0) ? (
                             <tr>
                                 <td colSpan={10} className="px-6 py-12 text-center text-gray-400">
-                                    No data found
+                                    Товары не найдены
                                 </td>
                             </tr>
                         ) : (

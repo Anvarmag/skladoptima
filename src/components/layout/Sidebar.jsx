@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Package, Settings, Box } from 'lucide-react';
+import { Package, Settings, Box, Store } from 'lucide-react';
 import { cn } from '../../utils/cn';
 
 export const Sidebar = () => {
@@ -8,6 +8,7 @@ export const Sidebar = () => {
 
     const navItems = [
         { path: '/app/stocks', label: 'Остатки', icon: Package },
+        { path: '/app/stores', label: 'Магазины', icon: Store },
         { path: '/app/settings', label: 'Настройки', icon: Settings },
     ];
 

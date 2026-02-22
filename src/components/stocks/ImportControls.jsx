@@ -3,11 +3,13 @@ import { Upload, FileDown, Trash2, FileSpreadsheet } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { parseExcel, exportExcel } from '../../utils/xlsxHelpers';
 import useStocksStore from '../../store/stocksStore';
+import { useToast } from '../ui/Toast';
 
 export const ImportControls = () => {
     const fileInputRef = useRef(null);
     const [loading, setLoading] = useState(false);
-    const { addItems, items, clearData } = useStocksStore();
+    const { items, clearData, syncProducts } = useStocksStore();
+    const toast = useToast();
 
     const handleFileUpload = async (e) => {
         const file = e.target.files?.[0];
@@ -16,11 +18,11 @@ export const ImportControls = () => {
         setLoading(true);
         try {
             const data = await parseExcel(file);
-            addItems(data);
-            // Could add toast here
+            // Синхронизируем импортированные данные с базой бэкенда через store
+            await syncProducts(data, toast);
         } catch (error) {
-            console.error("Import failed", error);
-            alert("Import failed: " + error.message);
+            console.error('Import failed', error);
+            toast('Ошибка импорта: ' + error.message, 'error');
         } finally {
             setLoading(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -32,7 +34,8 @@ export const ImportControls = () => {
         exportExcel(items);
     };
 
-    const loadDemoData = () => {
+    const loadDemoData = async () => {
+        setLoading(true);
         const demoData = Array.from({ length: 50 }).map((_, i) => ({
             barcode: `204${Math.floor(10000000 + Math.random() * 90000000)}`,
             stock: Math.floor(Math.random() * 100),
@@ -43,7 +46,10 @@ export const ImportControls = () => {
             wb: Math.floor(Math.random() * 20),
             ozon: Math.floor(Math.random() * 10),
         }));
-        addItems(demoData);
+
+        // Синхронизируем с базой данных через store
+        await syncProducts(demoData, toast);
+        setLoading(false);
     };
 
     return (
@@ -62,16 +68,17 @@ export const ImportControls = () => {
                 className="shadow-sm gap-2"
             >
                 <Upload size={18} />
-                {loading ? 'Importing...' : 'Import XLSX'}
+                {loading ? 'Импорт...' : 'Import XLSX'}
             </Button>
 
             <Button
                 variant="secondary"
                 onClick={loadDemoData}
+                disabled={loading}
                 className="gap-2"
             >
                 <FileSpreadsheet size={18} className="text-green-600" />
-                Load Demo
+                {loading ? 'Загрузка...' : 'Load Demo'}
             </Button>
 
             <div className="h-6 w-px bg-gray-200 mx-2" />
@@ -79,7 +86,7 @@ export const ImportControls = () => {
             <Button
                 variant="secondary"
                 onClick={handleExport}
-                disabled={items.length === 0}
+                disabled={items.length === 0 || loading}
                 className="gap-2"
             >
                 <FileDown size={18} />
