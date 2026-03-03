@@ -1,0 +1,108 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Product {
+  id        String    @id @default(uuid())
+  sku       String    @unique
+  name      String
+  photo     String?   // URL or path to uploaded file
+  total     Int       @default(0)
+  reserved  Int       @default(0)
+
+  // Marketplace barcodes for matching
+  wbBarcode String?   @unique
+
+  // Marketplace cached stock
+  ozonFbs   Int       @default(0)
+  ozonFbo   Int       @default(0)
+  wbFbs     Int       @default(0)
+  wbFbo     Int       @default(0)
+
+  deletedAt DateTime? // Soft delete
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Marketplace configuration for actual integration
+}
+
+enum ActionType {
+  PRODUCT_CREATED
+  PRODUCT_UPDATED
+  PRODUCT_DELETED
+  STOCK_ADJUSTED
+  ORDER_DEDUCTED
+}
+
+// Track processed orders to prevent double-deduction
+model MarketplaceOrder {
+  id                 String   @id @default(uuid())
+  marketplaceOrderId String   @unique // WB Order ID or Ozon Posting Number
+  marketplace        String   // "WB" or "OZON"
+  productSku         String?
+  productNames       String?  // Названия товаров
+  quantity           Int
+  
+  status             String?  // Статус из МП
+  totalAmount        Float?   // Сумма заказа
+  currency           String?  @default("RUB")
+  shipmentDate       DateTime? // Дата отгрузки
+  marketplaceCreatedAt DateTime? // Дата создания в МП
+  deliveryMethod     String?  // Способ доставки
+  
+  createdAt          DateTime @default(now())
+  processedAt        DateTime @default(now())
+}
+
+model AuditLog {
+  id          String     @id @default(uuid())
+  actionType  ActionType
+  createdAt   DateTime   @default(now())
+  
+  productId   String?
+  productSku  String?
+  
+  beforeTotal Int?
+  afterTotal  Int?
+  delta       Int?
+  
+  beforeName  String?
+  afterName   String?
+  
+  actorEmail  String
+  note        String?
+}
+
+// ==========================================
+// PLACEHOLDERS FOR FUTURE (Not used in MVP)
+// ==========================================
+
+model MarketplaceSettings {
+  id              String   @id @default(dbgenerated("1")) @unique
+  ozonClientId    String?
+  ozonApiKey      String?
+  ozonWarehouseId String?
+  wbApiKey        String?
+  wbStatApiKey    String?
+  wbWarehouseId   String?
+
+  updatedAt DateTime @updatedAt
+}
+
+
+// Removed ProductMarketplaceLink for MVP since we use direct columns

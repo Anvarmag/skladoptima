@@ -1,0 +1,26 @@
+node_modules
+dist
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Uploaded files
+uploads/*
+!uploads/.gitkeep
+
+# One-off debug / migration scripts
+test-fbo.ts
+test-fbo2.ts
+test-ozon-fbo.ts
+fix-ozon-dates.ts
+update-pwd.ts
+check-users.ts
+
+# Prisma generated
+/generated/prisma
+
+# Logs
+logs/
+*.log

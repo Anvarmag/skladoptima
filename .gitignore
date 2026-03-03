@@ -1,0 +1,57 @@
+# Root-level .gitignore for Sklad Optima monorepo
+
+# ─── Secrets – NEVER commit ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.npm/
+
+# ─── Build outputs ────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+
+# ─── Uploads (user files – use object storage in prod) ────────────────────────
+apps/api/uploads/*
+!apps/api/uploads/.gitkeep
+
+# ─── Test / debug scripts (contain sensitive API calls) ──────────────────────
+apps/api/test-fbo.ts
+apps/api/test-fbo2.ts
+apps/api/test-ozon-fbo.ts
+apps/api/fix-ozon-dates.ts
+apps/api/update-pwd.ts
+apps/api/check-users.ts
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+
+# ─── OS / Editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.sw?
+
+# ─── Prisma ───────────────────────────────────────────────────────────────────
+prisma/dev.db
+prisma/dev.db-*
+apps/api/generated/prisma
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+# Don't ignore docker-compose overrides you use locally if they have secrets
+docker-compose.override.yml
+docker-compose.resolved.yml
+logs_*.txt
