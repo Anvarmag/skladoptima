@@ -51,7 +51,7 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile
       args:
-        VITE_API_URL: "" # nginx proxies /api internally; no external URL needed
+        VITE_API_URL: "/api" # nginx proxies /api internally
     container_name: sklad_web
     restart: unless-stopped
     ports:

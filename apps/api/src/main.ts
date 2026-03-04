@@ -30,7 +30,7 @@ async function bootstrap() {
   const { isProd, prodList, devRegex } = buildAllowedOrigins();
 
   app.enableCors({
-    origin: (origin, callback) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       // same-origin / server-to-server запросы могут быть без Origin
       if (!origin) return callback(null, true);
 

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import axios from 'axios';
 
 // Configure global axios defaults
-axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || '/api';
 axios.defaults.withCredentials = true; // Send httpOnly cookies
 
 interface User {

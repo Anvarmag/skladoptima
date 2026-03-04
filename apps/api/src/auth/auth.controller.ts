@@ -14,12 +14,15 @@ export class AuthController {
         const user = await this.authService.validateUser(loginDto);
         const { access_token } = await this.authService.login(user);
 
-        // Set httpOnly cookie
+        const isProd = process.env.NODE_ENV === 'production';
+
+        // Cookie для авторизации
         res.cookie('Authentication', access_token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+            secure: isProd,                 // HTTPS только на проде
+            sameSite: isProd ? 'strict' : 'lax', // На локалке мягче
+            path: '/',
+            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
         });
 
         return { message: 'Logged in successfully', user };
@@ -30,8 +33,10 @@ export class AuthController {
     async logout(@Res({ passthrough: true }) res: any) {
         res.cookie('Authentication', '', {
             httpOnly: true,
+            path: '/',
             expires: new Date(0),
         });
+
         return { message: 'Logged out successfully' };
     }
 
