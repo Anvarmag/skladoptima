@@ -1,8 +1,23 @@
-import { NestFactory, Reflector } from '@nestjs/core';
+import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+
+function buildAllowedOrigins() {
+  const isProd = process.env.NODE_ENV === 'production';
+
+  // PROD: строго по env, можно через запятую
+  const prodList = (process.env.CORS_ORIGIN || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  // DEV: localhost/127.0.0.1 с любым портом
+  const devRegex = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+  return { isProd, prodList, devRegex };
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,26 +27,24 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  // ── CORS ──────────────────────────────────────────────────────────────────
-  // In prod, set CORS_ORIGIN to your exact frontend domain (no trailing slash).
-  // In dev, falls back to localhost:5173.
-  const isProd = process.env.NODE_ENV === 'production';
-  const allowedOrigins = isProd
-    ? (process.env.CORS_ORIGIN || '').split(',').map(o => o.trim()).filter(Boolean)
-    : ['http://localhost:5173', 'http://localhost:3000'];
+  const { isProd, prodList, devRegex } = buildAllowedOrigins();
 
   app.enableCors({
-    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error(`CORS: origin ${origin} not allowed`));
+    origin: (origin, callback) => {
+      // same-origin / server-to-server запросы могут быть без Origin
+      if (!origin) return callback(null, true);
+
+      if (!isProd) {
+        // DEV: разрешаем localhost/127.0.0.1 на любом порту
+        return callback(null, devRegex.test(origin));
       }
+
+      // PROD: только whitelisted домены
+      return callback(null, prodList.includes(origin));
     },
     credentials: true,
   });
 
-  // ── Validation ────────────────────────────────────────────────────────────
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -40,8 +53,11 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 3000;
+  const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
-  console.log(`[Sklad Optima] API running on port ${port} (${isProd ? 'production' : 'development'})`);
+  console.log(
+    `[Sklad Optima] API running on port ${port} (${isProd ? 'production' : 'development'})`,
+  );
 }
+
 bootstrap();
