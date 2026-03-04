@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Plus, Edit2, Archive, ArrowDownUp, Search, Package, RefreshCw } from 'lucide-react';
+import { Plus, Edit2, Archive, ArrowDownUp, Search, Package, RefreshCw, ImageDown } from 'lucide-react';
 
 interface Product {
     id: string;
@@ -83,8 +83,12 @@ export default function Products() {
             if (modalMode === 'create') {
                 data.append('initialTotal', formData.initialTotal);
                 await axios.post('/products', data);
+                // Auto-fetch photo from marketplace if no photo was uploaded
+                if (!formData.file) {
+                    try { await axios.post('/sync/metadata'); } catch { /* ignore */ }
+                }
             } else if (selectedProduct) {
-                await axios.put(`/products/${selectedProduct.id}`, data);
+                await axios.put(`/ products / ${selectedProduct.id} `, data);
             }
             setIsModalOpen(false);
             fetchProducts();
@@ -93,11 +97,26 @@ export default function Products() {
         }
     };
 
+    const [fetchingPhotos, setFetchingPhotos] = useState(false);
+    const handleFetchPhotos = async () => {
+        setFetchingPhotos(true);
+        try {
+            const res = await axios.post('/sync/metadata');
+            const updated = res.data?.updated ?? 0;
+            alert(updated > 0 ? `Обновлено фото: ${updated} ` : 'Новых фото не найдено');
+            fetchProducts();
+        } catch {
+            alert('Ошибка при подтягивании фото');
+        } finally {
+            setFetchingPhotos(false);
+        }
+    };
+
     const handleAdjust = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             if (!selectedProduct) return;
-            await axios.post(`/products/${selectedProduct.id}/stock-adjust`, {
+            await axios.post(`/ products / ${selectedProduct.id}/stock-adjust`, {
                 delta: adjustDelta,
                 note: 'Ручная корректировка',
             });
@@ -217,6 +236,15 @@ export default function Products() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                 <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Управление Товарами</h1>
                 <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={handleFetchPhotos}
+                        disabled={fetchingPhotos}
+                        className="inline-flex items-center px-3 sm:px-4 py-2 bg-white border border-slate-200 rounded-lg text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all hover:shadow-sm disabled:opacity-50"
+                    >
+                        <ImageDown className={`h-4 w-4 mr-1.5 ${fetchingPhotos ? 'animate-pulse' : ''}`} />
+                        <span className="hidden sm:inline">Подтянуть фото с МП</span>
+                        <span className="sm:hidden">Фото МП</span>
+                    </button>
                     <input
                         type="file"
                         id="wb-import-file"

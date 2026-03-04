@@ -755,32 +755,33 @@ export class SyncService implements OnModuleInit {
         if (products.length === 0) return { success: true, updated: 0 };
 
         let updatedCount = 0;
+        this.logger.log(`[Metadata] Starting photo sync for ${products.length} products`);
 
         // 1. WB Metadata (Photos)
         if (settings?.wbApiKey) {
             try {
-                // WB prefers batch of 100 for cards
-                for (let i = 0; i < products.length; i += 100) {
-                    const batch = products.slice(i, i + 100);
-                    // Filter those without photo or just update all
+                const res = await axios.post('https://content-api.wildberries.ru/content/v2/get/cards/list', {
+                    settings: { cursor: { limit: 100 }, filter: { withPhoto: -1 } }
+                }, {
+                    headers: { Authorization: settings.wbApiKey },
+                    timeout: 15_000
+                });
 
-                    const res = await axios.post('https://marketplace-api.wildberries.ru/content/v2/get/cards/list', {
-                        settings: { cursor: { limit: 100 }, filter: { withStocks: false } }
-                    }, {
-                        headers: { Authorization: settings.wbApiKey },
-                        timeout: 15_000
-                    });
+                const cards = res.data?.cards ?? res.data?.data ?? [];
+                this.logger.log(`[WB Metadata] Got ${cards.length} cards from WB. First 5 vendorCodes: ${cards.slice(0, 5).map((c: any) => c.vendorCode).join(', ')}`);
+                this.logger.log(`[WB Metadata] Our product SKUs: ${products.map(p => p.sku).join(', ')}`);
 
-                    const cards = res.data?.cards ?? [];
-                    for (const card of cards) {
-                        const product = products.find(p => p.sku === card.vendorCode);
-                        if (product && card.mediaFiles?.[0]) {
-                            await this.prisma.product.update({
-                                where: { id: product.id },
-                                data: { photo: card.mediaFiles[0] }
-                            });
-                            updatedCount++;
-                        }
+                for (const card of cards) {
+                    const vendorCode = card.vendorCode || card.nmID?.toString();
+                    const product = products.find(p => p.sku === vendorCode);
+                    const photoUrl = card.mediaFiles?.[0] || card.photos?.[0]?.big || card.photos?.[0]?.c246x328;
+                    if (product && photoUrl) {
+                        this.logger.log(`[WB Metadata] Match: ${product.sku}, photo=${product.photo ? 'EXISTS' : 'EMPTY'}, new photoUrl=${photoUrl.substring(0, 60)}`);
+                        await this.prisma.product.update({
+                            where: { id: product.id },
+                            data: { photo: photoUrl }
+                        });
+                        updatedCount++;
                     }
                 }
             } catch (e: any) {
@@ -791,28 +792,28 @@ export class SyncService implements OnModuleInit {
         // 2. Ozon Metadata (Photos)
         if (settings?.ozonApiKey && settings?.ozonClientId) {
             try {
-                for (let i = 0; i < products.length; i += 100) {
-                    const batch = products.slice(i, i + 100);
-                    const offerIds = batch.map(p => p.sku);
+                const offerIds = products.map(p => p.sku);
 
-                    const res = await axios.post('https://api-seller.ozon.ru/v4/product/info/attributes', {
-                        filter: { offer_id: offerIds, visibility: 'ALL' },
-                        limit: 100
-                    }, {
-                        headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
-                        timeout: 15_000
-                    });
+                const res = await axios.post('https://api-seller.ozon.ru/v3/product/info/list', {
+                    offer_id: offerIds,
+                }, {
+                    headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
+                    timeout: 15_000
+                });
 
-                    const items = res.data?.result ?? [];
-                    for (const item of items) {
-                        const product = products.find(p => p.sku === item.offer_id);
-                        if (product && item.images?.[0]?.file_name) {
-                            await this.prisma.product.update({
-                                where: { id: product.id },
-                                data: { photo: item.images[0].file_name }
-                            });
-                            updatedCount++;
-                        }
+                const items = res.data?.result?.items ?? res.data?.items ?? [];
+                this.logger.log(`[Ozon Metadata] Got ${items.length} items from Ozon`);
+
+                for (const item of items) {
+                    const product = products.find(p => p.sku === item.offer_id);
+                    const photoUrl = item.primary_image || item.images?.[0];
+                    if (product && photoUrl) {
+                        this.logger.log(`[Ozon Metadata] Updating photo for ${product.sku}: ${photoUrl.substring(0, 80)}...`);
+                        await this.prisma.product.update({
+                            where: { id: product.id },
+                            data: { photo: photoUrl }
+                        });
+                        updatedCount++;
                     }
                 }
             } catch (e: any) {
@@ -820,6 +821,7 @@ export class SyncService implements OnModuleInit {
             }
         }
 
+        this.logger.log(`[Metadata] Done. Updated ${updatedCount} photos`);
         return { success: true, updated: updatedCount };
     }
     // ─── Order Details Fetching ──────────────────────────────────────────
