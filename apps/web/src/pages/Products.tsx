@@ -214,9 +214,9 @@ export default function Products() {
 
     return (
         <div className="space-y-6 animate-fade-in pb-12">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h1 className="text-2xl font-bold text-slate-900">Управление Товарами</h1>
-                <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Управление Товарами</h1>
+                <div className="flex flex-wrap items-center gap-2">
                     <input
                         type="file"
                         id="wb-import-file"
@@ -310,28 +310,28 @@ export default function Products() {
                     <table className="min-w-full divide-y divide-slate-200">
                         <thead className="bg-slate-50">
                             <tr>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Фото
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Название
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="hidden sm:table-cell px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     SKU
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Наш склад
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-[#cb11ab]">
+                                <th scope="col" className="hidden md:table-cell px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-[#cb11ab]">
                                     WB (FBS / FBO)
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-[#005bff]">
+                                <th scope="col" className="hidden md:table-cell px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-[#005bff]">
                                     Ozon (FBS / FBO)
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="hidden lg:table-cell px-2 sm:px-4 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Доступно
                                 </th>
-                                <th scope="col" className="px-4 py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                                <th scope="col" className="px-2 sm:px-4 py-3 sm:py-4 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
                                     Действия
                                 </th>
                             </tr>
@@ -340,36 +340,38 @@ export default function Products() {
                             {products.map((p) => (
                                 <tr key={p.id} className="hover:bg-slate-50 transition-colors">
                                     {/* Фото */}
-                                    <td className="px-4 py-3">
-                                        <div className="flex-shrink-0" style={{ width: '200px', height: '200px' }}>
+                                    <td className="px-2 sm:px-4 py-2 sm:py-3">
+                                        <div className="flex-shrink-0 w-16 h-16 sm:w-28 sm:h-28 lg:w-48 lg:h-48">
                                             {p.photo ? (
-                                                <img style={{ width: '200px', height: '200px' }} className="rounded-xl object-cover shadow-md border border-slate-100" src={getImageUrl(p.photo)} alt={p.name} />
+                                                <img className="w-full h-full rounded-lg sm:rounded-xl object-cover shadow-md border border-slate-100" src={getImageUrl(p.photo)} alt={p.name} />
                                             ) : (
-                                                <div style={{ width: '200px', height: '200px' }} className="rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200">
-                                                    <Package className="h-12 w-12 text-slate-400" />
+                                                <div className="w-full h-full rounded-lg sm:rounded-xl bg-slate-100 flex items-center justify-center border border-slate-200">
+                                                    <Package className="h-6 w-6 sm:h-10 sm:w-10 lg:h-12 lg:w-12 text-slate-400" />
                                                 </div>
                                             )}
                                         </div>
                                     </td>
                                     {/* Название */}
-                                    <td className="px-4 py-3">
-                                        <div className="text-sm font-semibold text-slate-900 max-w-xs">{p.name}</div>
+                                    <td className="px-2 sm:px-4 py-2 sm:py-3">
+                                        <div className="text-xs sm:text-sm font-semibold text-slate-900 max-w-[120px] sm:max-w-xs break-words">{p.name}</div>
+                                        {/* Show SKU inline on mobile where SKU column is hidden */}
+                                        <div className="sm:hidden text-[10px] font-mono text-slate-500 mt-0.5">{p.sku}</div>
                                     </td>
-                                    {/* SKU + Barcode */}
-                                    <td className="px-4 py-3 min-w-[140px]">
+                                    {/* SKU + Barcode — hidden on mobile */}
+                                    <td className="hidden sm:table-cell px-2 sm:px-4 py-2 sm:py-3 min-w-[140px]">
                                         <div className="text-xs font-mono text-slate-700 bg-slate-100 px-2 py-1 rounded inline-block mb-1">{p.sku}</div>
                                         {p.wbBarcode && (
                                             <div className="text-[10px] text-slate-400 font-mono">WB: {p.wbBarcode}</div>
                                         )}
                                     </td>
                                     {/* Наш склад */}
-                                    <td className="px-6 py-4">
-                                        <div className="text-sm text-slate-900 font-medium flex items-center gap-1 mb-1">
+                                    <td className="px-2 sm:px-4 lg:px-6 py-2 sm:py-4">
+                                        <div className="text-xs sm:text-sm text-slate-900 font-medium flex items-center gap-1 mb-1">
                                             {editingStock?.id === p.id && editingStock?.field === 'total' ? (
                                                 <input
                                                     type="number"
                                                     autoFocus
-                                                    className="w-20 px-2 border border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                                    className="w-16 sm:w-20 px-2 border border-blue-400 rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
                                                     value={editingStock.value}
                                                     onChange={e => setEditingStock({ ...editingStock, value: e.target.value })}
                                                     onBlur={() => handleStockUpdate(p.id, 'total', editingStock.value)}
@@ -377,50 +379,50 @@ export default function Products() {
                                                 />
                                             ) : (
                                                 <span
-                                                    className="cursor-pointer text-lg font-bold hover:text-blue-600 hover:underline"
+                                                    className="cursor-pointer text-base sm:text-lg font-bold hover:text-blue-600 hover:underline"
                                                     title="Кликните чтобы изменить"
                                                     onClick={() => setEditingStock({ id: p.id, field: 'total', value: String(p.total) })}
                                                 >{p.total}</span>
                                             )}
-                                            <span className="text-slate-500 text-xs">всего</span>
+                                            <span className="text-slate-500 text-[10px] sm:text-xs">всего</span>
                                         </div>
-                                        <div className="text-sm text-yellow-600 font-medium">{p.reserved} <span className="text-slate-500 font-normal text-xs">в резерве</span></div>
+                                        <div className="text-xs sm:text-sm text-yellow-600 font-medium">{p.reserved} <span className="text-slate-500 font-normal text-[10px] sm:text-xs">в резерве (Ozon)</span></div>
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <div className="text-sm font-medium text-[#cb11ab] flex items-center gap-1 mb-1">
+                                    <td className="hidden md:table-cell px-2 sm:px-4 lg:px-6 py-2 sm:py-4">
+                                        <div className="text-xs sm:text-sm font-medium text-[#cb11ab] flex items-center gap-1 mb-1">
                                             <span>FBS:</span>
                                             {editingStock?.id === p.id && editingStock?.field === 'wbFbs' ? (
-                                                <input type="number" autoFocus className="w-16 px-1 border border-[#cb11ab] rounded focus:outline-none" value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'wbFbs', editingStock.value)} onKeyDown={(e) => handleKeyDown(e, p.id, 'wbFbs')} />
+                                                <input type="number" autoFocus className="w-14 sm:w-16 px-1 border border-[#cb11ab] rounded focus:outline-none" value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'wbFbs', editingStock.value)} onKeyDown={(e) => handleKeyDown(e, p.id, 'wbFbs')} />
                                             ) : (
                                                 <span className="cursor-pointer hover:underline" onClick={() => setEditingStock({ id: p.id, field: 'wbFbs', value: String(p.wbFbs) })}>{p.wbFbs} шт.</span>
                                             )}
                                         </div>
-                                        <div className="text-sm text-slate-400 flex items-center gap-1">
+                                        <div className="text-xs sm:text-sm text-slate-400 flex items-center gap-1">
                                             <span>FBO:</span>
                                             <span title="Автоматически из WB">{p.wbFbo} шт.</span>
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <div className="text-sm font-medium text-[#005bff] flex items-center gap-1 mb-1">
+                                    <td className="hidden md:table-cell px-2 sm:px-4 lg:px-6 py-2 sm:py-4">
+                                        <div className="text-xs sm:text-sm font-medium text-[#005bff] flex items-center gap-1 mb-1">
                                             <span>FBS:</span>
                                             {editingStock?.id === p.id && editingStock?.field === 'ozonFbs' ? (
-                                                <input type="number" autoFocus className="w-16 px-1 border border-[#005bff] rounded focus:outline-none" value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'ozonFbs', editingStock.value)} onKeyDown={(e) => handleKeyDown(e, p.id, 'ozonFbs')} />
+                                                <input type="number" autoFocus className="w-14 sm:w-16 px-1 border border-[#005bff] rounded focus:outline-none" value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'ozonFbs', editingStock.value)} onKeyDown={(e) => handleKeyDown(e, p.id, 'ozonFbs')} />
                                             ) : (
                                                 <span className="cursor-pointer hover:underline" onClick={() => setEditingStock({ id: p.id, field: 'ozonFbs', value: String(p.ozonFbs) })}>{p.ozonFbs} шт.</span>
                                             )}
                                         </div>
-                                        <div className="text-sm text-slate-400 flex items-center gap-1">
+                                        <div className="text-xs sm:text-sm text-slate-400 flex items-center gap-1">
                                             <span>FBO:</span>
                                             <span title="Автоматически из Ozon">{p.ozonFbo} шт.</span>
                                         </div>
                                     </td>
 
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full ${p.available > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                                    <td className="hidden lg:table-cell px-2 sm:px-4 lg:px-6 py-2 sm:py-4 whitespace-nowrap">
+                                        <span className={`px-2 sm:px-3 py-1 inline-flex text-xs sm:text-sm leading-5 font-semibold rounded-full ${p.available > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
                                             {p.available} шт.
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 text-right text-sm font-medium min-w-[200px]">
+                                    <td className="px-2 sm:px-4 lg:px-6 py-2 sm:py-4 text-right text-sm font-medium min-w-[100px] sm:min-w-[200px]">
                                         <div className="flex flex-col items-end gap-1 mb-2 max-w-[250px] ml-auto">
                                             {(syncResult as any)?.id === p.id && (() => {
                                                 const sr = (syncResult as any).data;
@@ -500,8 +502,11 @@ export default function Products() {
                                     <input required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-blue-500 focus:border-blue-500 outline-none" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Артикул (SKU)</label>
-                                    <input required type="text" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                                        Артикул (SKU) <span className="text-slate-400 font-normal">(для связи с Ozon и WB)</span>
+                                    </label>
+                                    <input required type="text" value={formData.sku} onChange={e => setFormData({ ...formData, sku: e.target.value })} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-blue-500 focus:border-blue-500 outline-none font-mono" />
+                                    <p className="text-xs text-slate-400 mt-1">ЛК Ozon → Товары и цены → Список товаров → Артикул</p>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-1">

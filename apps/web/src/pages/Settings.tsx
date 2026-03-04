@@ -85,24 +85,24 @@ export default function Settings() {
     };
 
     return (
-        <div className="max-w-4xl mx-auto space-y-6 animate-fade-in pb-12">
-            <h1 className="text-2xl font-bold text-slate-900">Настройки интеграций</h1>
+        <div className="max-w-4xl mx-auto space-y-4 sm:space-y-6 animate-fade-in pb-12">
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">Настройки интеграций</h1>
 
             <form onSubmit={handleSave} className="space-y-8">
 
                 {/* ── Ozon ──────────────────────────────────────────── */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <div className="flex items-center mb-6 border-b border-slate-100 pb-4">
-                        <div className="w-10 h-10 rounded bg-[#005bff] flex items-center justify-center mr-4">
-                            <span className="text-white font-bold text-xl">O</span>
+                    <div className="flex items-center mb-4 sm:mb-6 border-b border-slate-100 pb-3 sm:pb-4">
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded bg-[#005bff] flex items-center justify-center mr-3 sm:mr-4">
+                            <span className="text-white font-bold text-lg sm:text-xl">O</span>
                         </div>
-                        <div className="flex-1">
-                            <h2 className="text-lg font-bold text-slate-900">Ozon API</h2>
-                            <p className="text-sm text-slate-500">Для синхронизации FBS-остатков с Ozon.</p>
+                        <div className="flex-1 min-w-0">
+                            <h2 className="text-base sm:text-lg font-bold text-slate-900">Ozon API</h2>
+                            <p className="text-xs sm:text-sm text-slate-500">Для синхронизации FBS-остатков с Ozon.</p>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 sm:gap-3">
                             <TestBadge state={ozonTest} />
-                            <button type="button" onClick={testOzon} className="px-3 py-1.5 text-sm border border-[#005bff] text-[#005bff] rounded-lg hover:bg-blue-50 transition-colors font-medium">
+                            <button type="button" onClick={testOzon} className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm border border-[#005bff] text-[#005bff] rounded-lg hover:bg-blue-50 transition-colors font-medium whitespace-nowrap">
                                 Проверить
                             </button>
                         </div>
@@ -135,17 +135,17 @@ export default function Settings() {
 
                 {/* ── Wildberries ───────────────────────────────────── */}
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                    <div className="flex items-center mb-6 border-b border-slate-100 pb-4">
-                        <div className="w-10 h-10 rounded bg-[#cb11ab] flex items-center justify-center mr-4">
-                            <span className="text-white font-bold text-xl">W</span>
+                    <div className="flex items-center mb-4 sm:mb-6 border-b border-slate-100 pb-3 sm:pb-4">
+                        <div className="w-8 h-8 sm:w-10 sm:h-10 rounded bg-[#cb11ab] flex items-center justify-center mr-3 sm:mr-4">
+                            <span className="text-white font-bold text-lg sm:text-xl">W</span>
                         </div>
-                        <div className="flex-1">
-                            <h2 className="text-lg font-bold text-slate-900">Wildberries API</h2>
-                            <p className="text-sm text-slate-500">Для синхронизации FBS-остатков с Wildberries.</p>
+                        <div className="flex-1 min-w-0">
+                            <h2 className="text-base sm:text-lg font-bold text-slate-900">Wildberries API</h2>
+                            <p className="text-xs sm:text-sm text-slate-500">Для синхронизации FBS-остатков с Wildberries.</p>
                         </div>
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 sm:gap-3">
                             <TestBadge state={wbTest} />
-                            <button type="button" onClick={testWb} className="px-3 py-1.5 text-sm border border-[#cb11ab] text-[#cb11ab] rounded-lg hover:bg-pink-50 transition-colors font-medium">
+                            <button type="button" onClick={testWb} className="px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm border border-[#cb11ab] text-[#cb11ab] rounded-lg hover:bg-pink-50 transition-colors font-medium whitespace-nowrap">
                                 Проверить
                             </button>
                         </div>
@@ -170,18 +170,18 @@ export default function Settings() {
                 </div>
 
                 {/* ── Save ──────────────────────────────────────────── */}
-                <div className="flex items-center justify-between bg-slate-100 p-4 rounded-xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-100 p-3 sm:p-4 rounded-xl border border-slate-200">
                     <div>
                         {message.text && (
-                            <span className={`text-sm font-medium px-3 py-1 rounded-full ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            <span className={`text-xs sm:text-sm font-medium px-3 py-1 rounded-full ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                                 {message.text}
                             </span>
                         )}
                     </div>
                     <button type="submit" disabled={saving}
-                        className="flex items-center px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all font-medium disabled:bg-blue-400">
+                        className="flex items-center justify-center px-4 sm:px-6 py-2 sm:py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all font-medium disabled:bg-blue-400 text-sm">
                         <Save size={18} className="mr-2" />
-                        {saving ? 'Сохранение...' : 'Сохранить настройки'}
+                        {saving ? 'Сохранение...' : 'Сохранить'}
                     </button>
                 </div>
             </form>

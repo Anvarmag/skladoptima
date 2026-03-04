@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Package, History, LogOut, Settings, ShoppingCart } from 'lucide-react';
 
@@ -20,14 +20,23 @@ export default function MainLayout() {
     const iconClass = (isActive: boolean) =>
         `mr-3 flex-shrink-0 h-6 w-6 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-500'}`;
 
+    const mobileNavClass = ({ isActive }: { isActive: boolean }) =>
+        `flex flex-col items-center justify-center py-2 px-1 text-[10px] font-medium transition-colors ${isActive
+            ? 'text-blue-600'
+            : 'text-slate-400'
+        }`;
+
+    const mobileIconClass = (isActive: boolean) =>
+        `h-5 w-5 mb-0.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`;
+
     return (
         <div className="flex h-screen bg-slate-50">
-            {/* Sidebar */}
+            {/* Desktop Sidebar */}
             <div className="hidden md:flex md:w-64 md:flex-col border-r border-slate-200 bg-white">
-                <div className="flex h-16 shrink-0 items-center px-6 border-b border-slate-200">
+                <Link to="/app" className="flex h-16 shrink-0 items-center px-6 border-b border-slate-200 hover:bg-slate-50 transition-colors">
                     <Package className="h-8 w-8 text-blue-600 mr-2" />
                     <span className="text-xl font-bold text-slate-900 tracking-tight">Sklad Optima</span>
-                </div>
+                </Link>
                 <div className="flex flex-1 flex-col overflow-y-auto">
                     <nav className="flex-1 space-y-1 px-4 py-6">
                         <NavLink to="/app" end className={navClass}>
@@ -81,21 +90,59 @@ export default function MainLayout() {
             </div>
 
             {/* Mobile top bar */}
-            <div className="md:hidden flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 fixed top-0 w-full z-10">
-                <div className="flex items-center">
-                    <Package className="h-8 w-8 text-blue-600" />
-                    <span className="ml-2 text-xl font-bold text-slate-900">Sklad</span>
-                </div>
-                <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900">
-                    <LogOut className="h-6 w-6" />
+            <div className="md:hidden flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 fixed top-0 w-full z-10">
+                <Link to="/app" className="flex items-center">
+                    <Package className="h-7 w-7 text-blue-600" />
+                    <span className="ml-2 text-lg font-bold text-slate-900">Sklad</span>
+                </Link>
+                <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
+                    <LogOut className="h-5 w-5" />
                 </button>
             </div>
 
             {/* Main content */}
-            <div className="flex flex-1 flex-col overflow-hidden md:mt-0 mt-16">
-                <main className="flex-1 overflow-y-auto bg-slate-50 p-4 sm:p-6 lg:p-8">
+            <div className="flex flex-1 flex-col overflow-hidden md:mt-0 mt-14">
+                <main className="flex-1 overflow-y-auto bg-slate-50 p-3 sm:p-4 md:p-6 lg:p-8 pb-20 md:pb-8">
                     <Outlet />
                 </main>
+            </div>
+
+            {/* Mobile bottom navigation */}
+            <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-10 safe-area-bottom">
+                <nav className="flex items-stretch justify-around">
+                    <NavLink to="/app" end className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <Package className={mobileIconClass(isActive)} />
+                                <span>Остатки</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/history" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <History className={mobileIconClass(isActive)} />
+                                <span>История</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/orders" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <ShoppingCart className={mobileIconClass(isActive)} />
+                                <span>Заказы</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/settings" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <Settings className={mobileIconClass(isActive)} />
+                                <span>Настройки</span>
+                            </>
+                        )}
+                    </NavLink>
+                </nav>
             </div>
         </div>
     );

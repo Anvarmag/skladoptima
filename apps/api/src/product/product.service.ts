@@ -80,7 +80,7 @@ export class ProductService implements OnModuleInit {
         params.push(limit, skip);
         const data = await this.prisma.$queryRawUnsafe<any[]>(
             `SELECT p.*, p."wbBarcode",
-                    GREATEST(0, p.total - p.reserved) as available
+                    GREATEST(0, p.total) as available
              FROM "Product" p ${whereClause}
              ORDER BY p."createdAt" DESC
              LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -102,7 +102,7 @@ export class ProductService implements OnModuleInit {
         if (!product) throw new NotFoundException('Product not found');
         return {
             ...product,
-            available: Math.max(0, product.total - product.reserved),
+            available: Math.max(0, product.total),
         };
     }
 

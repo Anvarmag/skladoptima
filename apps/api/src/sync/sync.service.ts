@@ -19,10 +19,15 @@ export class SyncService implements OnModuleInit {
             this.logger.log('Background marketplace poll started (every 60s)');
             const run = async () => {
                 try {
-                    // 1. Sync from WB
                     const wbResult = await this.pullFromWb();
                     if ((wbResult as any).updated > 0) {
                         this.logger.log(`Background pull: updated ${(wbResult as any).updated} products from WB`);
+                    }
+
+                    // 1.1 Sync WB FBO
+                    const wbFboResult = await this.pullWbFbo();
+                    if ((wbFboResult as any)?.updated > 0) {
+                        this.logger.log(`Background pull: updated ${(wbFboResult as any).updated} FBO products from WB`);
                     }
 
                     // 2. Sync from Ozon
@@ -131,20 +136,19 @@ export class SyncService implements OnModuleInit {
         return { success: true };
     }
 
-    // ─── Main sync ────────────────────────────────────────────────────────────────
+    // ─── Push one product to marketplaces ──────────────────────────────────────
     async syncProductToMarketplaces(productId: string) {
-        const [products, settings] = await Promise.all([
-            this.prisma.$queryRawUnsafe<any[]>(
-                `SELECT *, "wbBarcode" FROM "Product" WHERE id = $1 AND "deletedAt" IS NULL LIMIT 1`,
-                productId
-            ),
-            this.getSettings(),
-        ]);
+        const settings = await this.getSettings();
+        if (!settings) return { success: false, error: 'Settings not configured' };
 
-        const product = products?.[0];
-        if (!product) return { wb: { success: false, error: 'Товар не найден' }, ozon: { success: false, error: 'Товар не найден' } };
+        const product = await this.prisma.product.findUnique({ where: { id: productId } });
+        if (!product || product.deletedAt) return { success: false, error: 'Product not found' };
 
-        const available = Math.max(0, product.total - product.reserved);
+        // available - это то, что мы физически можем продать прямо сейчас
+        const available = Math.max(0, product.total);
+
+        const results = { wb: { success: false, error: 'Not configured' }, ozon: { success: false, error: 'Not configured' } };
+
         const [wb, ozon] = await Promise.all([
             this.syncToWb(settings, product, available),
             this.syncToOzon(settings, product, available),
@@ -200,59 +204,28 @@ export class SyncService implements OnModuleInit {
                     continue;
                 }
 
-                // Delta logic: На сколько реально изменился остаток на WB с момента последней синхронизации?
-                const lastKnownWb = product.wbFbs || 0;
-                const delta = stock.amount - lastKnownWb;
-
-                // 1. Всегда обновляем кэшированное поле в БД
+                // 1. Всегда обновляем кэшированное поле в БД (аналитика)
                 await this.prisma.$executeRawUnsafe(
                     `UPDATE "Product" SET "wbFbs" = $1 WHERE id = $2`,
                     stock.amount, product.id
                 );
 
-                // 2. Если есть разница — это либо продажа (-), либо приход (+) на WB. 
-                // ПРИМЕНЯЕМ АТОМАРНОЕ ИЗМЕНЕНИЕ к нашему МАСТЕР-складу (Total).
-                if (delta !== 0) {
-                    await this.prisma.$executeRawUnsafe(
-                        `UPDATE "Product" SET "total" = "total" + $1 WHERE id = $2`,
-                        delta, product.id
-                    );
-
-                    // Fetch updated total for propagation (to be safe)
-                    const [updatedProduct] = await this.prisma.$queryRawUnsafe<any[]>(
-                        `SELECT total, reserved FROM "Product" WHERE id = $1`,
-                        product.id
-                    );
-                    const newTotal = updatedProduct.total;
-                    const newAvailable = Math.max(0, newTotal - (updatedProduct.reserved || 0));
-
-                    this.logger.log(`[Pull WB] Delta ${delta > 0 ? '+' : ''}${delta} applied atomically. Master Total: ${product.total} -> ${newTotal}`);
-
-                    // 3. Собираем для групповой отправки на Ozon
-                    ozonUpdates.push({ id: product.id, sku: product.sku, amount: newAvailable });
-                    updatedCount++;
-                } else {
-                    // Разницы нет (Delta=0), но вдруг мы просто разошлись в значениях?
-                    // (Например, прошлый пуш на WB упал, и там зависло старое число)
-                    const currentAvailable = Math.max(0, (product.total || 0) - (product.reserved || 0));
-                    if (stock.amount !== currentAvailable) {
-                        this.logger.log(`[Reconcile WB] Mismatch for ${product.sku}: WB=${stock.amount}, App=${currentAvailable}. Adding to push queue.`);
-                        // Добавляем в очередь на ПУШ обратно на WB (чтобы исправить его)
-                        // Но пушим через syncBatchToWb в конце метода
-                        const wbReconcileQueue = (this as any).wbReconcileQueue || [];
-                        wbReconcileQueue.push({ id: product.id, sku: product.sku, wbBarcode: product.wbBarcode, amount: currentAvailable });
-                        (this as any).wbReconcileQueue = wbReconcileQueue;
-                    }
+                // Если наше расчетное значение "Total" расходится с WB
+                const currentAvailable = Math.max(0, product.total);
+                if (stock.amount !== currentAvailable) {
+                    this.logger.log(`[Reconcile WB] Mismatch for ${product.sku}: WB=${stock.amount}, App=${currentAvailable}. Adding to push queue.`);
+                    const wbReconcileQueue = (this as any).wbReconcileQueue || [];
+                    wbReconcileQueue.push({ id: product.id, sku: product.sku, wbBarcode: product.wbBarcode, amount: currentAvailable });
+                    (this as any).wbReconcileQueue = wbReconcileQueue;
                 }
             }
 
-            // Sync batches
-            if (ozonUpdates.length > 0) await this.syncBatchToOzon(settings, ozonUpdates);
-
+            // Push updates back to WB if we have mismatches
             const wbReconcile = (this as any).wbReconcileQueue || [];
             if (wbReconcile.length > 0) {
                 await this.syncBatchToWb(settings, wbReconcile);
                 (this as any).wbReconcileQueue = [];
+                updatedCount += wbReconcile.length;
             }
 
             return { success: true, updated: updatedCount, total: wbStocks.length };
@@ -262,6 +235,117 @@ export class SyncService implements OnModuleInit {
         }
     }
 
+    // ─── Fetch WB FBO Stocks ─────────────────────────────────────────────────────
+    async pullWbFbo() {
+        const settings = await this.getSettings();
+        if (!settings?.wbApiKey) return { success: false, error: 'WB API ключ не задан' };
+
+        try {
+            // "dateFrom" determines how far back to look for stock updates. A long time ago is fine.
+            const dateFrom = '2020-01-01';
+
+            const res = await axios.get(
+                `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${dateFrom}`,
+                {
+                    headers: { Authorization: settings.wbApiKey },
+                    timeout: 20_000
+                }
+            );
+
+            const stocks: any[] = res.data ?? [];
+            if (!Array.isArray(stocks) || stocks.length === 0) {
+                return { success: true, updated: 0, message: 'Нет FBO остатков' };
+            }
+
+            // Group by barcode
+            const fboMap = new Map<string, number>();
+            for (const item of stocks) {
+                const bc = item.barcode;
+                const qty = item.quantity || 0;
+                if (bc) {
+                    fboMap.set(bc, (fboMap.get(bc) || 0) + qty);
+                }
+            }
+
+            // Fetch our products
+            const products = await this.prisma.product.findMany({
+                where: { deletedAt: null, wbBarcode: { not: null } }
+            });
+
+            let updatedCount = 0;
+
+            for (const product of products) {
+                if (!product.wbBarcode) continue;
+
+                const fboQty = fboMap.get(product.wbBarcode) || 0;
+
+                if (product.wbFbo !== fboQty) {
+                    await this.prisma.product.update({
+                        where: { id: product.id },
+                        data: { wbFbo: fboQty }
+                    });
+                    updatedCount++;
+                }
+            }
+
+            return { success: true, updated: updatedCount };
+        } catch (err: any) {
+            // Can be 401/403 if statistics API not allowed on this token
+            const msg = err.response?.status === 401 || err.response?.status === 403
+                ? 'Нет прав на API Статистики WB'
+                : err.message;
+            this.logger.error(`[WB FBO] Error: ${msg}`);
+            return { success: false, error: msg };
+        }
+    }
+
+    // ─── Полная выгрузка всего на Ozon ─────────────────────────────────────────
+    async syncAllToOzon() {
+        const settings = await this.getSettings();
+        if (!settings?.ozonApiKey || !settings?.ozonClientId || !settings?.ozonWarehouseId) return { success: false, error: 'Ozon ключи или склад не настроены' };
+
+        const products = await this.prisma.$queryRawUnsafe<any[]>(
+            `SELECT id, sku, "wbBarcode", total, reserved, "wbFbs", "ozonFbs" FROM "Product" WHERE "deletedAt" IS NULL`
+        );
+        const skus = products.map(p => p.sku).filter(Boolean);
+        if (skus.length === 0) return { success: true, updated: 0, total: 0 };
+
+        let updatedCount = 0;
+        const now = Date.now();
+        const chunkSize = 100;
+
+        for (let i = 0; i < products.length; i += chunkSize) {
+            const chunk = products.slice(i, i + chunkSize);
+            const itemsToPush: any[] = [];
+
+            for (const product of chunk) {
+                const cd = this.lastPush.get(product.id)?.ozon || 0;
+                if (now - cd < this.COOLDOWN_MS) continue;
+
+                const [updatedProduct] = await this.prisma.$queryRawUnsafe<any[]>(
+                    `SELECT total, reserved FROM "Product" WHERE id = $1`,
+                    product.id
+                );
+
+                if (updatedProduct) {
+                    const newTotal = updatedProduct.total;
+                    const newAvailable = Math.max(0, newTotal);
+                    const lastKnownOzon = product.ozonFbs || 0;
+
+                    if (newAvailable !== lastKnownOzon) {
+                        itemsToPush.push({ id: product.id, sku: product.sku, amount: newAvailable });
+                    }
+                }
+            }
+
+            if (itemsToPush.length > 0) {
+                await this.syncBatchToOzon(settings, itemsToPush);
+                updatedCount += itemsToPush.length;
+            }
+        }
+
+        return { success: true, updated: updatedCount, total: products.length };
+    }
     // ─── Pull from Ozon → update our DB ──────────────────────────────────────────
     async pullFromOzon() {
         const settings = await this.getSettings();
@@ -306,50 +390,33 @@ export class SyncService implements OnModuleInit {
                 // Извлекаем FBS и FBO из массива stocks
                 const fbsEntry = item.stocks?.find((s: any) => s.type === 'fbs');
                 const fboEntry = item.stocks?.find((s: any) => s.type === 'fbo');
-
                 const ozonFbsPresent = fbsEntry?.present ?? 0;
+                const ozonFbsReserved = fbsEntry?.reserved ?? 0;
                 const ozonFboPresent = fboEntry?.present ?? 0;
 
-                // Всегда обновляем кэш по FBS/FBO
+                // Очередное обновление: всегда обновляем кэш по FBS/FBO и РЕЗЕРВ (аналитика)
                 await this.prisma.$executeRawUnsafe(
-                    `UPDATE "Product" SET "ozonFbs" = $1, "ozonFbo" = $2 WHERE id = $3`,
-                    ozonFbsPresent, ozonFboPresent, product.id
+                    `UPDATE "Product" SET "ozonFbs" = $1, "ozonFbo" = $2, "reserved" = $3 WHERE id = $4`,
+                    ozonFbsPresent, ozonFboPresent, ozonFbsReserved, product.id
                 );
 
-                // Ping-Pong prevention для FBS
-                const lastOzonPush = this.lastPush.get(product.id)?.ozon || 0;
-                if (now - lastOzonPush < this.COOLDOWN_MS) {
-                    this.logger.debug(`Ping-Pong prevention: skipping Ozon FBS delta for ${product.sku}`);
-                    continue;
-                }
-
-                // Delta logic: применяем изменение FBS к мастер-складу
-                const lastKnownOzon = product.ozonFbs || 0;
-                const delta = ozonFbsPresent - lastKnownOzon;
-
-                if (delta !== 0) {
-                    await this.prisma.$executeRawUnsafe(
-                        `UPDATE "Product" SET "total" = "total" + $1 WHERE id = $2`,
-                        delta, product.id
-                    );
-
-                    const [updatedProduct] = await this.prisma.$queryRawUnsafe<any[]>(
-                        `SELECT total, reserved FROM "Product" WHERE id = $1`,
-                        product.id
-                    );
-                    const newTotal = updatedProduct.total;
-                    const newAvailable = Math.max(0, newTotal - (updatedProduct.reserved || 0));
-
-                    this.logger.log(`[Pull Ozon] Delta ${delta > 0 ? '+' : ''}${delta} applied. FBO: ${ozonFboPresent}. Master Total: ${product.total} -> ${newTotal}`);
-
-                    if (product.wbBarcode) {
-                        wbUpdates.push({ id: product.id, sku: product.sku, wbBarcode: product.wbBarcode, amount: newAvailable });
-                    }
-                    updatedCount++;
+                // Если наше расчетное значение "Total" расходится с Ozon
+                const currentAvailable = Math.max(0, product.total);
+                if (ozonFbsPresent !== currentAvailable) {
+                    this.logger.log(`[Reconcile Ozon] Mismatch for ${product.sku}: Ozon=${ozonFbsPresent}, App=${currentAvailable}. Adding to push queue.`);
+                    const ozonReconcileQueue = (this as any).ozonReconcileQueue || [];
+                    ozonReconcileQueue.push({ id: product.id, sku: product.sku, amount: currentAvailable });
+                    (this as any).ozonReconcileQueue = ozonReconcileQueue;
                 }
             }
 
-            if (wbUpdates.length > 0) await this.syncBatchToWb(settings, wbUpdates);
+            // Push updates back to Ozon if we have mismatches
+            const ozonReconcile = (this as any).ozonReconcileQueue || [];
+            if (ozonReconcile.length > 0) {
+                await this.syncBatchToOzon(settings, ozonReconcile);
+                (this as any).ozonReconcileQueue = [];
+                updatedCount += ozonReconcile.length;
+            }
 
             return { success: true, updated: updatedCount, total: ozonItems.length };
         } catch (err) {
@@ -460,15 +527,35 @@ export class SyncService implements OnModuleInit {
                 });
                 if (existing) continue;
 
-                // Ищем товар по баркоду (в WB заказе массив skus, берем первый)
                 const barcode = order.skus?.[0];
-                if (!barcode) continue;
+                const article = order.article;
 
-                const product = await (this.prisma.product as any).findUnique({
-                    where: { wbBarcode: barcode }
-                });
+                let product = null;
+                if (barcode) {
+                    product = await (this.prisma.product as any).findUnique({
+                        where: { wbBarcode: barcode }
+                    });
+                }
+
+                // Fallback: ищем по нашему внутреннему артикулу (SKU)
+                if (!product && article) {
+                    product = await (this.prisma.product as any).findUnique({
+                        where: { sku: article }
+                    });
+
+                    // (Auto-heal) Если нашли товар по артикулу, но у него еще не был прописан wbBarcode, пропишем!
+                    if (product && barcode && !product.wbBarcode) {
+                        await this.prisma.$executeRawUnsafe(
+                            `UPDATE "Product" SET "wbBarcode" = $1 WHERE id = $2`,
+                            barcode, product.id
+                        );
+                        this.logger.log(`[WB Auto-Heal] Привязан баркод ${barcode} к артикулу ${product.sku}`);
+                        product.wbBarcode = barcode; // апдейтим в памяти
+                    }
+                }
+
                 if (!product) {
-                    this.logger.warn(`[WB Order] Product with barcode ${barcode} not found. Skipping.`);
+                    this.logger.warn(`[WB Order] Товар с баркодом ${barcode} или артикулом ${article} не найден в базе. Пропуск.`);
                     continue;
                 }
 
@@ -550,7 +637,47 @@ export class SyncService implements OnModuleInit {
                 const existing = await (this.prisma as any).marketplaceOrder.findUnique({
                     where: { marketplaceOrderId: postingNumber }
                 });
-                if (existing) continue;
+
+                if (existing) {
+                    const newStatus = posting.status?.toLowerCase();
+                    const oldStatus = existing.status?.toLowerCase();
+
+                    if (newStatus && oldStatus !== newStatus) {
+                        await (this.prisma as any).marketplaceOrder.update({
+                            where: { id: existing.id },
+                            data: { status: posting.status }
+                        });
+
+                        if (newStatus === 'cancelled' && oldStatus !== 'cancelled') {
+                            for (const item of posting.products) {
+                                const product = await this.prisma.product.findUnique({ where: { sku: item.offer_id } });
+                                if (product) {
+                                    const qty = item.quantity;
+                                    await this.prisma.$executeRawUnsafe(
+                                        `UPDATE "Product" SET "total" = "total" + $1 WHERE id = $2`,
+                                        qty, product.id
+                                    );
+
+                                    await (this.prisma as any).auditLog.create({
+                                        data: {
+                                            actionType: 'STOCK_ADJUSTED' as any, // using existing enum value
+                                            productId: product.id,
+                                            productSku: product.sku,
+                                            delta: qty,
+                                            actorEmail: 'system-ozon',
+                                            note: `Возврат остатков: Отмена заказа Ozon #${postingNumber}`,
+                                            beforeTotal: product.total || 0,
+                                            afterTotal: (product.total || 0) + qty
+                                        }
+                                    });
+                                    this.logger.log(`[Ozon Cancel] Refunded #${postingNumber}, SKU: ${product.sku}, Qty: +${qty}`);
+                                    await this.syncProductToMarketplaces(product.id);
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 // Фильтруем статусы, которые нам интересны
                 const allowedStatuses = ['awaiting_packaging', 'awaiting_deliver', 'delivering', 'delivered'];
@@ -599,6 +726,7 @@ export class SyncService implements OnModuleInit {
                     data: {
                         marketplaceOrderId: postingNumber,
                         marketplace: 'OZON',
+                        productSku: posting.products.map((p: any) => p.offer_id).join(', '),
                         quantity: posting.products.reduce((acc: number, p: any) => acc + p.quantity, 0),
                         status: posting.status,
                         totalAmount: posting.products.reduce((acc: number, p: any) => acc + (parseFloat(p.price) * p.quantity), 0),
@@ -693,5 +821,124 @@ export class SyncService implements OnModuleInit {
         }
 
         return { success: true, updated: updatedCount };
+    }
+    // ─── Order Details Fetching ──────────────────────────────────────────
+    async forcePollOrders() {
+        try {
+            await this.processWbOrders();
+            await this.processOzonOrders();
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
+    }
+
+    async getMarketplaceOrders(query: any) {
+        const { page = 1, limit = 20, status, dateFrom, dateTo, marketplace } = query;
+        const pageNumber = parseInt(page as string, 10);
+        const limitNumber = parseInt(limit as string, 10);
+        const skip = (pageNumber - 1) * limitNumber;
+
+        const where: any = {};
+        if (marketplace && marketplace !== 'ALL') {
+            where.marketplace = marketplace;
+        }
+        if (status) {
+            where.status = { equals: status, mode: 'insensitive' };
+        }
+        if (dateFrom || dateTo) {
+            const dateFilter: any = {};
+            if (dateFrom) dateFilter.gte = new Date(dateFrom);
+            if (dateTo) {
+                const end = new Date(dateTo);
+                end.setHours(23, 59, 59, 999);
+                dateFilter.lte = end;
+            }
+            where.OR = [
+                { marketplaceCreatedAt: dateFilter },
+                { marketplaceCreatedAt: null, createdAt: dateFilter }
+            ];
+        }
+
+        const [items, total] = await Promise.all([
+            (this.prisma as any).marketplaceOrder.findMany({
+                where,
+                orderBy: [
+                    { marketplaceCreatedAt: { sort: 'desc', nulls: 'last' } },
+                    { createdAt: 'desc' }
+                ],
+                skip,
+                take: limitNumber
+            }),
+            (this.prisma as any).marketplaceOrder.count({ where })
+        ]);
+
+        return {
+            data: items,
+            meta: {
+                total,
+                page: pageNumber,
+                limit: limitNumber,
+                lastPage: Math.ceil(total / limitNumber)
+            }
+        };
+    }
+
+    async getOrderDetails(orderId: string) {
+        const order = await (this.prisma as any).marketplaceOrder.findUnique({
+            where: { id: orderId }
+        });
+
+        if (!order) return { success: false, error: 'Заказ не найден' };
+
+        const settings = await this.getSettings();
+
+        if (order.marketplace === 'OZON' && settings?.ozonApiKey && settings?.ozonClientId) {
+            try {
+                const res = await axios.post('https://api-seller.ozon.ru/v3/posting/fbs/get', {
+                    posting_number: order.marketplaceOrderId,
+                    with: { analytics_data: true, financial_data: true }
+                }, {
+                    headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
+                    timeout: 10_000,
+                });
+
+                return { success: true, marketplace: 'OZON', data: res.data?.result };
+            } catch (err: any) {
+                this.logger.error(`[Ozon Details] Error: ${err.message}`);
+                return { success: false, error: 'Ошибка получения данных Ozon' };
+            }
+        }
+
+        if (order.marketplace === 'WB' && settings?.wbApiKey) {
+            try {
+                const baseDate = order.marketplaceCreatedAt || order.createdAt || new Date();
+                const dateFrom = Math.floor(new Date(baseDate.getTime() - 4 * 24 * 60 * 60 * 1000).getTime() / 1000);
+
+                const res = await axios.get(`https://marketplace-api.wildberries.ru/api/v3/orders?limit=1000&next=0&dateFrom=${dateFrom}`, {
+                    headers: { Authorization: settings.wbApiKey },
+                    timeout: 15_000,
+                });
+
+                const orders = res.data?.orders ?? [];
+                let wbOrder = orders.find((o: any) => String(o.id) === order.marketplaceOrderId);
+
+                if (!wbOrder) {
+                    const newRes = await axios.get(`https://marketplace-api.wildberries.ru/api/v3/orders/new`, {
+                        headers: { Authorization: settings.wbApiKey },
+                        timeout: 15_000,
+                    });
+                    const newOrders = newRes.data?.orders ?? [];
+                    wbOrder = newOrders.find((o: any) => String(o.id) === order.marketplaceOrderId);
+                }
+
+                return { success: true, marketplace: 'WB', data: wbOrder || null };
+            } catch (err: any) {
+                this.logger.error(`[WB Details] Error: ${err.message}`);
+                return { success: false, error: 'Ошибка получения данных WB' };
+            }
+        }
+
+        return { success: false, error: 'API ключи маркетплейса не настроены' };
     }
 }

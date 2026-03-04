@@ -92,8 +92,8 @@ export default function History() {
 
     return (
         <div className="space-y-6 animate-fade-in pb-12">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h1 className="text-2xl font-bold text-slate-900">История изменений</h1>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">История изменений</h1>
             </div>
 
             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -128,11 +128,11 @@ export default function History() {
                     <table className="min-w-full divide-y divide-slate-200">
                         <thead className="bg-slate-50">
                             <tr>
-                                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Дата и Время</th>
-                                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Автор</th>
-                                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Действие</th>
-                                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Товар (SKU)</th>
-                                <th scope="col" className="px-6 py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Изменения</th>
+                                <th scope="col" className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Дата и Время</th>
+                                <th scope="col" className="hidden sm:table-cell px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Автор</th>
+                                <th scope="col" className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Действие</th>
+                                <th scope="col" className="px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Товар (SKU)</th>
+                                <th scope="col" className="hidden md:table-cell px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Изменения</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-200">
@@ -140,21 +140,21 @@ export default function History() {
                                 const actionBadge = translateActionType(log.actionType);
                                 return (
                                     <tr key={log.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900 border-l-[3px] border-transparent hover:border-blue-500 transition-colors">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-slate-900 border-l-[3px] border-transparent hover:border-blue-500 transition-colors">
                                             {format(new Date(log.createdAt), 'dd MMM yyyy, HH:mm', { locale: ru })}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-medium">
+                                        <td className="hidden sm:table-cell px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-slate-500 font-medium">
                                             {log.actorEmail}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${actionBadge.color}`}>
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap">
+                                            <span className={`px-2 sm:px-2.5 py-0.5 sm:py-1 inline-flex text-[10px] sm:text-xs leading-5 font-semibold rounded-full ${actionBadge.color}`}>
                                                 {actionBadge.label}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900 font-medium">
+                                        <td className="px-3 sm:px-6 py-3 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-slate-900 font-medium">
                                             {log.productSku || <span className="text-slate-400 italic">неизвестно</span>}
                                         </td>
-                                        <td className="px-6 py-4 w-1/3 max-w-sm">
+                                        <td className="hidden md:table-cell px-3 sm:px-6 py-3 sm:py-4 w-1/3 max-w-sm">
                                             {formatChanges(log)}
                                         </td>
                                     </tr>
@@ -162,7 +162,7 @@ export default function History() {
                             })}
                             {logs.length === 0 && !loading && (
                                 <tr>
-                                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                                    <td colSpan={5} className="px-3 sm:px-6 py-12 text-center text-slate-500">
                                         Логов по вашему запросу не найдено.
                                     </td>
                                 </tr>

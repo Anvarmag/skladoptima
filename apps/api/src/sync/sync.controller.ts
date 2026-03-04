@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query } from '@nestjs/common';
 import { SyncService } from './sync.service';
 
 @Controller('sync')
@@ -37,14 +37,18 @@ export class SyncController {
     }
 
     @Get('orders')
-    getOrders() {
-        return (this.syncService as any).prisma.marketplaceOrder.findMany({
-            orderBy: [
-                { marketplaceCreatedAt: { sort: 'desc', nulls: 'last' } },
-                { createdAt: 'desc' }
-            ],
-            take: 100
-        });
+    getOrders(@Query() query: any) {
+        return this.syncService.getMarketplaceOrders(query);
+    }
+
+    @Post('orders/poll')
+    pollOrders() {
+        return this.syncService.forcePollOrders();
+    }
+
+    @Get('order/:id/details')
+    getOrderDetails(@Param('id') id: string) {
+        return this.syncService.getOrderDetails(id);
     }
 
     @Post('metadata')
