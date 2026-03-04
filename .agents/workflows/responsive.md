@@ -29,6 +29,16 @@ All new UI features in Sklad Optima **must** be responsive across mobile (375px)
 9. **Sidebar**: Hidden on mobile (`hidden md:flex`). Navigation via bottom tab bar instead.
 10. **Date/Filter Inputs**: Use `grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3` for filter layouts.
 
+## Mobile Navigation Scaling Strategy
+
+| Кол-во разделов | Стратегия |
+|-----------------|-----------|
+| **до 5**        | Все вкладки в bottom nav — всё помещается |
+| **6+**          | Последняя вкладка → **«Ещё» (`MoreHorizontal`)**, открывает список остальных разделов |
+
+При 6+ разделах: основные 3 вкладки + «Ещё» (⋯) → sheet/popup с остальными.
+Альтернатива: группировка похожих разделов (например, «Заказы» + «Возвраты» = один раздел с внутренними табами).
+
 ## Testing Checklist
 
 Before submitting any UI change:
