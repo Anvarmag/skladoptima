@@ -1,10 +1,29 @@
-import { Outlet, NavLink, useNavigate, Link } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Package, History, LogOut, Settings, ShoppingCart } from 'lucide-react';
+import { useEffect } from 'react';
 
 export default function MainLayout() {
-    const { user, logout } = useAuth();
+    const { user, logout, isTelegram } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
+
+    // Telegram BackButton support
+    useEffect(() => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg || !isTelegram) return;
+
+        const isMainPage = location.pathname === '/app';
+        if (isMainPage) {
+            tg.BackButton.hide();
+        } else {
+            tg.BackButton.show();
+        }
+
+        const handleBack = () => navigate(-1);
+        tg.BackButton.onClick(handleBack);
+        return () => tg.BackButton.offClick(handleBack);
+    }, [location.pathname, isTelegram, navigate]);
 
     const handleLogout = async () => {
         await logout();
@@ -95,9 +114,11 @@ export default function MainLayout() {
                     <Package className="h-7 w-7 text-blue-600" />
                     <span className="ml-2 text-lg font-bold text-slate-900">Sklad</span>
                 </Link>
-                <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
-                    <LogOut className="h-5 w-5" />
-                </button>
+                {!isTelegram && (
+                    <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
+                        <LogOut className="h-5 w-5" />
+                    </button>
+                )}
             </div>
 
             {/* Main content */}

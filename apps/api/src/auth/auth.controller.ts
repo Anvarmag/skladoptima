@@ -29,6 +29,25 @@ export class AuthController {
     }
 
     @Public()
+    @Post('telegram')
+    async telegramAuth(@Body('initData') initData: string, @Res({ passthrough: true }) res: any) {
+        const user = await this.authService.validateTelegramAuth(initData);
+        const { access_token } = await this.authService.login(user);
+
+        const isProd = process.env.NODE_ENV === 'production';
+
+        res.cookie('Authentication', access_token, {
+            httpOnly: true,
+            secure: isProd,
+            sameSite: isProd ? 'none' : 'lax', // 'none' for Telegram iframe on prod
+            path: '/',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        return { message: 'Telegram auth successful', user };
+    }
+
+    @Public()
     @Post('logout')
     async logout(@Res({ passthrough: true }) res: any) {
         res.cookie('Authentication', '', {
