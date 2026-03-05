@@ -31,13 +31,16 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      // same-origin / server-to-server запросы могут быть без Origin
+      // same-origin / server-to-server запросы (nginx reverse proxy) — всегда разрешаем
       if (!origin) return callback(null, true);
 
       if (!isProd) {
         // DEV: разрешаем localhost/127.0.0.1 на любом порту
         return callback(null, devRegex.test(origin));
       }
+
+      // PROD: если CORS_ORIGIN не задан — разрешаем все (nginx уже проксирует)
+      if (prodList.length === 0) return callback(null, true);
 
       // PROD: только whitelisted домены
       return callback(null, prodList.includes(origin));

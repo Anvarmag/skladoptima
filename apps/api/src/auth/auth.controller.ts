@@ -14,13 +14,13 @@ export class AuthController {
         const user = await this.authService.validateUser(loginDto);
         const { access_token } = await this.authService.login(user);
 
-        const isProd = process.env.NODE_ENV === 'production';
+        const useSecure = process.env.FORCE_HTTPS === 'true';
 
         // Cookie для авторизации
         res.cookie('Authentication', access_token, {
             httpOnly: true,
-            secure: isProd,                 // HTTPS только на проде
-            sameSite: isProd ? 'strict' : 'lax', // На локалке мягче
+            secure: useSecure,
+            sameSite: useSecure ? 'strict' : 'lax',
             path: '/',
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
         });
@@ -34,12 +34,12 @@ export class AuthController {
         const user = await this.authService.validateTelegramAuth(initData);
         const { access_token } = await this.authService.login(user);
 
-        const isProd = process.env.NODE_ENV === 'production';
+        const useSecure = process.env.FORCE_HTTPS === 'true';
 
         res.cookie('Authentication', access_token, {
             httpOnly: true,
-            secure: isProd,
-            sameSite: isProd ? 'none' : 'lax', // 'none' for Telegram iframe on prod
+            secure: useSecure,
+            sameSite: useSecure ? 'none' : 'lax',
             path: '/',
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
