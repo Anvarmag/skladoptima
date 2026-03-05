@@ -9,12 +9,13 @@
 **Sklad Optima** — production-ready MVP веб-сервис для управления складскими остатками с двусторонней интеграцией маркетплейсов **Wildberries** и **Ozon**.
 
 ### Ключевые возможности
-- 🔐 Защищённая JWT-авторизация (httpOnly cookies)
+- 🔐 Защищённая JWT-авторизация (httpOnly cookies) с поддержкой Multi-tenancy
+- 🏢 Поддержка нескольких магазинов в одной БД (изоляция данных)
 - 📦 CRUD товаров с загрузкой фото и учётом остатков
-- 🔄 Автоматическая синхронизация остатков WB ↔ Sklad ↔ Ozon (каждые 60 сек)
+- 🔄 Автоматическая синхронизация остатков WB ↔ Sklad ↔ Ozon (каждые 60 сек) для каждого магазина
 - 📥 Обработка заказов с маркетплейсов (авто-списание)
 - 🧮 Ручная корректировка остатков (delta ±N)
-- 🕒 Полный аудит всех действий
+- 🕒 Полный аудит всех действий внутри магазина
 - 📊 Импорт товаров из Excel (WB-формат)
 
 ---
@@ -102,11 +103,20 @@ NestJS API (порт 3000, prefix /api)
     ▼
 PostgreSQL (Docker)
     │
-    ▼  (фоновый процесс каждые 60 сек)
-SyncService
-    ├──→ WB Marketplace API  (pull остатков, push остатков, pull заказов)
-    └──→ Ozon Seller API     (pull остатков, push остатков, pull заказов)
+    ▼  (фоновый процесс синхронизации)
+SyncService (syncAllStores)
+    ├──→ Store 1 (WB/Ozon)
+    ├──→ Store 2 (WB/Ozon)
+    └──→ ...
 ```
+
+### Изоляция данных (Multi-tenancy)
+
+Все данные в системе привязаны к `Store` через внешний ключ `storeId`.
+1. **JWT**: При входе/регистрации `storeId` записывается в payload токена.
+2. **Strategy**: `JwtStrategy` извлекает `storeId` и записывает его в `req.user`.
+3. **Controllers**: Передают `req.user.storeId` в сервисы.
+4. **Services**: Используют `storeId` как обязательный фильтр во всех запросах Prisma.
 
 ---
 
@@ -130,13 +140,15 @@ SyncService
 
 ## Связанные документы
 
-| Документ | Содержит |
-|----------|----------|
-| [DATABASE.md](./DATABASE.md) | Все модели Prisma, поля, типы данных, enum'ы, связи |
-| [API.md](./API.md) | Все REST endpoints с request/response, DTO, guards |
-| [SYNC.md](./SYNC.md) | Алгоритм синхронизации, ping-pong prevention, обработка заказов |
-| [FRONTEND.md](./FRONTEND.md) | React компоненты, роутинг, state, взаимодействие с API |
-| [DEPLOYMENT.md](./DEPLOYMENT.md) | Docker Compose, .env переменные, деплой на VPS, healthchecks |
+## Техническая документация
+- [ARCHITECTURE.md](file:///c:/Skladoptima/docs/ARCHITECTURE.md) — описание новой архитектуры БД и потока данных.
+- [API.md](file:///c:/Skladoptima/docs/API.md) — перечень новых эндпоинтов (register, store settings).
+- [Wildberries API](https://dev.wildberries.ru/docs/openapi/api-information) — официальная документация WB.
+- [Ozon API](https://docs.ozon.ru/global/api/intro) — официальная документация Ozon.
+- [DATABASE.md](./DATABASE.md) — Все модели Prisma, поля, типы данных, enum'ы, связи
+- [SYNC.md](./SYNC.md) — Алгоритм синхронизации, ping-pong prevention, обработка заказов
+- [FRONTEND.md](./FRONTEND.md) — React компоненты, роутинг, state, взаимодействие с API
+- [DEPLOYMENT.md](./DEPLOYMENT.md) — Docker Compose, .env переменные, деплой на VPS, healthchecks
 
 ---
 

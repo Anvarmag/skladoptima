@@ -8,6 +8,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Store {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  products            Product[]
+  marketplaceOrders   MarketplaceOrder[]
+  auditLogs           AuditLog[]
+  marketplaceSettings MarketplaceSettings?
+}
+
 model User {
   id         String   @id @default(uuid())
   email      String   @unique
@@ -15,18 +28,21 @@ model User {
   telegramId String?  @unique
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
 
 model Product {
   id        String    @id @default(uuid())
-  sku       String    @unique
+  sku       String
   name      String
   photo     String?   // URL or path to uploaded file
   total     Int       @default(0)
   reserved  Int       @default(0)
 
   // Marketplace barcodes for matching
-  wbBarcode String?   @unique
+  wbBarcode String?
 
   // Marketplace cached stock
   ozonFbs   Int       @default(0)
@@ -39,7 +55,11 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Marketplace configuration for actual integration
+  storeId   String
+  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, sku]) // SKU unique per store
+  @@unique([storeId, wbBarcode]) // Barcode unique per store
 }
 
 enum ActionType {
@@ -53,7 +73,7 @@ enum ActionType {
 // Track processed orders to prevent double-deduction
 model MarketplaceOrder {
   id                 String   @id @default(uuid())
-  marketplaceOrderId String   @unique // WB Order ID or Ozon Posting Number
+  marketplaceOrderId String   // WB Order ID or Ozon Posting Number
   marketplace        String   // "WB" or "OZON"
   productSku         String?
   productNames       String?  // Названия товаров
@@ -68,6 +88,11 @@ model MarketplaceOrder {
   
   createdAt          DateTime @default(now())
   processedAt        DateTime @default(now())
+
+  storeId            String
+  store              Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, marketplaceOrderId]) // Order ID unique per store
 }
 
 model AuditLog {
@@ -87,14 +112,13 @@ model AuditLog {
   
   actorEmail  String
   note        String?
+
+  storeId     String
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
 
-// ==========================================
-// PLACEHOLDERS FOR FUTURE (Not used in MVP)
-// ==========================================
-
 model MarketplaceSettings {
-  id              String   @id @default(dbgenerated("1")) @unique
+  id              String   @id @default(uuid())
   ozonClientId    String?
   ozonApiKey      String?
   ozonWarehouseId String?
@@ -103,7 +127,7 @@ model MarketplaceSettings {
   wbWarehouseId   String?
 
   updatedAt DateTime @updatedAt
+
+  storeId         String   @unique
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
 }
-
-
-// Removed ProductMarketplaceLink for MVP since we use direct columns

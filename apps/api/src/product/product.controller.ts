@@ -27,16 +27,18 @@ export class ProductController {
         @Req() req: any
     ) {
         const photoPath = file ? `/uploads/${file.filename}` : null;
-        return this.productService.create(createProductDto, photoPath, req.user.email);
+        return this.productService.create(createProductDto, photoPath, req.user.email, req.user.storeId);
     }
 
     @Get()
     findAll(
+        @Req() req: any,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
         @Query('search') search?: string,
     ) {
         return this.productService.findAll(
+            req.user.storeId,
             page ? parseInt(page, 10) : 1,
             limit ? parseInt(limit, 10) : 20,
             search,
@@ -44,8 +46,8 @@ export class ProductController {
     }
 
     @Get(':id')
-    findOne(@Param('id') id: string) {
-        return this.productService.findOne(id);
+    findOne(@Param('id') id: string, @Req() req: any) {
+        return this.productService.findOne(id, req.user.storeId);
     }
 
     @Put(':id')
@@ -65,7 +67,7 @@ export class ProductController {
         @Req() req: any
     ) {
         const photoPath = file ? `/uploads/${file.filename}` : null;
-        return this.productService.update(id, updateProductDto, photoPath, req.user.email);
+        return this.productService.update(id, updateProductDto, photoPath, req.user.email, req.user.storeId);
     }
 
     @Post(':id/stock-adjust')
@@ -74,16 +76,16 @@ export class ProductController {
         @Body() adjustStockDto: AdjustStockDto,
         @Req() req: any
     ) {
-        return this.productService.adjustStock(id, adjustStockDto.delta, req.user.email, adjustStockDto.note);
+        return this.productService.adjustStock(id, adjustStockDto.delta, req.user.email, req.user.storeId, adjustStockDto.note);
     }
 
     @Delete(':id')
     remove(@Param('id') id: string, @Req() req: any) {
-        return this.productService.remove(id, req.user.email);
+        return this.productService.remove(id, req.user.email, req.user.storeId);
     }
 
     @Post('import')
     importProducts(@Body() body: { items: Array<{ sku: string; name: string; wbBarcode?: string }> }, @Req() req: any) {
-        return this.productService.importFromWb(body.items, req.user.email);
+        return this.productService.importFromWb(body.items, req.user.email, req.user.storeId);
     }
 }

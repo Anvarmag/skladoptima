@@ -88,7 +88,7 @@ export default function Products() {
                     try { await axios.post('/sync/metadata'); } catch { /* ignore */ }
                 }
             } else if (selectedProduct) {
-                await axios.put(`/ products / ${selectedProduct.id} `, data);
+                await axios.put(`/products/${selectedProduct.id}`, data);
             }
             setIsModalOpen(false);
             fetchProducts();
@@ -116,7 +116,7 @@ export default function Products() {
         e.preventDefault();
         try {
             if (!selectedProduct) return;
-            await axios.post(`/ products / ${selectedProduct.id}/stock-adjust`, {
+            await axios.post(`/products/${selectedProduct.id}/stock-adjust`, {
                 delta: adjustDelta,
                 note: 'Ручная корректировка',
             });
@@ -556,6 +556,7 @@ export default function Products() {
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-1">Изображение (опционально)</label>
                                     <input type="file" accept="image/*" onChange={e => setFormData({ ...formData, file: e.target.files?.[0] || null })} className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                                    <p className="text-xs text-slate-400 mt-1">JPG, PNG, WebP. Максимум 10 МБ</p>
                                 </div>
 
                                 <div className="mt-8 flex justify-end gap-3">

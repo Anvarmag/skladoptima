@@ -40,6 +40,10 @@ declare global {
 interface User {
     id: string;
     email: string;
+    store?: {
+        id: string;
+        name: string;
+    };
 }
 
 interface AuthContextType {

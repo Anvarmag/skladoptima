@@ -14,15 +14,16 @@ export class AuthService {
 
     async validateUser(loginDto: LoginDto): Promise<any> {
         const user = await this.userService.findByEmail(loginDto.email);
-        if (user && (await bcrypt.compare(loginDto.password, user.password))) {
-            const { password, ...result } = user;
-            return result;
+        if (!user || !(await bcrypt.compare(loginDto.password, user.password))) {
+            throw new UnauthorizedException('Invalid email or password');
         }
-        throw new UnauthorizedException('Invalid email or password');
+
+        const { password, ...result } = user;
+        return result;
     }
 
     async login(user: any) {
-        const payload = { email: user.email, sub: user.id };
+        const payload = { email: user.email, sub: user.id, storeId: user.storeId };
         return {
             access_token: this.jwtService.sign(payload),
         };
@@ -80,6 +81,10 @@ export class AuthService {
         let user = await this.userService.findByTelegramId(telegramId);
         if (!user) {
             user = await this.userService.createTelegramUser(telegramId, displayName);
+        }
+
+        if (!user) {
+            throw new UnauthorizedException('Failed to create or find Telegram user');
         }
 
         const { password, ...result } = user;

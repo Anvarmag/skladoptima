@@ -25,7 +25,34 @@
 ```json
 {
   "message": "Logged in successfully",
-  "user": { "id": "uuid", "email": "admin@sklad.ru", "createdAt": "..." }
+  "user": { 
+    "id": "uuid", 
+    "email": "admin@sklad.ru", 
+    "store": { "id": "uuid", "name": "Название магазина" }
+  }
+}
+```
+
+---
+
+### `POST /api/auth/register` 🔓 Public
+
+Регистрация нового пользователя и магазина.
+
+**Body (JSON):**
+```json
+{
+  "email": "user@example.com",
+  "password": "password123",
+  "storeName": "Мой Новый Магазин"
+}
+```
+
+**Response 201:**
+```json
+{
+  "message": "Registered successfully",
+  "user": { "id": "uuid", "email": "user@example.com", "store": { "name": "..." } }
 }
 ```
 
@@ -55,7 +82,7 @@
 
 **Response 200:**
 ```json
-{ "id": "uuid", "email": "admin@sklad.ru" }
+{ "id": "uuid", "email": "admin@sklad.ru", "store": { "id": "uuid", "name": "..." } }
 ```
 
 ---
@@ -281,6 +308,33 @@ Debug: список складов WB продавца.
 Обновить ключи.
 
 **Body (JSON):** любые из полей `ozonClientId`, `ozonApiKey`, `ozonWarehouseId`, `wbApiKey`, `wbStatApiKey`, `wbWarehouseId`.
+
+---
+
+### `GET /api/settings/store` 🔒 JWT
+
+Получить информацию о текущем магазине.
+
+**Response 200:**
+```json
+{
+  "id": "uuid",
+  "name": "Название магазина"
+}
+```
+
+---
+
+### `PUT /api/settings/store` 🔒 JWT
+
+Обновить название магазина.
+
+**Body (JSON):**
+```json
+{
+  "name": "Новое название"
+}
+```
 
 ---
 

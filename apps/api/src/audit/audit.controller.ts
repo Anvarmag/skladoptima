@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, Req } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { ActionType } from '@prisma/client';
 
@@ -8,12 +8,14 @@ export class AuditController {
 
     @Get()
     async getLogs(
+        @Req() req: any,
         @Query('page') page?: string,
         @Query('limit') limit?: string,
         @Query('actionType') actionType?: ActionType,
         @Query('search') search?: string,
     ) {
         return this.auditService.getLogs(
+            req.user.storeId,
             page ? parseInt(page, 10) : 1,
             limit ? parseInt(limit, 10) : 20,
             actionType,

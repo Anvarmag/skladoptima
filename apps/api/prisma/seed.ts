@@ -17,6 +17,9 @@ async function main() {
         create: {
             email,
             password: hashedPassword,
+            store: {
+                create: { name: 'Админ Склад' }
+            }
         },
     });
 

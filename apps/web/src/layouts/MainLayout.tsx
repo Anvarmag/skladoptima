@@ -54,7 +54,14 @@ export default function MainLayout() {
             <div className="hidden md:flex md:w-64 md:flex-col border-r border-slate-200 bg-white">
                 <Link to="/app" className="flex h-16 shrink-0 items-center px-6 border-b border-slate-200 hover:bg-slate-50 transition-colors">
                     <Package className="h-8 w-8 text-blue-600 mr-2" />
-                    <span className="text-xl font-bold text-slate-900 tracking-tight">Sklad Optima</span>
+                    <div>
+                        <div className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Sklad Optima</div>
+                        {user?.store?.name && (
+                            <div className="text-[10px] uppercase tracking-wider text-blue-600 font-bold truncate max-w-[160px]">
+                                {user.store.name}
+                            </div>
+                        )}
+                    </div>
                 </Link>
                 <div className="flex flex-1 flex-col overflow-y-auto">
                     <nav className="flex-1 space-y-1 px-4 py-6">
@@ -112,7 +119,14 @@ export default function MainLayout() {
             <div className="md:hidden flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 fixed top-0 w-full z-10">
                 <Link to="/app" className="flex items-center">
                     <Package className="h-7 w-7 text-blue-600" />
-                    <span className="ml-2 text-lg font-bold text-slate-900">Sklad</span>
+                    <div className="ml-2 flex flex-col">
+                        <span className="text-lg font-bold text-slate-900 leading-none">Sklad</span>
+                        {user?.store?.name && (
+                            <span className="text-[10px] text-blue-600 font-bold truncate max-w-[120px]">
+                                {user.store.name}
+                            </span>
+                        )}
+                    </div>
                 </Link>
                 {!isTelegram && (
                     <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">

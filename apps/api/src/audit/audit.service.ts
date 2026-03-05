@@ -17,15 +17,16 @@ export class AuditService {
         afterName?: string;
         actorEmail: string;
         note?: string;
+        storeId: string;
     }) {
         return this.prisma.auditLog.create({
             data,
         });
     }
 
-    async getLogs(page = 1, limit = 20, actionType?: ActionType, searchSku?: string) {
+    async getLogs(storeId: string, page = 1, limit = 20, actionType?: ActionType, searchSku?: string) {
         const skip = (page - 1) * limit;
-        const where: any = {};
+        const where: any = { storeId };
 
         if (actionType) {
             where.actionType = actionType;

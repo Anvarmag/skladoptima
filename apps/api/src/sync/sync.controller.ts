@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Query } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, Req } from '@nestjs/common';
 import { SyncService } from './sync.service';
 
 @Controller('sync')
@@ -6,53 +6,53 @@ export class SyncController {
     constructor(private readonly syncService: SyncService) { }
 
     @Post('product/:id')
-    syncProduct(@Param('id') id: string) {
-        return this.syncService.syncProductToMarketplaces(id);
+    syncProduct(@Param('id') id: string, @Req() req: any) {
+        return this.syncService.syncProductToMarketplaces(id, req.user.storeId);
     }
 
     @Post('test/wb')
-    testWb() {
-        return this.syncService.testWbConnection();
+    testWb(@Req() req: any) {
+        return this.syncService.testWbConnection(req.user.storeId);
     }
 
     @Post('test/ozon')
-    testOzon() {
-        return this.syncService.testOzonConnection();
+    testOzon(@Req() req: any) {
+        return this.syncService.testOzonConnection(req.user.storeId);
     }
 
     // Временный endpoint — посмотреть текущие остатки на складе WB
     @Get('wb/stocks')
-    getWbStocks() {
-        return this.syncService.fetchWbStocks();
+    getWbStocks(@Req() req: any) {
+        return this.syncService.fetchWbStocks(req.user.storeId);
     }
 
     @Get('wb/warehouses')
-    getWbWarehouses() {
-        return this.syncService.fetchWbWarehouses();
+    getWbWarehouses(@Req() req: any) {
+        return this.syncService.fetchWbWarehouses(req.user.storeId);
     }
 
     @Post('pull/wb')
-    pullFromWb() {
-        return this.syncService.pullFromWb();
+    pullFromWb(@Req() req: any) {
+        return this.syncService.pullFromWb(req.user.storeId);
     }
 
     @Get('orders')
-    getOrders(@Query() query: any) {
-        return this.syncService.getMarketplaceOrders(query);
+    getOrders(@Req() req: any, @Query() query: any) {
+        return this.syncService.getMarketplaceOrders(req.user.storeId, query);
     }
 
     @Post('orders/poll')
-    pollOrders() {
-        return this.syncService.forcePollOrders();
+    pollOrders(@Req() req: any) {
+        return this.syncService.forcePollOrders(req.user.storeId);
     }
 
     @Get('order/:id/details')
-    getOrderDetails(@Param('id') id: string) {
-        return this.syncService.getOrderDetails(id);
+    getOrderDetails(@Param('id') id: string, @Req() req: any) {
+        return this.syncService.getOrderDetails(id, req.user.storeId);
     }
 
     @Post('metadata')
-    syncMetadata() {
-        return this.syncService.syncProductMetadata();
+    syncMetadata(@Req() req: any) {
+        return this.syncService.syncProductMetadata(req.user.storeId);
     }
 }

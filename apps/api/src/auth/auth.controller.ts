@@ -1,12 +1,36 @@
 import { Controller, Post, Body, Res, Get, UseGuards, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
+import { UserService } from '../user/user.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { Public } from './public.decorator';
 
 @Controller('auth')
 export class AuthController {
-    constructor(private readonly authService: AuthService) { }
+    constructor(
+        private readonly authService: AuthService,
+        private readonly userService: UserService
+    ) { }
+
+    @Public()
+    @Post('register')
+    async register(@Body() registerDto: RegisterDto, @Res({ passthrough: true }) res: any) {
+        const user = await this.userService.registerUser(registerDto.email, registerDto.password, registerDto.storeName);
+        const { access_token } = await this.authService.login(user);
+
+        const useSecure = process.env.FORCE_HTTPS === 'true';
+
+        res.cookie('Authentication', access_token, {
+            httpOnly: true,
+            secure: useSecure,
+            sameSite: useSecure ? 'strict' : 'lax',
+            path: '/',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        return { message: 'Registered successfully', user, access_token };
+    }
 
     @Public()
     @Post('login')
@@ -25,7 +49,7 @@ export class AuthController {
             maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
         });
 
-        return { message: 'Logged in successfully', user };
+        return { message: 'Logged in successfully', user, access_token };
     }
 
     @Public()
@@ -44,7 +68,7 @@ export class AuthController {
             maxAge: 7 * 24 * 60 * 60 * 1000,
         });
 
-        return { message: 'Telegram auth successful', user };
+        return { message: 'Telegram auth successful', user, access_token };
     }
 
     @Public()
