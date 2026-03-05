@@ -58,6 +58,10 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt/live/skladoptima.ru/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      - /etc/letsencrypt/live/skladoptima.ru/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
     depends_on:
       api:
         condition: service_healthy
