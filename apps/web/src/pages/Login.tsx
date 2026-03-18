@@ -10,7 +10,7 @@ export default function Login() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
 
-    const { checkAuth } = useAuth();
+    const { checkAuth, isTelegram, linkAccountViaTelegram } = useAuth() as any;
     const navigate = useNavigate();
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -18,11 +18,20 @@ export default function Login() {
         setError('');
         setLoading(true);
         try {
-            await axios.post('/auth/login', { email, password });
-            await checkAuth();
+            if (isTelegram) {
+                await linkAccountViaTelegram(email, password);
+            } else {
+                await axios.post('/auth/login', { email, password });
+                await checkAuth();
+            }
             navigate('/app');
         } catch (err: any) {
-            setError(err.response?.data?.message || 'Ошибка входа');
+            const msg = err.response?.data?.message;
+            if (msg === 'telegram_already_linked_elsewhere') {
+                setError('Этот Telegram уже привязан к другому аккаунту');
+            } else {
+                setError(msg || 'Ошибка входа');
+            }
         } finally {
             setLoading(false);
         }
@@ -35,7 +44,7 @@ export default function Login() {
                     <Package size={48} />
                 </div>
                 <h2 className="mt-6 text-center text-3xl font-bold tracking-tight text-slate-900">
-                    Sklad Optima
+                    {isTelegram ? 'Привязка аккаунта' : 'Sklad Optima'}
                 </h2>
                 <p className="mt-2 text-center text-sm text-slate-600">
                     Управление остатками

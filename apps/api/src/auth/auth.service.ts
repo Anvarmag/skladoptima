@@ -30,19 +30,55 @@ export class AuthService {
     }
 
     async validateTelegramAuth(initData: string) {
+        const telegramId = await this.extractTelegramId(initData);
+
+        // Find user by telegramId
+        const user = await this.userService.findByTelegramId(telegramId);
+        if (!user) {
+            // Note: We no longer auto-create users here to allow manual linking
+            throw new UnauthorizedException('account_not_linked');
+        }
+
+        const { password, ...result } = user;
+        return result;
+    }
+
+    async linkTelegramAccount(initData: string, loginDto: LoginDto) {
+        const telegramId = await this.extractTelegramId(initData);
+
+        // Validate existing user credentials
+        const user = await this.validateUser(loginDto);
+
+        // Check if this telegramId is already linked to SOMEONE ELSE
+        const existingTgUser = await this.userService.findByTelegramId(telegramId);
+        if (existingTgUser && existingTgUser.id !== user.id) {
+            throw new UnauthorizedException('telegram_already_linked_elsewhere');
+        }
+
+        // Link the account
+        const updatedUser = await this.userService.updateTelegramId(user.id, telegramId);
+        const { password: _, ...result } = updatedUser;
+        return result;
+    }
+
+    async unlinkTelegramAccount(userId: string) {
+        const updatedUser = await this.userService.updateTelegramId(userId, null);
+        const { password: _, ...result } = updatedUser;
+        return result;
+    }
+
+    private async extractTelegramId(initData: string): Promise<string> {
         const botToken = process.env.TELEGRAM_BOT_TOKEN;
         if (!botToken) {
             throw new UnauthorizedException('Telegram bot token not configured');
         }
 
-        // Parse initData as URLSearchParams
         const params = new URLSearchParams(initData);
         const hash = params.get('hash');
         if (!hash) {
-            throw new UnauthorizedException('Invalid Telegram initData: no hash');
+            throw new UnauthorizedException('Invalid Telegram initData');
         }
 
-        // Build data-check-string (sorted alphabetically, excluding hash)
         const dataCheckArr: string[] = [];
         params.forEach((value, key) => {
             if (key !== 'hash') {
@@ -52,7 +88,6 @@ export class AuthService {
         dataCheckArr.sort();
         const dataCheckString = dataCheckArr.join('\n');
 
-        // HMAC-SHA256 validation per Telegram spec
         const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
         const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
@@ -60,34 +95,12 @@ export class AuthService {
             throw new UnauthorizedException('Invalid Telegram signature');
         }
 
-        // Check auth_date is not too old (5 minutes)
-        const authDate = parseInt(params.get('auth_date') || '0', 10);
-        const now = Math.floor(Date.now() / 1000);
-        if (now - authDate > 300) {
-            throw new UnauthorizedException('Telegram auth data expired');
-        }
-
-        // Extract user from initData
         const userDataStr = params.get('user');
         if (!userDataStr) {
-            throw new UnauthorizedException('No user data in Telegram initData');
+            throw new UnauthorizedException('No user data');
         }
 
         const tgUser = JSON.parse(userDataStr);
-        const telegramId = tgUser.id.toString();
-        const displayName = tgUser.first_name || tgUser.username || `tg_${telegramId}`;
-
-        // Find or create user
-        let user = await this.userService.findByTelegramId(telegramId);
-        if (!user) {
-            user = await this.userService.createTelegramUser(telegramId, displayName);
-        }
-
-        if (!user) {
-            throw new UnauthorizedException('Failed to create or find Telegram user');
-        }
-
-        const { password, ...result } = user;
-        return result;
+        return tgUser.id.toString();
     }
 }

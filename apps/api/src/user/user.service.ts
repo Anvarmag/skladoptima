@@ -97,6 +97,14 @@ export class UserService implements OnModuleInit {
         });
     }
 
+    async updateTelegramId(userId: string, telegramId: string | null) {
+        return this.prisma.user.update({
+            where: { id: userId },
+            data: { telegramId },
+            include: { store: true }
+        });
+    }
+
     async createTelegramUser(telegramId: string, displayName: string) {
         const randomPass = require('crypto').randomBytes(32).toString('hex');
         const hashedPassword = await bcrypt.hash(randomPass, 10);

@@ -36,6 +36,11 @@ export class SyncController {
         return this.syncService.pullFromWb(req.user.storeId);
     }
 
+    @Post('pull/ozon')
+    pullFromOzon(@Req() req: any) {
+        return this.syncService.pullFromOzon(req.user.storeId);
+    }
+
     @Get('orders')
     getOrders(@Req() req: any, @Query() query: any) {
         return this.syncService.getMarketplaceOrders(req.user.storeId, query);
@@ -54,5 +59,10 @@ export class SyncController {
     @Post('metadata')
     syncMetadata(@Req() req: any) {
         return this.syncService.syncProductMetadata(req.user.storeId);
+    }
+
+    @Post('full-sync')
+    fullSync(@Req() req: any) {
+        return this.syncService.fullSync(req.user.storeId);
     }
 }

@@ -8,17 +8,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum TaxSystem {
+  USN_6
+  USN_15
+  OSNO
+  NPD
+}
+
 model Store {
   id        String   @id @default(uuid())
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Taxation settings
+  taxSystem           TaxSystem @default(USN_6)
+  vatThresholdExceeded Boolean   @default(false) // For USN with VAT (2025+ rules)
+
   users               User[]
   products            Product[]
   marketplaceOrders   MarketplaceOrder[]
   auditLogs           AuditLog[]
   marketplaceSettings MarketplaceSettings?
+  marketplaceReports  MarketplaceReport[]
 }
 
 model User {
@@ -40,6 +52,23 @@ model Product {
   photo     String?   // URL or path to uploaded file
   total     Int       @default(0)
   reserved  Int       @default(0)
+
+  // Financial fields
+  purchasePrice Float?     @default(0) // Себестоимость закупочная
+  minPrice      Float?     // Минимально допустимая цена для рекомендаций
+  vatRate       Int        @default(0) // 0, 10, 20
+  commissionRate Float?     // Комиссия маркетплейса (в %)
+  logisticsCost  Float?     // Стоимость логистики (на ед.)
+  
+  // Dimensions and Category for automated fee calculation
+  category      String?    // Категория товара на маркетплейсе
+  width         Float?     // Ширина упаковки (см)
+  height        Float?     // Высота упаковки (см)
+  length        Float?     // Длина упаковки (см)
+  weight        Float?     // Вес с упаковкой (кг)
+
+  // Analytics fields
+  rating        Float?     @default(0) // Рейтинг из маркетплейса
 
   // Marketplace barcodes for matching
   wbBarcode String?
@@ -80,12 +109,17 @@ model MarketplaceOrder {
   quantity           Int
   
   status             String?  // Статус из МП
-  totalAmount        Float?   // Сумма заказа
+  totalAmount        Float?   // Сумма заказа (реализация)
+  sellerPrice        Float?   // Цена продавца в ЛК (для расчета налогов)
   currency           String?  @default("RUB")
   shipmentDate       DateTime? // Дата отгрузки
   marketplaceCreatedAt DateTime? // Дата создания в МП
   deliveryMethod     String?  // Способ доставки
   
+  // Locations for analytics
+  region             String?  // Регион/Область
+  city               String?  // Город
+
   createdAt          DateTime @default(now())
   processedAt        DateTime @default(now())
 
@@ -93,6 +127,31 @@ model MarketplaceOrder {
   store              Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
 
   @@unique([storeId, marketplaceOrderId]) // Order ID unique per store
+}
+
+// Advanced financial reports from MP (Weekly realization reports, etc.)
+model MarketplaceReport {
+  id               String   @id @default(uuid())
+  reportId         String
+  marketplace      String   // "WB" or "OZON"
+  periodStart      DateTime
+  periodEnd        DateTime
+  
+  salesAmount      Float    @default(0)
+  returnsAmount    Float    @default(0)
+  commissionAmount Float    @default(0)
+  logisticsAmount  Float    @default(0)
+  storageAmount    Float    @default(0)
+  otherDeductions  Float    @default(0)
+  netToPay         Float    @default(0)
+  
+  rawJson          String?  // Store original data for debugging
+
+  createdAt        DateTime @default(now())
+  storeId          String
+  store            Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, reportId])
 }
 
 model AuditLog {
@@ -125,6 +184,12 @@ model MarketplaceSettings {
   wbApiKey        String?
   wbStatApiKey    String?
   wbWarehouseId   String?
+
+  // Sync Diagnostics
+  lastWbSyncAt    DateTime?
+  lastWbSyncError String?
+  lastOzonSyncAt    DateTime?
+  lastOzonSyncError String?
 
   updatedAt DateTime @updatedAt
 

@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Package, History, LogOut, Settings, ShoppingCart } from 'lucide-react';
+import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart } from 'lucide-react';
 import { useEffect } from 'react';
 
 export default function MainLayout() {
@@ -73,6 +73,22 @@ export default function MainLayout() {
                                 </>
                             )}
                         </NavLink>
+                        <NavLink to="/app/analytics" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <BarChart3 className={iconClass(isActive)} />
+                                    Аналитика
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/finance" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <PieChart className={iconClass(isActive)} />
+                                    Юнит-экономика
+                                </>
+                            )}
+                        </NavLink>
                         <NavLink to="/app/history" className={navClass}>
                             {({ isActive }) => (
                                 <>
@@ -128,11 +144,9 @@ export default function MainLayout() {
                         )}
                     </div>
                 </Link>
-                {!isTelegram && (
-                    <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
-                        <LogOut className="h-5 w-5" />
-                    </button>
-                )}
+                <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
+                    <LogOut className="h-5 w-5" />
+                </button>
             </div>
 
             {/* Main content */}
@@ -149,7 +163,23 @@ export default function MainLayout() {
                         {({ isActive }) => (
                             <>
                                 <Package className={mobileIconClass(isActive)} />
-                                <span>Остатки</span>
+                                <span>Склад</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/analytics" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <BarChart3 className={mobileIconClass(isActive)} />
+                                <span>Аналитика</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/finance" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <PieChart className={mobileIconClass(isActive)} />
+                                <span>Финансы</span>
                             </>
                         )}
                     </NavLink>

@@ -37,4 +37,50 @@ export class UpdateProductDto {
     @Type(() => Number)
     @Min(0)
     wbFbo?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    purchasePrice?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    commissionRate?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    logisticsCost?: number;
+
+    @IsString()
+    @IsOptional()
+    category?: string;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    width?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    height?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    length?: number;
+
+    @IsNumber()
+    @IsOptional()
+    @Type(() => Number)
+    @Min(0)
+    weight?: number;
 }

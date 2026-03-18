@@ -6,6 +6,8 @@ import { ProductModule } from './product/product.module';
 import { AuditModule } from './audit/audit.module';
 import { SettingsModule } from './settings/settings.module';
 import { SyncModule } from './sync/sync.module';
+import { FinanceModule } from './finance/finance.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { HealthModule } from './health/health.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -21,6 +23,8 @@ import { join } from 'path';
     AuditModule,
     SettingsModule,
     SyncModule,
+    FinanceModule,
+    AnalyticsModule,
     HealthModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),

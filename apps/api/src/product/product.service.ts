@@ -147,6 +147,14 @@ export class ProductService {
                 ...(updateDto.ozonFbo !== undefined && { ozonFbo: updateDto.ozonFbo }),
                 ...(updateDto.wbFbs !== undefined && { wbFbs: updateDto.wbFbs }),
                 ...(updateDto.wbFbo !== undefined && { wbFbo: updateDto.wbFbo }),
+                ...(updateDto.purchasePrice !== undefined && { purchasePrice: updateDto.purchasePrice }),
+                ...(updateDto.commissionRate !== undefined && { commissionRate: updateDto.commissionRate }),
+                ...(updateDto.logisticsCost !== undefined && { logisticsCost: updateDto.logisticsCost }),
+                ...(updateDto.category !== undefined && { category: updateDto.category }),
+                ...(updateDto.width !== undefined && { width: updateDto.width }),
+                ...(updateDto.height !== undefined && { height: updateDto.height }),
+                ...(updateDto.length !== undefined && { length: updateDto.length }),
+                ...(updateDto.weight !== undefined && { weight: updateDto.weight }),
             },
         });
 

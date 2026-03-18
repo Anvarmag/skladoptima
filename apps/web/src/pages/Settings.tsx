@@ -11,11 +11,16 @@ export default function Settings() {
     const [wbApiKey, setWbApiKey] = useState('');
     const [wbWarehouseId, setWbWarehouseId] = useState('');
     const [storeName, setStoreName] = useState('');
+    const [taxSystem, setTaxSystem] = useState('USN_6');
+    const [vatExceeded, setVatExceeded] = useState(false);
+    const [lastWbSync, setLastWbSync] = useState<{ at: string | null; error: string | null }>({ at: null, error: null });
+    const [lastOzonSync, setLastOzonSync] = useState<{ at: string | null; error: string | null }>({ at: null, error: null });
     const [saving, setSaving] = useState(false);
     const [savingStore, setSavingStore] = useState(false);
     const [message, setMessage] = useState({ text: '', type: '' });
     const [wbTest, setWbTest] = useState<{ status: TestStatus; msg: string }>({ status: 'idle', msg: '' });
     const [ozonTest, setOzonTest] = useState<{ status: TestStatus; msg: string }>({ status: 'idle', msg: '' });
+    const [syncing, setSyncing] = useState(false);
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -31,9 +36,19 @@ export default function Settings() {
                     setOzonWarehouseId(settingsRes.data.ozonWarehouseId || '');
                     setWbApiKey(settingsRes.data.wbApiKey || '');
                     setWbWarehouseId(settingsRes.data.wbWarehouseId || '');
+                    setLastWbSync({
+                        at: settingsRes.data.lastWbSyncAt,
+                        error: settingsRes.data.lastWbSyncError
+                    });
+                    setLastOzonSync({
+                        at: settingsRes.data.lastOzonSyncAt,
+                        error: settingsRes.data.lastOzonSyncError
+                    });
                 }
                 if (storeRes.data) {
                     setStoreName(storeRes.data.name || '');
+                    setTaxSystem(storeRes.data.taxSystem || 'USN_6');
+                    setVatExceeded(storeRes.data.vatThresholdExceeded || false);
                 }
             } catch (err) {
                 console.error('Failed to load settings', err);
@@ -47,8 +62,12 @@ export default function Settings() {
         setSavingStore(true);
         setMessage({ text: '', type: '' });
         try {
-            await axios.put('/settings/store', { name: storeName });
-            setMessage({ text: 'Название магазина обновлено', type: 'success' });
+            await axios.put('/settings/store', {
+                name: storeName,
+                taxSystem,
+                vatThresholdExceeded: vatExceeded
+            });
+            setMessage({ text: 'Настройки магазина обновлены', type: 'success' });
         } catch (err) {
             setMessage({ text: 'Ошибка обновления магазина', type: 'error' });
         } finally {
@@ -101,6 +120,53 @@ export default function Settings() {
         }
     };
 
+    const handleFullSync = async () => {
+        setSyncing(true);
+        setMessage({ text: '', type: '' });
+        try {
+            const { data } = await axios.post('/sync/full-sync');
+            if (data.success) {
+                setMessage({ text: 'Синхронизация успешно завершена!', type: 'success' });
+            } else {
+                setMessage({ text: 'Ошибка синхронизации: ' + data.error, type: 'error' });
+            }
+        } catch (err) {
+            setMessage({ text: 'Произошла ошибка при синхронизации', type: 'error' });
+        } finally {
+            setSyncing(false);
+            setTimeout(() => setMessage({ text: '', type: '' }), 4000);
+        }
+    };
+
+    const SyncStatusWidget = ({ marketplace, data }: { marketplace: 'WB' | 'OZON', data: { at: string | null, error: string | null } }) => {
+        if (!data.at && !data.error) return null;
+
+        const date = data.at ? new Date(data.at).toLocaleString('ru-RU') : 'Никогда';
+        const isError = !!data.error;
+
+        return (
+            <div className={`mt-2 p-3 rounded-lg border ${isError ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100'}`}>
+                <div className="flex items-center justify-between mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Посл. синхронизация: {date}</span>
+                    {isError ? (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-red-600 uppercase"><XCircle size={10} /> Ошибка</span>
+                    ) : (
+                        <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 uppercase"><CheckCircle size={10} /> Успешно</span>
+                    )}
+                </div>
+                {isError && (
+                    <p className="text-xs text-red-700 font-medium break-all">
+                        {data.error?.includes('Api-key is deactivated')
+                            ? 'API ключ деактивирован. Перевыпустите его в ЛК маркетплейса.'
+                            : data.error?.includes('403') || data.error?.includes('401')
+                                ? 'Ошибка авторизации. Проверьте права токена (Контент + Статистика).'
+                                : data.error}
+                    </p>
+                )}
+            </div>
+        );
+    };
+
     const TestBadge = ({ state }: { state: typeof wbTest }) => {
         if (state.status === 'idle') return null;
         if (state.status === 'loading') return <span className="flex items-center gap-1 text-sm text-slate-500"><Loader size={14} className="animate-spin" /> Проверка...</span>;
@@ -124,24 +190,79 @@ export default function Settings() {
                     </div>
                 </div>
 
-                <form onSubmit={handleSaveStore} className="flex items-end gap-4">
-                    <div className="flex-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Название магазина</label>
-                        <input
-                            type="text"
-                            value={storeName}
-                            onChange={e => setStoreName(e.target.value)}
-                            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                        />
+                <form onSubmit={handleSaveStore} className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Название магазина</label>
+                            <input
+                                type="text"
+                                value={storeName}
+                                onChange={e => setStoreName(e.target.value)}
+                                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Система налогообложения</label>
+                            <select
+                                value={taxSystem}
+                                onChange={e => setTaxSystem(e.target.value)}
+                                className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                            >
+                                <option value="USN_6">УСН Доходы (6%)</option>
+                                <option value="USN_15">УСН Доходы-Расходы (15%)</option>
+                                <option value="OSNO">ОСНО (Общая система)</option>
+                                <option value="NPD">НПД (Самозанятый)</option>
+                            </select>
+                        </div>
                     </div>
-                    <button
-                        type="submit"
-                        disabled={savingStore}
-                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all font-medium disabled:bg-blue-400 text-sm h-[42px]"
-                    >
-                        {savingStore ? 'Сохранение...' : 'Обновить'}
-                    </button>
+
+                    <div className="flex items-center gap-2 py-2">
+                        <input
+                            type="checkbox"
+                            id="vat"
+                            checked={vatExceeded}
+                            onChange={e => setVatExceeded(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
+                        />
+                        <label htmlFor="vat" className="text-sm font-medium text-slate-700">
+                            Превышен лимит 60 млн руб (НДС с 2025 года)
+                        </label>
+                    </div>
+
+                    <div className="flex justify-end pt-2">
+                        <button
+                            type="submit"
+                            disabled={savingStore}
+                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all font-medium disabled:bg-blue-400 text-sm"
+                        >
+                            {savingStore ? 'Сохранение...' : 'Обновить настройки'}
+                        </button>
+                    </div>
                 </form>
+            </div>
+
+            {/* ── Full Sync Control ─────────────────────────────── */}
+            <div className="bg-blue-600 p-6 rounded-xl shadow-md border border-blue-500 text-white relative overflow-hidden">
+                <div className="relative z-10">
+                    <h2 className="text-lg font-bold mb-2 flex items-center gap-2">
+                        <Loader className={`h-5 w-5 ${syncing ? 'animate-spin' : ''}`} />
+                        Полная синхронизация
+                    </h2>
+                    <p className="text-blue-100 text-sm mb-4 max-w-xl">
+                        Нажмите кнопку ниже, чтобы подтянуть актуальные данные по товарам, заказам и рейтингам из WB и Ozon.
+                        Это необходимо для работы разделов «Аналитика» и «Юнит-экономика».
+                    </p>
+                    <button
+                        onClick={handleFullSync}
+                        disabled={syncing}
+                        className="bg-white text-blue-600 px-6 py-2.5 rounded-lg font-bold hover:bg-blue-50 transition-colors disabled:opacity-70 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                        {syncing ? <><Loader className="animate-spin h-4 w-4" /> Синхронизация...</> : 'Запустить полное обновление данных'}
+                    </button>
+                </div>
+                <div className="absolute top-0 right-0 p-8 text-blue-500/20 pointer-events-none">
+                    <Loader size={120} className={syncing ? 'animate-spin' : ''} />
+                </div>
             </div>
 
             {/* ── Ozon ──────────────────────────────────────────── */}
@@ -185,7 +306,10 @@ export default function Settings() {
                         <p className="text-xs text-slate-400 mt-1">ЛК Ozon → API ключи → API ключ</p>
                     </div>
                 </div>
-                <div className="flex justify-end border-t border-slate-50 pt-4">
+
+                <SyncStatusWidget marketplace="OZON" data={lastOzonSync} />
+
+                <div className="flex justify-end border-t border-slate-50 pt-4 mt-4">
                     <button type="submit" disabled={saving}
                         className="flex items-center px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 shadow-sm transition-all font-medium disabled:bg-slate-400 text-sm">
                         <Save size={16} className="mr-2" />
@@ -228,7 +352,10 @@ export default function Settings() {
                         <p className="text-xs text-slate-400 mt-1">ЛК WB → Настройки → Доступ к API → Токен. Чтобы видеть FBO-остатки, выберите права: <strong>Склад + Статистика</strong></p>
                     </div>
                 </div>
-                <div className="flex justify-end border-t border-slate-50 pt-4">
+
+                <SyncStatusWidget marketplace="WB" data={lastWbSync} />
+
+                <div className="flex justify-end border-t border-slate-50 pt-4 mt-4">
                     <button type="submit" disabled={saving}
                         className="flex items-center px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 shadow-sm transition-all font-medium disabled:bg-slate-400 text-sm">
                         <Save size={16} className="mr-2" />

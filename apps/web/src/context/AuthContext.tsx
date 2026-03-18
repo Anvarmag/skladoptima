@@ -82,18 +82,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const res = await axios.post('/auth/telegram', { initData });
             setUser(res.data.user);
-        } catch (error) {
-            console.error('Telegram auth failed, falling back to cookie auth', error);
-            // Fallback to standard cookie auth
-            await checkAuth();
+        } catch (error: any) {
+            if (error.response?.data?.message === 'account_not_linked') {
+                console.log('Telegram account not linked yet');
+                setUser(null);
+            } else {
+                console.error('Telegram auth failed', error);
+                await checkAuth();
+            }
         } finally {
             setLoading(false);
         }
     };
 
+    const linkAccountViaTelegram = async (email: string, password: string) => {
+        const tg = window.Telegram?.WebApp;
+        if (!tg || !tg.initData) return;
+
+        try {
+            const res = await axios.post('/auth/telegram/link', {
+                initData: tg.initData,
+                email,
+                password
+            });
+            setUser(res.data.user);
+            return res.data;
+        } catch (error: any) {
+            throw error;
+        }
+    };
+
     const logout = async () => {
         try {
-            await axios.post('/auth/logout');
+            if (isTelegram) {
+                await axios.post('/auth/telegram/unlink');
+            } else {
+                await axios.post('/auth/logout');
+            }
             setUser(null);
         } catch (error) {
             console.error('Logout error', error);
@@ -103,19 +128,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     useEffect(() => {
         const tg = window.Telegram?.WebApp;
         if (tg && tg.initData) {
-            // Running inside Telegram Mini App
             setIsTelegram(true);
             tg.ready();
             tg.expand();
             loginViaTelegram(tg.initData);
         } else {
-            // Standard browser — use cookie auth
             checkAuth();
         }
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, loading, isTelegram, checkAuth, logout }}>
+        <AuthContext.Provider value={{ user, loading, isTelegram, checkAuth, logout, linkAccountViaTelegram } as any}>
             {children}
         </AuthContext.Provider>
     );

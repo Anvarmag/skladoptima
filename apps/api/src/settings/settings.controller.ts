@@ -24,7 +24,7 @@ export class SettingsController {
     }
 
     @Put('store')
-    updateStore(@Req() req: any, @Body('name') name: string) {
-        return this.settingsService.updateStore(req.user.storeId, name);
+    updateStore(@Req() req: any, @Body() body: any) {
+        return this.settingsService.updateStore(req.user.storeId, body);
     }
 }

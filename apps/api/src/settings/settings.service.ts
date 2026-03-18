@@ -25,10 +25,14 @@ export class SettingsService {
         });
     }
 
-    async updateStore(storeId: string, name: string) {
+    async updateStore(storeId: string, dto: { name?: string, taxSystem?: any, vatThresholdExceeded?: boolean }) {
         return this.prisma.store.update({
             where: { id: storeId },
-            data: { name }
+            data: {
+                name: dto.name,
+                taxSystem: dto.taxSystem,
+                vatThresholdExceeded: dto.vatThresholdExceeded
+            }
         });
     }
 

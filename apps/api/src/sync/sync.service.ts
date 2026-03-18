@@ -43,25 +43,64 @@ export class SyncService implements OnModuleInit {
             this.logger.log(`[Store ${storeId}] WB FBS pull: updated ${wbResult.updated} products`);
         }
 
-        const wbFboResult: any = await this.pullWbFbo(storeId);
-        if (wbFboResult.updated > 0) {
-            this.logger.log(`[Store ${storeId}] WB FBO pull: updated ${wbFboResult.updated} products`);
-        }
-
-        const ozonResult: any = await this.pullFromOzon(storeId);
-        if (ozonResult.updated > 0) {
-            this.logger.log(`[Store ${storeId}] Ozon pull: updated ${ozonResult.updated} products`);
-        }
-
+        this.logger.log(`Starting scheduled sync for Store ${storeId}`);
+        await this.pullFromWb(storeId);
+        await this.pullFromOzon(storeId);
         await this.processWbOrders(storeId);
         await this.processOzonOrders(storeId);
         await this.syncProductMetadata(storeId, false);
+    }
+
+    async fullSync(storeId: string) {
+        this.logger.log(`[Store ${storeId}] Starting FULL SYNC...`);
+        try {
+            // 0. Discovery (Import new products first)
+            await this.importProductsFromWb(storeId);
+            await this.importProductsFromOzon(storeId);
+
+            // 1. Stocks & Prices
+            await this.pullFromWb(storeId);
+            await this.pullFromOzon(storeId);
+
+            // 2. History
+            await this.pullHistoryFromWb(storeId, 30);
+            await this.pullHistoryFromOzon(storeId, 30);
+
+            // 3. Pull metadata (ratings, photos)
+            await this.syncProductMetadata(storeId, true);
+
+            this.logger.log(`[Store ${storeId}] FULL SYNC COMPLETE.`);
+            return { success: true, message: 'Данные успешно синхронизированы' };
+        } catch (e: any) {
+            this.logger.error(`[Store ${storeId}] FULL SYNC FAILED: ${e.message}`);
+            return { success: false, error: e.message };
+        }
     }
 
     private async getSettings(storeId: string): Promise<any> {
         return this.prisma.marketplaceSettings.findUnique({
             where: { storeId }
         });
+    }
+
+    private async updateMarketplaceStatus(storeId: string, marketplace: 'WB' | 'OZON', error?: string | null) {
+        try {
+            const data: any = {};
+            if (marketplace === 'WB') {
+                data.lastWbSyncAt = new Date();
+                data.lastWbSyncError = error || null;
+            } else {
+                data.lastOzonSyncAt = new Date();
+                data.lastOzonSyncError = error || null;
+            }
+
+            await this.prisma.marketplaceSettings.update({
+                where: { storeId },
+                data
+            });
+        } catch (e) {
+            this.logger.error(`Failed to update sync status for store ${storeId}: ${e.message}`);
+        }
     }
 
     // ─── Batch Sync to WB ──────────────────────────────────────────────────────
@@ -235,9 +274,12 @@ export class SyncService implements OnModuleInit {
                 updatedCount += wbReconcileQueue.length;
             }
 
+            await this.updateMarketplaceStatus(storeId, 'WB', null);
             return { success: true, updated: updatedCount, total: wbStocks.length };
         } catch (err) {
             const e = err as AxiosError;
+            const errorMsg = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+            await this.updateMarketplaceStatus(storeId, 'WB', errorMsg);
             return { success: false, error: e.message, body: e.response?.data };
         }
     }
@@ -417,9 +459,12 @@ export class SyncService implements OnModuleInit {
                 updatedCount += ozonReconcileQueue.length;
             }
 
+            await this.updateMarketplaceStatus(storeId, 'OZON', null);
             return { success: true, updated: updatedCount, total: ozonItems.length };
         } catch (err) {
             const e = err as AxiosError;
+            const errorMsg = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+            await this.updateMarketplaceStatus(storeId, 'OZON', errorMsg);
             this.logger.error(`[Store ${storeId}] Ozon Pull Loop error: ${e.message}`);
             return { success: false, error: e.message, body: e.response?.data };
         }
@@ -831,9 +876,11 @@ export class SyncService implements OnModuleInit {
                         updatedCount++;
                     }
                 }
+                await this.updateMarketplaceStatus(storeId, 'WB', null);
             } catch (e: any) {
                 const errorData = e.response?.data ? JSON.stringify(e.response.data) : e.message;
                 this.logger.error(`[Store ${storeId}] [WB Metadata] Error: ${errorData}`);
+                await this.updateMarketplaceStatus(storeId, 'WB', errorData);
             }
         }
 
@@ -891,10 +938,12 @@ export class SyncService implements OnModuleInit {
                             updatedCount++;
                         }
                     }
+                    await this.updateMarketplaceStatus(storeId, 'OZON', null);
                 }
             } catch (e: any) {
                 const errorData = e.response?.data ? JSON.stringify(e.response.data) : e.message;
                 this.logger.error(`[Store ${storeId}] [Ozon Metadata] Error: ${errorData}`);
+                await this.updateMarketplaceStatus(storeId, 'OZON', errorData);
             }
         }
 
@@ -1020,5 +1069,192 @@ export class SyncService implements OnModuleInit {
         }
 
         return { success: false, error: 'API ключи маркетплейса не настроены' };
+    }
+
+    async pullHistoryFromWb(storeId: string, days: number = 30) {
+        const settings = await this.prisma.marketplaceSettings.findUnique({ where: { storeId } });
+        if (!settings?.wbApiKey) return;
+        this.logger.log(`[Store ${storeId}] Pulling WB history (last ${days} days)`);
+
+        try {
+            // Simplified: Pulling orders (marketplace-api doesn't give deep history easily without statistics-api)
+            // But we'll at least run the standard process which gets 'new' orders.
+            await this.processWbOrders(storeId);
+        } catch (e: any) {
+            this.logger.error(`[Store ${storeId}] WB History Pull Failed: ${e.message}`);
+        }
+    }
+
+    async pullHistoryFromOzon(storeId: string, days: number = 30) {
+        const settings = await this.prisma.marketplaceSettings.findUnique({ where: { storeId } });
+        if (!settings?.ozonApiKey || !settings?.ozonClientId) return;
+
+        try {
+            const now = new Date();
+            const since = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+
+            const res = await axios.post('https://api-seller.ozon.ru/v3/posting/fbs/list', {
+                filter: { since: since.toISOString(), to: now.toISOString() },
+                dir: 'DESC', limit: 100, with: { analytics_data: true }
+            }, {
+                headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
+                timeout: 30_000,
+            });
+
+            const postings = res.data?.result?.postings ?? [];
+            for (const posting of postings) {
+                const exists = await this.prisma.marketplaceOrder.findFirst({
+                    where: { marketplaceOrderId: posting.posting_number, storeId }
+                });
+
+                if (!exists) {
+                    await this.prisma.marketplaceOrder.create({
+                        data: {
+                            marketplaceOrderId: posting.posting_number,
+                            marketplace: 'OZON',
+                            productSku: posting.products[0]?.offer_id,
+                            productNames: posting.products.map((p: any) => p.name).join(', '),
+                            quantity: posting.products.reduce((acc: number, p: any) => acc + p.quantity, 0),
+                            status: posting.status,
+                            totalAmount: posting.products.reduce((acc: number, p: any) => acc + (parseFloat(p.price) * p.quantity), 0),
+                            marketplaceCreatedAt: posting.in_process_at ? new Date(posting.in_process_at) : new Date(),
+                            storeId
+                        }
+                    });
+                }
+            }
+        } catch (e: any) {
+            this.logger.error(`[Store ${storeId}] Ozon History Pull Failed: ${e.message}`);
+        }
+    }
+
+    async importProductsFromWb(storeId: string) {
+        const settings = await this.getSettings(storeId);
+        if (!settings?.wbApiKey) return;
+
+        this.logger.log(`[Store ${storeId}] Importing products from WB...`);
+        try {
+            const res = await axios.post('https://content-api.wildberries.ru/content/v2/get/cards/list', {
+                settings: { cursor: { limit: 100 }, filter: { withPhoto: -1 } }
+            }, {
+                headers: { Authorization: settings.wbApiKey },
+                timeout: 30_000
+            });
+
+            const cards = res.data?.cards || [];
+            for (const card of cards) {
+                const sku = card.vendorCode?.toString();
+                if (!sku) continue;
+
+                const existing = await this.prisma.product.findFirst({
+                    where: { sku, storeId }
+                });
+
+                if (!existing) {
+                    await this.prisma.product.create({
+                        data: {
+                            sku,
+                            name: card.title || sku,
+                            storeId,
+                            total: 0,
+                            reserved: 0,
+                            wbBarcode: card.sizes?.[0]?.skus?.[0]?.toString() || null,
+                            category: card.subjectName || null,
+                            width: card.dimensions?.width || null,
+                            height: card.dimensions?.height || null,
+                            length: card.dimensions?.length || null,
+                        }
+                    });
+                } else {
+                    // Update existing with metadata if missing
+                    await this.prisma.product.update({
+                        where: { id: existing.id },
+                        data: {
+                            deletedAt: null,
+                            category: existing.category || card.subjectName || null,
+                            width: existing.width || card.dimensions?.width || null,
+                            height: existing.height || card.dimensions?.height || null,
+                            length: existing.length || card.dimensions?.length || null,
+                        }
+                    });
+                }
+            }
+            await this.updateMarketplaceStatus(storeId, 'WB', null);
+        } catch (e: any) {
+            const err = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+            this.logger.error(`[Store ${storeId}] WB Product Import Failed: ${err}`);
+            await this.updateMarketplaceStatus(storeId, 'WB', err);
+        }
+    }
+
+    async importProductsFromOzon(storeId: string) {
+        const settings = await this.getSettings(storeId);
+        if (!settings?.ozonApiKey || !settings?.ozonClientId) return;
+
+        this.logger.log(`[Store ${storeId}] Importing products from Ozon...`);
+        try {
+            const res = await axios.post('https://api-seller.ozon.ru/v2/product/list', {
+                limit: 1000
+            }, {
+                headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
+                timeout: 30_000
+            });
+
+            const items = res.data?.result?.items || [];
+            const productIds = items.map((i: any) => i.product_id);
+
+            if (productIds.length > 0) {
+                const infoRes = await axios.post('https://api-seller.ozon.ru/v2/product/info/list', {
+                    product_id: productIds
+                }, {
+                    headers: { 'Client-Id': settings.ozonClientId, 'Api-Key': settings.ozonApiKey },
+                    timeout: 30_000
+                });
+
+                const details = infoRes.data?.result?.items || [];
+                for (const item of details) {
+                    const sku = item.offer_id?.toString();
+                    if (!sku) continue;
+
+                    const existing = await this.prisma.product.findFirst({
+                        where: { sku, storeId }
+                    });
+
+                    if (!existing) {
+                        await this.prisma.product.create({
+                            data: {
+                                sku,
+                                name: item.name || sku,
+                                storeId,
+                                total: 0,
+                                reserved: 0,
+                                category: item.category_id?.toString() || null,
+                                width: item.width || null,
+                                height: item.height || null,
+                                length: item.depth || null,
+                                weight: item.weight || null,
+                            }
+                        });
+                    } else {
+                        await this.prisma.product.update({
+                            where: { id: existing.id },
+                            data: {
+                                deletedAt: null,
+                                category: existing.category || item.category_id?.toString() || null,
+                                width: existing.width || item.width || null,
+                                height: existing.height || item.height || null,
+                                length: existing.length || item.depth || null,
+                                weight: existing.weight || item.weight || null,
+                            }
+                        });
+                    }
+                }
+            }
+            await this.updateMarketplaceStatus(storeId, 'OZON', null);
+        } catch (e: any) {
+            const err = e.response?.data ? JSON.stringify(e.response.data) : e.message;
+            this.logger.error(`[Store ${storeId}] Ozon Product Import Failed: ${err}`);
+            await this.updateMarketplaceStatus(storeId, 'OZON', err);
+        }
     }
 }
