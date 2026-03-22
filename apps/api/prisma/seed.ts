@@ -1,4 +1,4 @@
-import { PrismaClient, TaxSystem } from '@prisma/client';
+import { PrismaClient, TaxSystem, Role, MarketplaceType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient();
@@ -8,25 +8,42 @@ async function main() {
     const password = 'admin777';
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 1. Create or update User & Store
-    const admin = await prisma.user.upsert({
-        where: { email },
-        update: { password: hashedPassword },
-        create: {
-            email,
-            password: hashedPassword,
-            store: {
-                create: {
-                    name: 'Demo Sklad Analytics',
-                    taxSystem: TaxSystem.USN_6
+    // 1. Create or update User, Tenant & Membership
+    let admin = await prisma.user.findUnique({ where: { email } });
+    let tenantIdStr = '';
+    
+    if (admin) {
+        admin = await prisma.user.update({
+            where: { email },
+            data: { password: hashedPassword }
+        });
+        const mem = await prisma.membership.findFirst({ where: { userId: admin.id } });
+        if (mem) tenantIdStr = mem.tenantId;
+    } else {
+        const tenant = await prisma.tenant.create({
+            data: {
+                name: 'Demo Sklad Analytics',
+                taxSystem: TaxSystem.USN_6
+            }
+        });
+        tenantIdStr = tenant.id;
+
+        admin = await prisma.user.create({
+            data: {
+                email,
+                password: hashedPassword,
+                memberships: {
+                    create: {
+                        tenantId: tenant.id,
+                        role: Role.OWNER
+                    }
                 }
             }
-        },
-        include: { store: true }
-    });
+        });
+    }
 
-    const storeId = admin.storeId;
-    console.log(`Setting up demo data for Store: ${admin.store.name} (ID: ${storeId})`);
+    const tenantId = tenantIdStr;
+    console.log(`Setting up demo data for Tenant (ID: ${tenantId})`);
 
     // 2. Create Demo Products
     const productsData = [
@@ -39,9 +56,9 @@ async function main() {
 
     for (const p of productsData) {
         await prisma.product.upsert({
-            where: { storeId_sku: { storeId, sku: p.sku } },
+            where: { tenantId_sku: { tenantId, sku: p.sku } },
             update: { ...p },
-            create: { ...p, storeId }
+            create: { ...p, tenantId }
         });
     }
 
@@ -53,7 +70,7 @@ async function main() {
     for (let i = 0; i < 20; i++) {
         orders.push({
             marketplaceOrderId: `WB-AD-${1000 + i}`,
-            marketplace: 'WB',
+            marketplace: MarketplaceType.WB,
             productSku: 'SKU-DRONE-X1',
             productNames: 'Квадрокоптер X-PRO 4K',
             quantity: 1,
@@ -61,7 +78,7 @@ async function main() {
             sellerPrice: 45000,
             region: 'Moscow',
             createdAt: new Date(now.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-            storeId
+            tenantId
         });
     }
 
@@ -69,7 +86,7 @@ async function main() {
     for (let i = 0; i < 50; i++) {
         orders.push({
             marketplaceOrderId: `WB-AL-${2000 + i}`,
-            marketplace: 'WB',
+            marketplace: MarketplaceType.WB,
             productSku: 'SKU-LAMP-RGB',
             productNames: 'Умная RGB лампа v2',
             quantity: 2,
@@ -77,7 +94,7 @@ async function main() {
             sellerPrice: 3200,
             region: 'Saint-Petersburg',
             createdAt: new Date(now.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-            storeId
+            tenantId
         });
     }
 
@@ -85,7 +102,7 @@ async function main() {
     for (let i = 0; i < 3; i++) {
         orders.push({
             marketplaceOrderId: `WB-AC-${3000 + i}`,
-            marketplace: 'WB',
+            marketplace: MarketplaceType.WB,
             productSku: 'SKU-CHAIR-G',
             productNames: 'Игровое кресло Stealth',
             quantity: 1,
@@ -93,12 +110,12 @@ async function main() {
             sellerPrice: 19900,
             region: 'Kazan',
             createdAt: new Date(now.getTime() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-            storeId
+            tenantId
         });
     }
 
     await prisma.marketplaceOrder.createMany({
-        data: orders.map(o => ({ ...o, storeId })),
+        data: orders,
         skipDuplicates: true
     });
 

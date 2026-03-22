@@ -47,6 +47,23 @@ services:
       retries: 5
       start_period: 30s
 
+  # ── Background Worker (Sync/Cron) ─────────────────────────────────────────────
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: sklad_worker
+    restart: unless-stopped
+    env_file: ./apps/api/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-admin}:${POSTGRES_PASSWORD:-change_me_in_prod}@postgres:5432/${POSTGRES_DB:-sklad_optima}?schema=public
+      NODE_ENV: production
+      IS_WORKER: "true"
+    command: ["npm", "run", "start:worker:prod"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   # ── React / Vite (nginx) ──────────────────────────────────────────────────────
   web:
     build:
@@ -58,10 +75,6 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
-    volumes:
-      - /etc/letsencrypt/live/skladoptima.ru/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
-      - /etc/letsencrypt/live/skladoptima.ru/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
     depends_on:
       api:
         condition: service_healthy

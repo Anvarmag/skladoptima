@@ -1,18 +1,21 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from './prisma/prisma.module';
-import { UserModule } from './user/user.module';
-import { AuthModule } from './auth/auth.module';
-import { ProductModule } from './product/product.module';
-import { AuditModule } from './audit/audit.module';
-import { SettingsModule } from './settings/settings.module';
-import { SyncModule } from './sync/sync.module';
-import { FinanceModule } from './finance/finance.module';
-import { AnalyticsModule } from './analytics/analytics.module';
+import { UserModule } from './modules/users/user.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { ProductModule } from './modules/catalog/product.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { SettingsModule } from './modules/marketplace/settings.module';
+import { SyncModule } from './modules/marketplace_sync/sync.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './health/health.module';
 import { APP_GUARD } from '@nestjs/core';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+
+// Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
+// или перенесены в apps/worker.
 
 @Module({
   imports: [

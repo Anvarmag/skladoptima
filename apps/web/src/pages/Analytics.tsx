@@ -11,20 +11,17 @@ import {
 
 export default function Analytics() {
     const [data, setData] = useState<any[]>([]);
-    const [geoData, setGeoData] = useState<any[]>([]);
     const [revenueDynamics, setRevenueDynamics] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [recRes, geoRes, dynRes] = await Promise.all([
+                const [recRes, dynRes] = await Promise.all([
                     axios.get('/analytics/recommendations'),
-                    axios.get('/analytics/geo'),
                     axios.get('/analytics/revenue-dynamics')
                 ]);
                 setData(recRes.data);
-                setGeoData(geoRes.data);
                 setRevenueDynamics(dynRes.data);
             } catch (err) {
                 console.error('Failed to fetch analytics', err);

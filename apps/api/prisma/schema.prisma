@@ -1,6 +1,6 @@
 generator client {
   provider      = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -15,80 +15,25 @@ enum TaxSystem {
   NPD
 }
 
-model Store {
-  id        String   @id @default(uuid())
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Taxation settings
-  taxSystem           TaxSystem @default(USN_6)
-  vatThresholdExceeded Boolean   @default(false) // For USN with VAT (2025+ rules)
-
-  users               User[]
-  products            Product[]
-  marketplaceOrders   MarketplaceOrder[]
-  auditLogs           AuditLog[]
-  marketplaceSettings MarketplaceSettings?
-  marketplaceReports  MarketplaceReport[]
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  STAFF
 }
 
-model User {
-  id         String   @id @default(uuid())
-  email      String   @unique
-  password   String
-  telegramId String?  @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  storeId    String
-  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+enum AccessState {
+  EARLY_ACCESS
+  TRIAL_ACTIVE
+  TRIAL_EXPIRED
+  ACTIVE_PAID
+  SUSPENDED
+  CLOSED
 }
 
-model Product {
-  id        String    @id @default(uuid())
-  sku       String
-  name      String
-  photo     String?   // URL or path to uploaded file
-  total     Int       @default(0)
-  reserved  Int       @default(0)
-
-  // Financial fields
-  purchasePrice Float?     @default(0) // Себестоимость закупочная
-  minPrice      Float?     // Минимально допустимая цена для рекомендаций
-  vatRate       Int        @default(0) // 0, 10, 20
-  commissionRate Float?     // Комиссия маркетплейса (в %)
-  logisticsCost  Float?     // Стоимость логистики (на ед.)
-  
-  // Dimensions and Category for automated fee calculation
-  category      String?    // Категория товара на маркетплейсе
-  width         Float?     // Ширина упаковки (см)
-  height        Float?     // Высота упаковки (см)
-  length        Float?     // Длина упаковки (см)
-  weight        Float?     // Вес с упаковкой (кг)
-
-  // Analytics fields
-  rating        Float?     @default(0) // Рейтинг из маркетплейса
-
-  // Marketplace barcodes for matching
-  wbBarcode String?
-
-  // Marketplace cached stock
-  ozonFbs   Int       @default(0)
-  ozonFbo   Int       @default(0)
-  wbFbs     Int       @default(0)
-  wbFbo     Int       @default(0)
-
-  deletedAt DateTime? // Soft delete
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  storeId   String
-  store     Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-
-  @@unique([storeId, sku]) // SKU unique per store
-  @@unique([storeId, wbBarcode]) // Barcode unique per store
+enum MarketplaceType {
+  WB
+  OZON
 }
 
 enum ActionType {
@@ -99,100 +44,206 @@ enum ActionType {
   ORDER_DEDUCTED
 }
 
-// Track processed orders to prevent double-deduction
-model MarketplaceOrder {
-  id                 String   @id @default(uuid())
-  marketplaceOrderId String   // WB Order ID or Ozon Posting Number
-  marketplace        String   // "WB" or "OZON"
-  productSku         String?
-  productNames       String?  // Названия товаров
-  quantity           Int
-  
-  status             String?  // Статус из МП
-  totalAmount        Float?   // Сумма заказа (реализация)
-  sellerPrice        Float?   // Цена продавца в ЛК (для расчета налогов)
-  currency           String?  @default("RUB")
-  shipmentDate       DateTime? // Дата отгрузки
-  marketplaceCreatedAt DateTime? // Дата создания в МП
-  deliveryMethod     String?  // Способ доставки
-  
-  // Locations for analytics
-  region             String?  // Регион/Область
-  city               String?  // Город
+// -------------------------------------------------------------------
+// 1. КОМПАНИЯ (TENANT) И ПОЛЬЗОВАТЕЛИ
+// -------------------------------------------------------------------
 
-  createdAt          DateTime @default(now())
-  processedAt        DateTime @default(now())
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  storeId            String
-  store              Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  accessState AccessState @default(EARLY_ACCESS)
 
-  @@unique([storeId, marketplaceOrderId]) // Order ID unique per store
+  // Налоговые настройки (сохранены из прошлой версии)
+  taxSystem            TaxSystem @default(USN_6)
+  vatThresholdExceeded Boolean   @default(false)
+
+  // Связи с базовыми сущностями
+  memberships         Membership[]
+  marketplaceAccounts MarketplaceAccount[]
+
+  products  Product[]
+  orders    MarketplaceOrder[]
+  auditLogs AuditLog[]
+  reports   MarketplaceReport[]
 }
 
-// Advanced financial reports from MP (Weekly realization reports, etc.)
+model User {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  password   String
+  telegramId String?  @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  memberships Membership[]
+  auditLogs   AuditLog[] // Инициатор изменения в аудите
+}
+
+model Membership {
+  id   String @id @default(uuid())
+  role Role   @default(MANAGER)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, tenantId]) // Пользователь имеет только 1 роль в 1 проекте
+}
+
+// -------------------------------------------------------------------
+// 2. ИНТЕГРАЦИИ
+// -------------------------------------------------------------------
+
+model MarketplaceAccount {
+  id          String          @id @default(uuid())
+  name        String // Внутреннее название (псевдоним, например "Ромашка WB")
+  marketplace MarketplaceType
+
+  // Ключи доступа API
+  clientId    String?
+  apiKey      String?
+  statApiKey  String?
+  warehouseId String? // Основной Warehouse Id из кабинета
+
+  // Диагностика синхронизации
+  lastSyncAt     DateTime?
+  lastSyncStatus String? // "SUCCESS" / "ERROR"
+  lastSyncError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------------
+// 3. БИЗНЕС СУЩНОСТИ (ТОВАРЫ, ЗАКАЗЫ)
+// -------------------------------------------------------------------
+
+model Product {
+  id       String  @id @default(uuid())
+  sku      String
+  name     String
+  photo    String?
+  total    Int     @default(0)
+  reserved Int     @default(0)
+
+  // Информация для юнит-экономики
+  purchasePrice  Float? @default(0)
+  minPrice       Float?
+  vatRate        Int    @default(0)
+  commissionRate Float?
+  logisticsCost  Float?
+
+  category String?
+  width    Float?
+  height   Float?
+  length   Float?
+  weight   Float?
+
+  rating    Float?  @default(0)
+  wbBarcode String?
+
+  // Остатки, скачанные с маркетплейсов
+  ozonFbs Int @default(0)
+  ozonFbo Int @default(0)
+  wbFbs   Int @default(0)
+  wbFbo   Int @default(0)
+
+  deletedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, sku])
+  @@unique([tenantId, wbBarcode])
+}
+
+model MarketplaceOrder {
+  id                 String          @id @default(uuid())
+  marketplaceOrderId String
+  marketplace        MarketplaceType
+  productSku         String?
+  productNames       String?
+  quantity           Int
+
+  status               String?
+  totalAmount          Float?
+  sellerPrice          Float?
+  currency             String?   @default("RUB")
+  shipmentDate         DateTime?
+  marketplaceCreatedAt DateTime?
+  deliveryMethod       String?
+
+  region String?
+  city   String?
+
+  createdAt   DateTime @default(now())
+  processedAt DateTime @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, marketplaceOrderId])
+}
+
 model MarketplaceReport {
-  id               String   @id @default(uuid())
-  reportId         String
-  marketplace      String   // "WB" or "OZON"
-  periodStart      DateTime
-  periodEnd        DateTime
-  
-  salesAmount      Float    @default(0)
-  returnsAmount    Float    @default(0)
-  commissionAmount Float    @default(0)
-  logisticsAmount  Float    @default(0)
-  storageAmount    Float    @default(0)
-  otherDeductions  Float    @default(0)
-  netToPay         Float    @default(0)
-  
-  rawJson          String?  // Store original data for debugging
+  id          String          @id @default(uuid())
+  reportId    String
+  marketplace MarketplaceType
+  periodStart DateTime
+  periodEnd   DateTime
 
-  createdAt        DateTime @default(now())
-  storeId          String
-  store            Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  salesAmount      Float @default(0)
+  returnsAmount    Float @default(0)
+  commissionAmount Float @default(0)
+  logisticsAmount  Float @default(0)
+  storageAmount    Float @default(0)
+  otherDeductions  Float @default(0)
+  netToPay         Float @default(0)
 
-  @@unique([storeId, reportId])
+  rawJson String?
+
+  createdAt DateTime @default(now())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, reportId])
 }
 
 model AuditLog {
-  id          String     @id @default(uuid())
-  actionType  ActionType
-  createdAt   DateTime   @default(now())
-  
-  productId   String?
-  productSku  String?
-  
+  id         String     @id @default(uuid())
+  actionType ActionType
+  createdAt  DateTime   @default(now())
+
+  productId  String?
+  productSku String?
+
   beforeTotal Int?
   afterTotal  Int?
   delta       Int?
-  
-  beforeName  String?
-  afterName   String?
-  
-  actorEmail  String
+
+  beforeName String?
+  afterName  String?
+
+  // Привязка к физическому юзеру, сделавшему изменение
+  actorUserId String?
+  actorUser   User?   @relation(fields: [actorUserId], references: [id])
   note        String?
 
-  storeId     String
-  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
-}
-
-model MarketplaceSettings {
-  id              String   @id @default(uuid())
-  ozonClientId    String?
-  ozonApiKey      String?
-  ozonWarehouseId String?
-  wbApiKey        String?
-  wbStatApiKey    String?
-  wbWarehouseId   String?
-
-  // Sync Diagnostics
-  lastWbSyncAt    DateTime?
-  lastWbSyncError String?
-  lastOzonSyncAt    DateTime?
-  lastOzonSyncError String?
-
-  updatedAt DateTime @updatedAt
-
-  storeId         String   @unique
-  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }

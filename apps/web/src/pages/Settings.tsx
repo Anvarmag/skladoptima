@@ -138,7 +138,7 @@ export default function Settings() {
         }
     };
 
-    const SyncStatusWidget = ({ marketplace, data }: { marketplace: 'WB' | 'OZON', data: { at: string | null, error: string | null } }) => {
+    const SyncStatusWidget = ({ data }: { marketplace: 'WB' | 'OZON', data: { at: string | null, error: string | null } }) => {
         if (!data.at && !data.error) return null;
 
         const date = data.at ? new Date(data.at).toLocaleString('ru-RU') : 'Никогда';
