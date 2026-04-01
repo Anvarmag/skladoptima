@@ -13,6 +13,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
+import { MaxNotifierModule } from './modules/max-notifier/max-notifier.module';
 
 // Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
 // или перенесены в apps/worker.
@@ -29,6 +30,7 @@ import { join } from 'path';
     FinanceModule,
     AnalyticsModule,
     HealthModule,
+    MaxNotifierModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
