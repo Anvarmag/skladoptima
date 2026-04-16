@@ -1,40 +1,59 @@
-# Sprint 5 — Billing + Subscriptions — Обзор
+# Sprint 5 — Worker Platform + Sync Engine — Обзор
 
 > Даты: 27 мая – 9 июня 2026
 > Статус: [ ] Планирование / [ ] В работе / [ ] Завершён
-> Цель: Тарифные планы, подписки, тарифные лимиты
+> Цель: Запустить асинхронную платформу задач и поверх нее — диагностируемый sync engine.
 
 ---
 
 ## Цель спринта
 
-Реализовать тарифную систему: TariffPlan, Subscription, AccessState-машину, лимиты в API и UI.
+Собрать worker runtime с очередями, retry, recovery и scheduled jobs, а затем положить на него sync-runs, conflicts, diagnostics и manual retry/full sync сценарии.
 
 ---
 
 ## Разделы продукта, затрагиваемые в спринте
 
-| Раздел | Файл требований |
-|--------|----------------|
-| Биллинг | [13-billing](../../BUSINESS-REQUIREMENTS/13-billing/requirements.md) |
-| Мультитенантность | [02-tenant](../../BUSINESS-REQUIREMENTS/02-tenant/requirements.md) |
-| Уведомления | [15-notifications](../../BUSINESS-REQUIREMENTS/15-notifications/requirements.md) |
+| Раздел | Файл требований | Системная аналитика |
+|--------|-----------------|---------------------|
+| 18. Worker | [18-worker](../../BUSINESS-REQUIREMENTS/18-worker/requirements.md) | [18-worker](../../SYSTEM-ANALYTICS/18-worker/system-analytics.md) |
+| 09. Синхронизация | [09-sync](../../BUSINESS-REQUIREMENTS/09-sync/requirements.md) | [09-sync](../../SYSTEM-ANALYTICS/09-sync/system-analytics.md) |
 
 ---
 
 ## Ключевые deliverables
 
-- [ ] TariffPlan и Subscription модели в Prisma
-- [ ] AccessState-машина (TRIAL_ACTIVE → ACTIVE_PAID → GRACE_PERIOD → SUSPENDED)
-- [ ] Тарифные лимиты в API guard
-- [ ] Страница тарифов в UI
-- [ ] Email при истечении триала
+- [ ] Worker queues, priorities, retries, dead-letter, scheduler
+- [ ] Sync run model: run/items/conflicts, manual run, retry, full sync
+- [ ] Diagnostics API и UI для run history/failures/conflicts
+- [ ] Baseline adapters contract для pull/push orchestration
+- [ ] Recovery model после restart/deploy
+
+---
+
+## Что НЕ входит в спринт
+
+- полный order/business processing внутри sync
+- финансовые и billing jobs
+- пользовательские notifications channels
+
+---
+
+## Риски спринта
+
+| Риск | Вероятность | Влияние | Митигация |
+|------|------------|---------|----------|
+| Потеря job после рестарта | Med | High | Lease/requeue policy + recovery tests |
+| “Один большой sync job” без checkpoints | Med | High | Делить run на этапы и item-level diagnostics |
+| Неуправляемый retry storm | Med | Med | Error taxonomy и backoff limits |
 
 ---
 
 ## Зависимости
 
-- Sprint 1 и 2 завершены
+- Sprint 4 marketplace accounts
+- Базовая инфраструктура очередей и scheduler
+- Согласованный adapter contract на external sync calls
 
 ---
 

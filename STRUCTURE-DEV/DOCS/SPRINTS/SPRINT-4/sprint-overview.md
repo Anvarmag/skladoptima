@@ -1,32 +1,59 @@
-# Sprint 4 — Stock History + Onboarding — Обзор
+# Sprint 4 — Marketplace Connections + Warehouses — Обзор
 
 > Даты: 13–26 мая 2026
 > Статус: [ ] Планирование / [ ] В работе / [ ] Завершён
-> Цель: История движений остатков, онбординг для новых пользователей
+> Цель: Подключить marketplace accounts и нормализованный warehouse reference layer.
 
 ---
 
 ## Цель спринта
 
-Добавить полную историю движений по товарам (StockMovement). Реализовать онбординг-флоу для новых тенантов.
+После спринта tenant сможет безопасно подключать marketplace-аккаунты, хранить credentials в защищенном виде, видеть статус подключения и получать нормализованный справочник складов.
 
 ---
 
 ## Разделы продукта, затрагиваемые в спринте
 
-| Раздел | Файл требований |
-|--------|----------------|
-| Остатки | [06-inventory](../../BUSINESS-REQUIREMENTS/06-inventory/requirements.md) |
-| Онбординг | [04-onboarding](../../BUSINESS-REQUIREMENTS/04-onboarding/requirements.md) |
+| Раздел | Файл требований | Системная аналитика |
+|--------|-----------------|---------------------|
+| 08. Маркетплейс-аккаунты | [08-marketplace-accounts](../../BUSINESS-REQUIREMENTS/08-marketplace-accounts/requirements.md) | [08-marketplace-accounts](../../SYSTEM-ANALYTICS/08-marketplace-accounts/system-analytics.md) |
+| 07. Склады | [07-warehouses](../../BUSINESS-REQUIREMENTS/07-warehouses/requirements.md) | [07-warehouses](../../SYSTEM-ANALYTICS/07-warehouses/system-analytics.md) |
 
 ---
 
 ## Ключевые deliverables
 
-- [ ] Модель StockMovement в Prisma
-- [ ] Запись движений при всех операциях с остатками
-- [ ] UI истории движений
-- [ ] Онбординг-флоу (шаги для нового OWNER)
+- [ ] Marketplace account CRUD + credentials validation + lifecycle
+- [ ] Masked secret storage и reconnect/update flows
+- [ ] Warehouse sync baseline, upsert и FBS/FBO normalization
+- [ ] UI подключения marketplace и справочника складов
+- [ ] Health/status диагностика для account и warehouse freshness
+
+---
+
+## Что НЕ входит в спринт
+
+- полноценный sync orders/stocks
+- billing лимиты по account
+- inventory transactions
+
+---
+
+## Риски спринта
+
+| Риск | Вероятность | Влияние | Митигация |
+|------|------------|---------|----------|
+| Небезопасное хранение credentials | Med | High | Шифрование, masked responses, audit |
+| Нестабильная нормализация warehouse type | Med | Med | Versioned mapping rule и account-specific logs |
+| Смешение validation status и operational health | Med | Med | Разделить поля/статусы в модели |
+
+---
+
+## Зависимости
+
+- Sprint 1 foundation по tenant/auth
+- Object storage/secret handling practices
+- Согласованные adapter contracts для marketplace credentials и warehouse fetch
 
 ---
 

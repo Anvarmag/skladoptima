@@ -1,4 +1,4 @@
-# Tasks — Sprint 1 — Auth Fix + DB Tech Debt
+# Tasks — Sprint 1 — Foundation: Auth + Tenant Core
 
 > Спринт: 1
 > Даты: 1–14 апреля 2026
@@ -10,42 +10,58 @@
 
 | ID | Задача | Приоритет | Оценка | Статус |
 |----|--------|----------|--------|--------|
-| T1-01 | Исправить JWT: убрать storeId, добавить tenantId + membershipId + role | P0 | 4h | TODO |
-| T1-02 | Обновить JwtStrategy для нового payload | P0 | 2h | TODO |
-| T1-03 | Обновить все guard'ы и декораторы (CurrentUser, TenantId) | P0 | 3h | TODO |
-| T1-04 | Убрать onModuleInit ALTER TABLE из ProductService | P0 | 2h | TODO |
-| T1-05 | Убрать onModuleInit ALTER TABLE из SettingsService | P0 | 2h | TODO |
-| T1-06 | Аудит и чистка старого MarketplaceSettings singleton | P0 | 3h | TODO |
+| T1-01 | Реализовать `POST /auth/register` + verification token flow | P0 | 6h | TODO |
+| T1-02 | Реализовать `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` | P0 | 8h | TODO |
+| T1-03 | Реализовать forgot/reset/change password + revoke sessions | P0 | 8h | TODO |
+| T1-04 | Ввести JWT payload с `tenantId`, `membershipId`, `role`, `sessionId` | P0 | 4h | TODO |
+| T1-05 | Реализовать `POST /tenants`, `GET /tenants/my`, `POST /tenants/switch` | P0 | 8h | TODO |
+| T1-06 | Реализовать tenant access-state read model и policy middleware | P1 | 5h | TODO |
 
----
+## Frontend задачи
+
+| ID | Задача | Приоритет | Оценка | Статус |
+|----|--------|----------|--------|--------|
+| T1-10 | Собрать auth screens: register, login, verify email, reset password | P0 | 12h | TODO |
+| T1-11 | Реализовать tenant selector после login и пустое состояние без tenant | P0 | 6h | TODO |
+| T1-12 | Подключить guarded routing на основе JWT/session context | P1 | 4h | TODO |
 
 ## БД / Миграции
 
 | ID | Задача | Приоритет | Оценка | Статус |
 |----|--------|----------|--------|--------|
-| T1-20 | Добавить @@index([tenantId]) на Product | P0 | 1h | TODO |
-| T1-21 | Добавить @@index([tenantId]) на AuditLog + [tenantId, createdAt] | P0 | 1h | TODO |
-| T1-22 | Добавить @@index([tenantId]) на MarketplaceOrder | P0 | 1h | TODO |
-| T1-23 | Добавить @@index([tenantId]) на MarketplaceReport | P0 | 1h | TODO |
-| T1-24 | Перенести wbBarcode из runtime ALTER TABLE в schema.prisma | P0 | 2h | TODO |
-| T1-25 | Создать полную историю Prisma-миграций (базовая) | P1 | 3h | TODO |
+| T1-20 | Создать таблицы `users`, `auth_sessions`, `email_verification_tokens`, `password_reset_tokens` | P0 | 4h | TODO |
+| T1-21 | Создать таблицы `tenants`, `memberships`, `tenant_settings`, `auth_events` | P0 | 5h | TODO |
+| T1-22 | Добавить индексы и уникальности для email, session, active membership, tenant scope | P0 | 3h | TODO |
 
----
+## Инфраструктура / DevOps
+
+| ID | Задача | Приоритет | Оценка | Статус |
+|----|--------|----------|--------|--------|
+| T1-30 | Настроить secrets для JWT и SMTP/email provider | P1 | 3h | TODO |
+| T1-31 | Подготовить env-конфиг для TTL, rate limits и auth policy | P1 | 2h | TODO |
 
 ## Тестирование
 
 | ID | Задача | Приоритет | Оценка | Статус |
 |----|--------|----------|--------|--------|
-| T1-40 | Проверить все эндпоинты с новым JWT payload | P0 | 3h | TODO |
-| T1-41 | Проверить tenant isolation (нет утечки данных между тенантами) | P0 | 2h | TODO |
+| T1-40 | Покрыть e2e: register -> verify -> login -> logout | P0 | 5h | TODO |
+| T1-41 | Покрыть e2e: forgot -> reset -> login with new password | P0 | 4h | TODO |
+| T1-42 | Проверить tenant isolation и switch context | P0 | 5h | TODO |
+| T1-43 | Проверить revoke session и ошибки token expired/used | P1 | 3h | TODO |
 
----
+## Перенесено из предыдущего спринта
+
+| ID (оригинал) | Задача | Причина переноса |
+|--------------|--------|----------------|
+| - | - | - |
 
 ## Итого по спринту
 
 | Категория | Запланировано (ч) | Выполнено (ч) |
 |----------|-----------------|--------------|
-| Backend | 16 | |
-| БД | 9 | |
-| Тестирование | 5 | |
-| **Итого** | **30** | |
+| Backend | 39 | |
+| Frontend | 22 | |
+| БД | 12 | |
+| Инфра | 5 | |
+| Тестирование | 17 | |
+| **Итого** | **95** | |

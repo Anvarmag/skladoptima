@@ -1,80 +1,91 @@
-# PLAN — Sprint 6 — Referrals + Promo
+# PLAN — Sprint 6 — Orders + Inventory Core
 
 > Даты: 10–23 июня 2026
-> Ветка: `sprint/6-referrals-promo`
+> Ветка: `sprint/6-orders-inventory-core`
 > Статус: [ ] Планирование / [ ] В работе / [ ] Завершён
 
 ---
 
 ## Цель спринта
 
-Реферальная система и промокоды.
+Построить связанный доменный слой orders и inventory с корректными stock side-effects.
 
 ---
 
 ## Этапы выполнения
 
-### Этап 1 — БД: Referral & Promo Models
+### Этап 1 — Схема данных и invariants
 
-- [ ] **T6-20** — Добавить ReferralLink, ReferralReward, PromoCode в schema.prisma
+- [ ] **T6-20** — Order tables
+  > _Что именно сделано:_
+- [ ] **T6-21** — Inventory tables
+  > _Что именно сделано:_
+- [ ] **T6-22** — Индексы и constraints
   > _Что именно сделано:_
 
 ---
 
-### Этап 2 — Backend: Referral
+### Этап 2 — Orders domain
 
-- [ ] **T6-01** — Создать ReferralModule
+- [ ] **T6-01** — Order ingestion
   > _Что именно сделано:_
-
-- [ ] **T6-02** — API: GET /referral/link
+- [ ] **T6-02** — State machine и history
   > _Что именно сделано:_
-
-- [ ] **T6-03** — API: GET /referral/rewards
+- [ ] **T6-06** — Orders read API
   > _Что именно сделано:_
-
-- [ ] **T6-04** — Логика начисления вознаграждения
+- [ ] **T6-10** — Orders UI
   > _Что именно сделано:_
 
 ---
 
-### Этап 3 — Backend: PromoCode
+### Этап 3 — Inventory domain
 
-- [ ] **T6-05** — Создать PromoCodeModule
+- [ ] **T6-03** — Balance and movement service
   > _Что именно сделано:_
-
-- [ ] **T6-06** — API: POST /promo/validate
+- [ ] **T6-04** — Reserve/release/deduct
   > _Что именно сделано:_
-
-- [ ] **T6-07** — Применение промокода при подписке
+- [ ] **T6-05** — Manual adjust API
   > _Что именно сделано:_
-
-- [ ] **T6-08** — Admin API: CRUD промокодов
+- [ ] **T6-11** — Inventory UI
+  > _Что именно сделано:_
+- [ ] **T6-12** — UI side-effects/history
+  > _Что именно сделано:_
+- [ ] **T6-30** — Background processing policy
   > _Что именно сделано:_
 
 ---
 
-### Этап 4 — Frontend
+### Этап 4 — QA и hardening
 
-- [ ] **T6-10** — Страница /app/referral
+- [ ] **T6-40** — Order lifecycle QA
   > _Что именно сделано:_
-
-- [ ] **T6-11** — Поле промокода на странице подписки
+- [ ] **T6-41** — Duplicate/out-of-order QA
+  > _Что именно сделано:_
+- [ ] **T6-42** — Stock side-effects QA
+  > _Что именно сделано:_
+- [ ] **T6-43** — Manual adjust QA
   > _Что именно сделано:_
 
 ---
 
 ## Итоги спринта
 
+> Заполняется после завершения спринта.
+
 ### Что выполнено
 
--
+- 
 
 ### Что перенесено и почему
 
 | Задача | Причина переноса | Следующий спринт |
-|--------|----------------|-----------------|
+|--------|------------------|-----------------|
 | | | |
 
-### Выводы и решения
+### Выводы и решения принятые в спринте
 
--
+- 
+
+### Что изменилось в требованиях
+
+- 

@@ -4,7 +4,7 @@ services:
   # ── PostgreSQL ────────────────────────────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
-    container_name: sklad_db
+    container_name: skladoptima_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-admin}
@@ -25,7 +25,7 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile
-    container_name: sklad_api
+    container_name: skladoptima_api
     restart: unless-stopped
     env_file: ./apps/api/.env
     environment:
@@ -52,7 +52,7 @@ services:
     build:
       context: ./apps/api
       dockerfile: Dockerfile
-    container_name: sklad_worker
+    container_name: skladoptima_worker
     restart: unless-stopped
     env_file: ./apps/api/.env
     environment:
@@ -71,7 +71,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: "/api" # nginx proxies /api internally
-    container_name: sklad_web
+    container_name: skladoptima_web
     restart: unless-stopped
     ports:
       - "80:80"

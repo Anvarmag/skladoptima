@@ -1,73 +1,71 @@
-# PLAN — Sprint 1 — Auth Fix + DB Tech Debt
+# PLAN — Sprint 1 — Foundation: Auth + Tenant Core
 
 > Даты: 1–14 апреля 2026
-> Ветка: `sprint/1-auth-fix-db`
+> Ветка: `sprint/1-foundation-auth-tenant`
 > Статус: [ ] Планирование / [ ] В работе / [ ] Завершён
 
 ---
 
 ## Цель спринта
 
-Устранить технический долг P0: перейти от storeId к tenantId+membershipId в JWT, убрать все runtime ALTER TABLE миграции, добавить индексы БД.
+Поднять auth и tenant foundation, без которой нельзя безопасно строить остальные модули.
 
 ---
 
 ## Этапы выполнения
 
-### Этап 1 — JWT & Auth Fix
+### Этап 1 — Схема данных и security foundation
 
-- [ ] **T1-01** — Исправить JWT: убрать storeId, добавить tenantId + membershipId + role
+- [ ] **T1-20** — Создать auth-таблицы
   > _Что именно сделано:_
-
-- [ ] **T1-02** — Обновить JwtStrategy для нового payload
+- [ ] **T1-21** — Создать tenant-таблицы
   > _Что именно сделано:_
-
-- [ ] **T1-03** — Обновить все guard'ы и декораторы (CurrentUser, TenantId)
+- [ ] **T1-22** — Индексы и уникальности
   > _Что именно сделано:_
-
----
-
-### Этап 2 — Убрать Runtime Migrations
-
-- [ ] **T1-04** — Убрать onModuleInit ALTER TABLE из ProductService
+- [ ] **T1-30** — Secrets для JWT и email
   > _Что именно сделано:_
-
-- [ ] **T1-05** — Убрать onModuleInit ALTER TABLE из SettingsService
-  > _Что именно сделано:_
-
-- [ ] **T1-06** — Аудит и чистка старого MarketplaceSettings singleton
+- [ ] **T1-31** — Env policy для TTL/rate-limit
   > _Что именно сделано:_
 
 ---
 
-### Этап 3 — БД: Индексы и Schema
+### Этап 2 — Auth API и session model
 
-- [ ] **T1-20** — Добавить @@index([tenantId]) на Product
+- [ ] **T1-01** — Register + verify flow
   > _Что именно сделано:_
-
-- [ ] **T1-21** — Добавить @@index([tenantId]) на AuditLog
+- [ ] **T1-02** — Login/logout/me
   > _Что именно сделано:_
-
-- [ ] **T1-22** — Добавить @@index([tenantId]) на MarketplaceOrder
+- [ ] **T1-03** — Forgot/reset/change password
   > _Что именно сделано:_
-
-- [ ] **T1-23** — Добавить @@index([tenantId]) на MarketplaceReport
+- [ ] **T1-04** — JWT payload и session context
   > _Что именно сделано:_
-
-- [ ] **T1-24** — Перенести wbBarcode из runtime ALTER TABLE в schema.prisma
-  > _Что именно сделано:_
-
-- [ ] **T1-25** — Создать полную историю Prisma-миграций
+- [ ] **T1-10** — Auth screens
   > _Что именно сделано:_
 
 ---
 
-### Этап 4 — Тестирование
+### Этап 3 — Tenant контекст
 
-- [ ] **T1-40** — Проверить все эндпоинты с новым JWT payload
+- [ ] **T1-05** — Tenant create/my/switch
+  > _Что именно сделано:_
+- [ ] **T1-06** — Tenant access-state policy
+  > _Что именно сделано:_
+- [ ] **T1-11** — Tenant selector UI
+  > _Что именно сделано:_
+- [ ] **T1-12** — Guarded routing
   > _Что именно сделано:_
 
-- [ ] **T1-41** — Проверить tenant isolation
+---
+
+### Этап 4 — QA и стабилизация
+
+- [ ] **T1-40** — Auth e2e positive path
+  > _Что именно сделано:_
+- [ ] **T1-41** — Password reset e2e
+  > _Что именно сделано:_
+- [ ] **T1-42** — Tenant isolation tests
+  > _Что именно сделано:_
+- [ ] **T1-43** — Token/revoke edge cases
   > _Что именно сделано:_
 
 ---
@@ -78,18 +76,18 @@
 
 ### Что выполнено
 
--
+- 
 
 ### Что перенесено и почему
 
 | Задача | Причина переноса | Следующий спринт |
-|--------|----------------|-----------------|
+|--------|------------------|-----------------|
 | | | |
 
 ### Выводы и решения принятые в спринте
 
--
+- 
 
 ### Что изменилось в требованиях
 
--
+- 
