@@ -54,4 +54,4 @@ apps/api/generated/prisma
 # Don't ignore docker-compose overrides you use locally if they have secrets
 docker-compose.override.yml
 docker-compose.resolved.yml
-logs_*.txt
+logs_*.txt.planning/
