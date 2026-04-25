@@ -1,35 +1,35 @@
-import { Controller, Post, Body, Res, Get, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Body, Res, Get, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserService } from '../users/user.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { JwtAuthGuard } from './jwt-auth.guard';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { Public } from './public.decorator';
 
 @Controller('auth')
 export class AuthController {
     constructor(
         private readonly authService: AuthService,
-        private readonly userService: UserService
-    ) { }
+        private readonly userService: UserService,
+    ) {}
 
     @Public()
     @Post('register')
-    async register(@Body() registerDto: RegisterDto, @Res({ passthrough: true }) res: any) {
-        const user = await this.userService.registerUser(registerDto.email, registerDto.password, registerDto.storeName);
-        const { access_token } = await this.authService.login(user);
+    register(@Body() dto: RegisterDto) {
+        return this.authService.register(dto);
+    }
 
-        const useSecure = process.env.FORCE_HTTPS === 'true';
+    @Public()
+    @Post('email-verifications/confirm')
+    verifyEmail(@Body() dto: VerifyEmailDto) {
+        return this.authService.verifyEmail(dto.token);
+    }
 
-        res.cookie('Authentication', access_token, {
-            httpOnly: true,
-            secure: useSecure,
-            sameSite: useSecure ? 'strict' : 'lax',
-            path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
-        });
-
-        return { message: 'Registered successfully', user, access_token };
+    @Public()
+    @Post('email-verifications')
+    resendVerification(@Body() dto: ResendVerificationDto) {
+        return this.authService.resendVerification(dto.email);
     }
 
     @Public()
@@ -39,17 +39,15 @@ export class AuthController {
         const { access_token } = await this.authService.login(user);
 
         const useSecure = process.env.FORCE_HTTPS === 'true';
-
-        // Cookie для авторизации
         res.cookie('Authentication', access_token, {
             httpOnly: true,
             secure: useSecure,
             sameSite: useSecure ? 'strict' : 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000, // 7 дней
+            maxAge: 15 * 60 * 1000, // 15 минут (access token TTL)
         });
 
-        return { message: 'Logged in successfully', user, access_token };
+        return { user, access_token };
     }
 
     @Public()
@@ -59,16 +57,15 @@ export class AuthController {
         const { access_token } = await this.authService.login(user);
 
         const useSecure = process.env.FORCE_HTTPS === 'true';
-
         res.cookie('Authentication', access_token, {
             httpOnly: true,
             secure: useSecure,
-            sameSite: useSecure ? 'none' : 'lax', // Important for Telegram WebApp
+            sameSite: useSecure ? 'none' : 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            maxAge: 15 * 60 * 1000,
         });
 
-        return { message: 'Telegram auth successful', user, access_token };
+        return { user, access_token };
     }
 
     @Public()
@@ -77,19 +74,18 @@ export class AuthController {
         @Body('initData') initData: string,
         @Body('email') email: string,
         @Body('password') passwordPlain: string,
-        @Res({ passthrough: true }) res: any
+        @Res({ passthrough: true }) res: any,
     ) {
         const user = await this.authService.linkTelegramAccount(initData, { email, password: passwordPlain });
         const { access_token } = await this.authService.login(user);
 
         const useSecure = process.env.FORCE_HTTPS === 'true';
-
         res.cookie('Authentication', access_token, {
             httpOnly: true,
             secure: useSecure,
             sameSite: useSecure ? 'none' : 'lax',
             path: '/',
-            maxAge: 7 * 24 * 60 * 60 * 1000,
+            maxAge: 15 * 60 * 1000,
         });
 
         return { message: 'Account linked successfully', user, access_token };
@@ -97,31 +93,18 @@ export class AuthController {
 
     @Public()
     @Post('logout')
-    async logout(@Res({ passthrough: true }) res: any) {
-        res.cookie('Authentication', '', {
-            httpOnly: true,
-            path: '/',
-            expires: new Date(0),
-        });
-
+    logout(@Res({ passthrough: true }) res: any) {
+        res.cookie('Authentication', '', { httpOnly: true, path: '/', expires: new Date(0) });
         return { message: 'Logged out successfully' };
     }
 
-    @UseGuards(JwtAuthGuard)
     @Post('telegram/unlink')
     async telegramUnlink(@Req() req: any, @Res({ passthrough: true }) res: any) {
         await this.authService.unlinkTelegramAccount(req.user.id);
-
-        res.cookie('Authentication', '', {
-            httpOnly: true,
-            path: '/',
-            expires: new Date(0),
-        });
-
+        res.cookie('Authentication', '', { httpOnly: true, path: '/', expires: new Date(0) });
         return { message: 'Account unlinked and logged out' };
     }
 
-    @UseGuards(JwtAuthGuard)
     @Get('me')
     getProfile(@Req() req: any) {
         return req.user;

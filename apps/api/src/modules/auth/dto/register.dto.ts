@@ -1,14 +1,15 @@
-import { IsEmail, IsString, MinLength, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, Matches } from 'class-validator';
 
 export class RegisterDto {
     @IsEmail()
     email: string;
 
     @IsString()
-    @MinLength(6)
-    password: string;
+    @IsOptional()
+    @Matches(/^\+?[1-9]\d{7,14}$/, { message: 'phone must be a valid E.164 number' })
+    phone?: string;
 
     @IsString()
-    @IsOptional()
-    storeName?: string;
+    @MinLength(8)
+    password: string;
 }
