@@ -31,7 +31,9 @@ export class UserService implements OnModuleInit {
                 const user = await tx.user.create({
                     data: {
                         email,
-                        password: hashedPassword,
+                        passwordHash: hashedPassword,
+                        status: 'ACTIVE',
+                        emailVerifiedAt: new Date(),
                     },
                 });
 
@@ -43,15 +45,14 @@ export class UserService implements OnModuleInit {
                     }
                 });
             });
-            this.logger.log(`Created default admin user: ${email} with its own Tenant`);
+            this.logger.log(`Created default admin user: ${email}`);
         } else {
             // Временно принудительно обновляем пароль, если он изменился
             const hashedPassword = await bcrypt.hash(password, 10);
             await this.prisma.user.update({
                 where: { email },
-                data: { password: hashedPassword }
+                data: { passwordHash: hashedPassword }
             });
-            this.logger.log(`Admin user ${email} password updated to ${password}.`);
         }
     }
 
@@ -73,7 +74,8 @@ export class UserService implements OnModuleInit {
             const user = await tx.user.create({
                 data: {
                     email,
-                    password: hashedPassword,
+                    passwordHash: hashedPassword,
+                    status: 'PENDING_VERIFICATION',
                 }
             });
 
@@ -133,8 +135,10 @@ export class UserService implements OnModuleInit {
             const user = await tx.user.create({
                 data: {
                     email: `tg_${telegramId}@telegram.local`,
-                    password: hashedPassword,
+                    passwordHash: hashedPassword,
                     telegramId,
+                    status: 'ACTIVE',
+                    emailVerifiedAt: new Date(),
                 },
             });
 

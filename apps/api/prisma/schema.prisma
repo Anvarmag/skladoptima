@@ -8,6 +8,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// -------------------------------------------------------------------
+// ENUMS
+// -------------------------------------------------------------------
+
 enum TaxSystem {
   USN_6
   USN_15
@@ -44,8 +48,143 @@ enum ActionType {
   ORDER_DEDUCTED
 }
 
+// Auth enums
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  LOCKED
+  DELETED
+}
+
+enum AuthSessionStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+  EXPIRED
+  COMPROMISED
+}
+
+enum ChallengeStatus {
+  PENDING
+  USED
+  EXPIRED
+  CANCELLED
+}
+
+enum AuthProvider {
+  LOCAL
+  TELEGRAM
+  GOOGLE
+  YANDEX
+  SMS
+}
+
 // -------------------------------------------------------------------
-// 1. КОМПАНИЯ (TENANT) И ПОЛЬЗОВАТЕЛИ
+// 1. ПОЛЬЗОВАТЕЛИ И AUTH
+// -------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  phone        String?    @unique
+  passwordHash String
+  status       UserStatus @default(PENDING_VERIFICATION)
+
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+
+  // Telegram — временно остаётся здесь, будет вынесено в AuthIdentity
+  telegramId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships        Membership[]
+  auditLogs          AuditLog[]
+  authSessions       AuthSession[]
+  emailVerifications EmailVerificationChallenge[]
+  passwordResets     PasswordResetChallenge[]
+  preferences        UserPreference?
+  authIdentities     AuthIdentity[]
+}
+
+// Серверные сессии с refresh token rotation и reuse detection
+model AuthSession {
+  id               String            @id @default(uuid())
+  userId           String
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String            @unique
+  status           AuthSessionStatus @default(ACTIVE)
+  ip               String?
+  userAgent        String?
+  lastSeenAt       DateTime?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  revokeReason     String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([userId, status])
+}
+
+// Одноразовые токены подтверждения email (хранится hash, не plaintext)
+model EmailVerificationChallenge {
+  id            String          @id @default(uuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailSnapshot String
+  tokenHash     String          @unique
+  status        ChallengeStatus @default(PENDING)
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([userId])
+}
+
+// Одноразовые токены сброса пароля (хранится hash, не plaintext)
+model PasswordResetChallenge {
+  id        String          @id @default(uuid())
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String          @unique
+  status    ChallengeStatus @default(PENDING)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([userId])
+}
+
+// Пользовательские настройки — последний активный тенант
+model UserPreference {
+  userId           String  @id
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastUsedTenantId String?
+  locale           String?
+  timezone         String?
+  updatedAt        DateTime @updatedAt
+}
+
+// Identity-провайдеры (future-ready: OAuth, SMS)
+model AuthIdentity {
+  id              String       @id @default(uuid())
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        AuthProvider
+  providerSubject String?
+  isPrimary       Boolean      @default(false)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([provider, providerSubject])
+  @@index([userId])
+}
+
+// -------------------------------------------------------------------
+// 2. КОМПАНИЯ (TENANT) И КОМАНДА
 // -------------------------------------------------------------------
 
 model Tenant {
@@ -56,30 +195,15 @@ model Tenant {
 
   accessState AccessState @default(EARLY_ACCESS)
 
-  // Налоговые настройки (сохранены из прошлой версии)
   taxSystem            TaxSystem @default(USN_6)
   vatThresholdExceeded Boolean   @default(false)
 
-  // Связи с базовыми сущностями
   memberships         Membership[]
   marketplaceAccounts MarketplaceAccount[]
-
-  products  Product[]
-  orders    MarketplaceOrder[]
-  auditLogs AuditLog[]
-  reports   MarketplaceReport[]
-}
-
-model User {
-  id         String   @id @default(uuid())
-  email      String   @unique
-  password   String
-  telegramId String?  @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  memberships Membership[]
-  auditLogs   AuditLog[] // Инициатор изменения в аудите
+  products            Product[]
+  orders              MarketplaceOrder[]
+  auditLogs           AuditLog[]
+  reports             MarketplaceReport[]
 }
 
 model Membership {
@@ -95,27 +219,25 @@ model Membership {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([userId, tenantId]) // Пользователь имеет только 1 роль в 1 проекте
+  @@unique([userId, tenantId])
 }
 
 // -------------------------------------------------------------------
-// 2. ИНТЕГРАЦИИ
+// 3. ИНТЕГРАЦИИ
 // -------------------------------------------------------------------
 
 model MarketplaceAccount {
   id          String          @id @default(uuid())
-  name        String // Внутреннее название (псевдоним, например "Ромашка WB")
+  name        String
   marketplace MarketplaceType
 
-  // Ключи доступа API
   clientId    String?
   apiKey      String?
   statApiKey  String?
-  warehouseId String? // Основной Warehouse Id из кабинета
+  warehouseId String?
 
-  // Диагностика синхронизации
   lastSyncAt     DateTime?
-  lastSyncStatus String? // "SUCCESS" / "ERROR"
+  lastSyncStatus String?
   lastSyncError  String?
 
   createdAt DateTime @default(now())
@@ -126,7 +248,7 @@ model MarketplaceAccount {
 }
 
 // -------------------------------------------------------------------
-// 3. БИЗНЕС СУЩНОСТИ (ТОВАРЫ, ЗАКАЗЫ)
+// 4. БИЗНЕС СУЩНОСТИ (ТОВАРЫ, ЗАКАЗЫ)
 // -------------------------------------------------------------------
 
 model Product {
@@ -137,7 +259,6 @@ model Product {
   total    Int     @default(0)
   reserved Int     @default(0)
 
-  // Информация для юнит-экономики
   purchasePrice  Float? @default(0)
   minPrice       Float?
   vatRate        Int    @default(0)
@@ -153,16 +274,14 @@ model Product {
   rating    Float?  @default(0)
   wbBarcode String?
 
-  // Остатки, скачанные с маркетплейсов
   ozonFbs Int @default(0)
   ozonFbo Int @default(0)
   wbFbs   Int @default(0)
   wbFbo   Int @default(0)
 
   deletedAt DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -239,7 +358,6 @@ model AuditLog {
   beforeName String?
   afterName  String?
 
-  // Привязка к физическому юзеру, сделавшему изменение
   actorUserId String?
   actorUser   User?   @relation(fields: [actorUserId], references: [id])
   note        String?

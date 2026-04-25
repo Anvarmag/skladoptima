@@ -14,11 +14,11 @@ export class AuthService {
 
     async validateUser(loginDto: LoginDto): Promise<any> {
         const user = await this.userService.findByEmail(loginDto.email);
-        if (!user || !(await bcrypt.compare(loginDto.password, user.password))) {
+        if (!user || !(await bcrypt.compare(loginDto.password, user.passwordHash))) {
             throw new UnauthorizedException('Invalid email or password');
         }
 
-        const { password, ...result } = user;
+        const { passwordHash, ...result } = user;
         return result;
     }
 
@@ -39,7 +39,7 @@ export class AuthService {
             throw new UnauthorizedException('account_not_linked');
         }
 
-        const { password, ...result } = user;
+        const { passwordHash, ...result } = user;
         return result;
     }
 
@@ -57,13 +57,13 @@ export class AuthService {
 
         // Link the account
         const updatedUser = await this.userService.updateTelegramId(user.id, telegramId);
-        const { password: _, ...result } = updatedUser;
+        const { passwordHash: _, ...result } = updatedUser;
         return result;
     }
 
     async unlinkTelegramAccount(userId: string) {
         const updatedUser = await this.userService.updateTelegramId(userId, null);
-        const { password: _, ...result } = updatedUser;
+        const { passwordHash: _, ...result } = updatedUser;
         return result;
     }
 

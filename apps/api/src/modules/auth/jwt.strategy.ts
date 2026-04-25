@@ -27,7 +27,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         if (!user) {
             throw new UnauthorizedException();
         }
-        const { password, ...result } = user;
+        const { passwordHash, ...result } = user;
         
         // Populate tenantId for backward compatibility and simpler controller access
         (result as any).tenantId = user.memberships?.[0]?.tenantId;
