@@ -17,7 +17,6 @@
 - Убрано логирование пароля в plaintext из `seedAdmin`.
 
 **Ещё не реализовано:**
-- register/verify email flow (`T1-02`);
 - login с server-side session + refresh rotation (`T1-03`);
 - forgot/reset/change password (`T1-04`);
 - rate limiting, soft-lock, audit events (`T1-05`);
@@ -542,7 +541,7 @@ curl -X POST /api/v1/auth/login \
 ## 24.1 Чеклист реализации (по задачам)
 
 - [x] T1-01: Auth data model — схема БД, миграция, code references
-- [ ] T1-02: Register + verify email flow
+- [x] T1-02: Register + verify email flow
 - [ ] T1-03: Login / logout / me / session lifecycle
 - [ ] T1-04: Forgot / reset / change password
 - [ ] T1-05: Rate limiting, soft-lock, audit events
@@ -563,3 +562,4 @@ curl -X POST /api/v1/auth/login \
 | 2026-04-18 | Зафиксированы продуктовые решения по verify policy, reset TTL, logout-all, invite auto-linking и soft-lock policy | Codex |
 | 2026-04-18 | Закрыты оставшиеся MVP-вопросы по CAPTCHA и change email/phone policy | Codex |
 | 2026-04-25 | T1-01 выполнен: обновлена схема БД (AuthSession, EmailVerificationChallenge, PasswordResetChallenge, UserPreference, AuthIdentity, расширен User), создана миграция, обновлены code references. Добавлен чеклист реализации 24.1 | Claude |
+| 2026-04-25 | T1-02 выполнен: register (PENDING_VERIFICATION + AuthIdentity), verifyEmail (SHA-256 token, lifecycle), resendVerification (cooldown 60s + 3/h), login-блокировка по status, EmailService stub | Claude |
