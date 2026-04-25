@@ -15,7 +15,7 @@ async function main() {
     if (admin) {
         admin = await prisma.user.update({
             where: { email },
-            data: { password: hashedPassword }
+            data: { passwordHash: hashedPassword }
         });
         const mem = await prisma.membership.findFirst({ where: { userId: admin.id } });
         if (mem) tenantIdStr = mem.tenantId;
@@ -31,7 +31,9 @@ async function main() {
         admin = await prisma.user.create({
             data: {
                 email,
-                password: hashedPassword,
+                passwordHash: hashedPassword,
+                status: 'ACTIVE',
+                emailVerifiedAt: new Date(),
                 memberships: {
                     create: {
                         tenantId: tenant.id,
