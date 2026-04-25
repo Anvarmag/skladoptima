@@ -1,7 +1,7 @@
 # Авторизация — Системная аналитика
 
-> Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Статус: [x] В работе
+> Последнее обновление: 2026-04-25
 > Связанный раздел: `01-auth`
 
 ## 1. Назначение модуля
@@ -10,9 +10,19 @@
 
 ### Текущее состояние (as-is)
 
-- в текущем рабочем дереве присутствует только слой документации, реализованного auth backend/frontend в репозитории не зафиксировано;
-- бизнес-требования описывают ключевые сценарии auth, но системные контракты, модель токенов, таблицы и правила invalidation пока не оформлены;
-- стыки `auth -> tenant`, `auth -> team invites`, `auth -> onboarding` описаны на бизнес-уровне, но не сведены в единый runtime flow.
+**Выполнено (T1-01, 2026-04-25):**
+- Схема БД приведена в соответствие с аналитикой: добавлены `AuthSession`, `EmailVerificationChallenge`, `PasswordResetChallenge`, `UserPreference`, `AuthIdentity`; `User` расширен полями `phone`, `status`, `emailVerifiedAt`, `lastLoginAt`; поле `password` переименовано в `passwordHash`.
+- Миграция `20260425000000_auth_data_model` написана с data-migration существующих пользователей в `ACTIVE`.
+- Все ссылки на старое поле `password` обновлены в `auth.service.ts`, `jwt.strategy.ts`, `user.service.ts`.
+- Убрано логирование пароля в plaintext из `seedAdmin`.
+
+**Ещё не реализовано:**
+- register/verify email flow (`T1-02`);
+- login с server-side session + refresh rotation (`T1-03`);
+- forgot/reset/change password (`T1-04`);
+- rate limiting, soft-lock, audit events (`T1-05`);
+- frontend auth flows (`T1-20`, `T1-21`, `T1-22`);
+- стыки `auth → tenant`, `auth → team invites`, `auth → onboarding` на уровне кода.
 
 ### Целевое состояние (to-be)
 
@@ -513,21 +523,37 @@ curl -X POST /api/v1/auth/login \
 
 ## 23. Фазы внедрения
 
-1. База: `users`, challenges, `auth_sessions`, `user_preferences`, базовые public endpoints.
-2. Email verification + forgot/reset password + outbox email delivery.
-3. Cookie session model, refresh rotation, `GET /auth/me`, logout/logout-all.
-4. Active tenant switching и post-login routing.
-5. Security hardening: rate limits, soft-lock, reuse detection, audit/alerts.
-6. Future-ready identity layer для `sms/google/yandex`.
+1. ~~База: `users`, challenges, `auth_sessions`, `user_preferences`, базовые public endpoints.~~ ✅ **Выполнено в T1-01 (2026-04-25)**
+2. Email verification + forgot/reset password + outbox email delivery. ← T1-02, T1-04
+3. Cookie session model, refresh rotation, `GET /auth/me`, logout/logout-all. ← T1-03
+4. Active tenant switching и post-login routing. ← T1-07
+5. Security hardening: rate limits, soft-lock, reuse detection, audit/alerts. ← T1-05
+6. Future-ready identity layer для `sms/google/yandex`. ← Backlog
 
 ## 24. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
-- [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] Session model, token lifecycle и security controls описаны.
-- [ ] Async-процессы, observability и тестовая матрица описаны.
-- [ ] Стыки с tenant, team invite и onboarding не противоречат друг другу.
-- [ ] Открытые продуктовые решения выделены отдельно.
+- [x] Текущее и целевое состояние раздела зафиксированы.
+- [x] Backend API, frontend поведение и модель данных согласованы между собой.
+- [x] Session model, token lifecycle и security controls описаны.
+- [x] Async-процессы, observability и тестовая матрица описаны.
+- [x] Стыки с tenant, team invite и onboarding не противоречат друг другу.
+- [x] Открытые продуктовые решения выделены отдельно.
+
+## 24.1 Чеклист реализации (по задачам)
+
+- [x] T1-01: Auth data model — схема БД, миграция, code references
+- [ ] T1-02: Register + verify email flow
+- [ ] T1-03: Login / logout / me / session lifecycle
+- [ ] T1-04: Forgot / reset / change password
+- [ ] T1-05: Rate limiting, soft-lock, audit events
+- [ ] T1-06: Tenant bootstrap после auth (02-tenant)
+- [ ] T1-07: Tenant switch и trusted tenant context
+- [ ] T1-20: Register / login / verify UI
+- [ ] T1-21: Forgot / reset password UI
+- [ ] T1-22: Post-login redirect logic
+- [ ] T1-30: Async email delivery настроен
+- [ ] T1-40: Auth happy-path e2e тесты
+- [ ] T1-41: Tenant entry и isolation regression тесты
 
 ## 25. История изменений
 
@@ -536,3 +562,4 @@ curl -X POST /api/v1/auth/login \
 | 2026-04-18 | Создана системная аналитика для модуля auth и зафиксированы открытые вопросы | Codex |
 | 2026-04-18 | Зафиксированы продуктовые решения по verify policy, reset TTL, logout-all, invite auto-linking и soft-lock policy | Codex |
 | 2026-04-18 | Закрыты оставшиеся MVP-вопросы по CAPTCHA и change email/phone policy | Codex |
+| 2026-04-25 | T1-01 выполнен: обновлена схема БД (AuthSession, EmailVerificationChallenge, PasswordResetChallenge, UserPreference, AuthIdentity, расширен User), создана миграция, обновлены code references. Добавлен чеклист реализации 24.1 | Claude |
