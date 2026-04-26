@@ -23,7 +23,10 @@ export class FinanceService {
             },
         });
 
-        const store = await this.prisma.tenant.findUnique({ where: { id: tenantId } });
+        const store = await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            include: { settings: true },
+        });
         if (!store) return [];
 
         const results = [];
@@ -55,14 +58,14 @@ export class FinanceService {
                 const taxBase = product.minPrice || avgSalePrice || 0;
                 let tax = 0;
 
-                if (store.taxSystem === TaxSystem.USN_6) {
+                if (store.settings?.taxSystem === TaxSystem.USN_6) {
                     tax = taxBase * 0.06;
-                } else if (store.taxSystem === TaxSystem.NPD) {
+                } else if (store.settings?.taxSystem === TaxSystem.NPD) {
                     tax = taxBase * 0.04;
-                } else if (store.taxSystem === TaxSystem.USN_15) {
+                } else if (store.settings?.taxSystem === TaxSystem.USN_15) {
                     const profitBasis = Math.max(0, taxBase - (product.purchasePrice || 0));
                     tax = profitBasis * 0.15;
-                } else if (store.taxSystem === TaxSystem.OSNO) {
+                } else if (store.settings?.taxSystem === TaxSystem.OSNO) {
                     tax = taxBase * 0.36;
                 }
 
@@ -108,7 +111,7 @@ export class FinanceService {
                     netProfit,
                     roi: roi.toFixed(1) + '%',
                     margin: avgSalePrice > 0 ? ((netProfit / avgSalePrice) * 100).toFixed(1) + '%' : '0%',
-                    taxSystem: store.taxSystem,
+                    taxSystem: store.settings?.taxSystem,
                     width: product.width,
                     height: product.height,
                     length: product.length,

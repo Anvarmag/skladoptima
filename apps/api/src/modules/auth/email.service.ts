@@ -15,4 +15,10 @@ export class EmailService {
         // TODO T1-30: replace with real email provider
         this.logger.log(`[DEV] Password reset email → ${email} | URL: ${resetUrl}`);
     }
+
+    async sendInviteEmail(email: string, token: string): Promise<void> {
+        const inviteUrl = `${process.env.APP_URL || 'http://localhost:5173'}/invite/accept?token=${token}`;
+        // TODO T1-30: replace with real email provider
+        this.logger.log(`[DEV] Invite email → ${email} | URL: ${inviteUrl}`);
+    }
 }

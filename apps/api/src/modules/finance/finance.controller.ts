@@ -1,6 +1,8 @@
-import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Controller, Get, Query, Req, UseGuards } from '@nestjs/common';
 import { FinanceService } from './finance.service';
+import { RequireActiveTenantGuard } from '../tenants/guards/require-active-tenant.guard';
 
+@UseGuards(RequireActiveTenantGuard)
 @Controller('finance')
 export class FinanceController {
     constructor(private readonly financeService: FinanceService) { }
@@ -10,6 +12,6 @@ export class FinanceController {
         @Req() req: any,
         @Query('productId') productId: string,
     ) {
-        return this.financeService.calculateUnitEconomics(req.user.tenantId, productId);
+        return this.financeService.calculateUnitEconomics(req.activeTenantId, productId);
     }
 }

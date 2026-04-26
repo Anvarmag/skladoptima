@@ -1,10 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { MarketplaceType } from '@prisma/client';
 
 @Injectable()
 export class SettingsService {
-    constructor(private prisma: PrismaService) { }
+    private readonly logger = new Logger(SettingsService.name);
+
+    constructor(
+        private prisma: PrismaService,
+        private readonly onboardingService: OnboardingService,
+    ) { }
 
     async getSettings(tenantId: string) {
         // Эмуляция старого ответа
@@ -31,24 +37,48 @@ export class SettingsService {
 
     async getStore(tenantId: string) {
         return this.prisma.tenant.findUnique({
-            where: { id: tenantId }
+            where: { id: tenantId },
+            include: { settings: true },
         });
     }
 
     async updateStore(tenantId: string, dto: { name?: string, taxSystem?: any, vatThresholdExceeded?: boolean }) {
-        return this.prisma.tenant.update({
-            where: { id: tenantId },
-            data: {
-                name: dto.name,
-                taxSystem: dto.taxSystem,
-                vatThresholdExceeded: dto.vatThresholdExceeded
-            }
-        });
+        const updates: Promise<any>[] = [];
+
+        if (dto.name !== undefined) {
+            updates.push(
+                this.prisma.tenant.update({
+                    where: { id: tenantId },
+                    data: { name: dto.name },
+                }),
+            );
+        }
+
+        if (dto.taxSystem !== undefined || dto.vatThresholdExceeded !== undefined) {
+            updates.push(
+                this.prisma.tenantSettings.upsert({
+                    where: { tenantId },
+                    create: {
+                        tenantId,
+                        taxSystem: dto.taxSystem,
+                        vatThresholdExceeded: dto.vatThresholdExceeded ?? false,
+                    },
+                    update: {
+                        ...(dto.taxSystem !== undefined && { taxSystem: dto.taxSystem }),
+                        ...(dto.vatThresholdExceeded !== undefined && { vatThresholdExceeded: dto.vatThresholdExceeded }),
+                    },
+                }),
+            );
+        }
+
+        await Promise.all(updates);
+        return this.getStore(tenantId);
     }
 
     async updateSettings(tenantId: string, dto: any) {
         // Разбиваем старый плоский DTO на аккаунты
-        
+        let didUpdate = false;
+
         if (dto.wbApiKey !== undefined || dto.wbWarehouseId !== undefined) {
             let wb = await this.prisma.marketplaceAccount.findFirst({ where: { tenantId, marketplace: MarketplaceType.WB } });
             if (!wb) {
@@ -62,6 +92,7 @@ export class SettingsService {
                     statApiKey: dto.wbStatApiKey !== undefined ? dto.wbStatApiKey : wb.statApiKey,
                 }
             });
+            didUpdate = true;
         }
 
         if (dto.ozonClientId !== undefined || dto.ozonApiKey !== undefined || dto.ozonWarehouseId !== undefined) {
@@ -77,6 +108,14 @@ export class SettingsService {
                     warehouseId: dto.ozonWarehouseId !== undefined ? dto.ozonWarehouseId : ozon.warehouseId,
                 }
             });
+            didUpdate = true;
+        }
+
+        // T4-04: domain event — подключение маркетплейса завершает шаг connect_marketplace
+        if (didUpdate) {
+            this.onboardingService.markStepDone('TENANT_ACTIVATION', tenantId, 'connect_marketplace', 'domain_event').catch((err: unknown) =>
+                this.logger.warn(JSON.stringify({ event: 'onboarding_step_update_failed', stepKey: 'connect_marketplace', err: (err as any)?.message })),
+            );
         }
 
         return this.getSettings(tenantId);

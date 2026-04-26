@@ -199,12 +199,14 @@ curl -X POST /api/v1/team/invitations \
 
 ## 12. Чеклист реализации
 
-- [ ] CRUD приглашений + token flow.
-- [ ] Обработчик принятия invite для existing/new user.
-- [ ] RBAC policy для team actions.
-- [ ] Guard team write-actions по tenant access-state.
-- [ ] Аудит всех member/role операций.
-- [ ] Интеграционные тесты role matrix.
+- [x] Модель данных: `Invitation`, расширенный `Membership`, `TeamEvent`, enum'ы `MembershipStatus`/`InvitationStatus`, миграция с бэкфилом и частичным уникальным индексом — **TASK_TEAM_1** (2026-04-26).
+- [x] CRUD приглашений + token flow — **TASK_TEAM_2** (2026-04-26).
+- [x] Обработчик принятия invite для existing/new user + auto-link при верификации — **TASK_TEAM_3** (2026-04-26).
+- [x] RBAC policy для team actions + last-owner guard — **TASK_TEAM_4** (2026-04-26).
+- [x] Guard team write-actions по tenant access-state — **TASK_TEAM_5** (2026-04-26).
+- [x] Аудит всех member/role операций (TeamEvent) — **TASK_TEAM_5** (2026-04-26).
+- [x] Frontend team module: Team.tsx, AcceptInvite.tsx, навигация, Login redirect — **TASK_TEAM_6** (2026-04-26).
+- [x] 58 unit-тестов TeamService: role matrix, invite lifecycle, last-owner guard, tenant state guards, observability — **TASK_TEAM_7** (2026-04-26).
 
 ## 13. Критерии готовности (DoD)
 
@@ -349,3 +351,9 @@ curl -X POST /api/v1/team/invitations \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Доработаны membership lifecycle, tenant-state guards, invite/email security и вынесены продуктовые вопросы по ролям MVP | Codex |
 | 2026-04-18 | Зафиксированы MVP-роли, права `ADMIN` и отказ от reactivation бывших участников | Codex |
+| 2026-04-26 | TASK_TEAM_1 выполнена: модель данных Invitation/Membership/TeamEvent, миграция с бэкфилом, частичный уникальный индекс, обновление всех сервисов под MembershipStatus | Claude |
+| 2026-04-26 | TASK_TEAM_2 выполнена: TeamModule с invite flow (create/list/resend/cancel), RBAC-проверки, TenantWriteGuard, TeamEvent, sendInviteEmail | Claude |
+| 2026-04-26 | TASK_TEAM_3 выполнена: acceptInvitation с полной валидацией и идемпотентностью; auto-link pending invites в verifyEmail; guards рефакторинг | Claude |
+| 2026-04-26 | TASK_TEAM_4 выполнена: listMembers, changeRole, removeMember, leaveTeam; role matrix OWNER/ADMIN/MANAGER/STAFF; assertNotLastOwner guard | Claude |
+| 2026-04-26 | TASK_TEAM_5 выполнена: TenantWriteGuard на leaveTeam; tenant accessState check в acceptInvitation; TeamSchedulerService nightly job для expire invite; @nestjs/schedule установлен | Claude |
+| 2026-04-26 | TASK_TEAM_6 выполнена: Team.tsx (members list, invitations tab, role matrix, write-blocked states), AcceptInvite.tsx (все invite-states), навигация в MainLayout, redirect в Login | Claude |

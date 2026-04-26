@@ -11,9 +11,14 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { HealthModule } from './health/health.module';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
+import { CsrfGuard } from './modules/auth/csrf.guard';
+import { ActiveTenantGuard } from './modules/tenants/guards/active-tenant.guard';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { MaxNotifierModule } from './modules/max-notifier/max-notifier.module';
+import { TenantModule } from './modules/tenants/tenant.module';
+import { TeamModule } from './modules/team/team.module';
+import { OnboardingModule } from './modules/onboarding/onboarding.module';
 
 // Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
 // или перенесены в apps/worker.
@@ -31,6 +36,9 @@ import { MaxNotifierModule } from './modules/max-notifier/max-notifier.module';
     AnalyticsModule,
     HealthModule,
     MaxNotifierModule,
+    TenantModule,
+    TeamModule,
+    OnboardingModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
@@ -40,6 +48,14 @@ import { MaxNotifierModule } from './modules/max-notifier/max-notifier.module';
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: CsrfGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ActiveTenantGuard,
     },
   ],
 })

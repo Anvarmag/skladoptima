@@ -23,8 +23,10 @@ async function main() {
         const tenant = await prisma.tenant.create({
             data: {
                 name: 'Demo Sklad Analytics',
-                taxSystem: TaxSystem.USN_6
-            }
+                settings: {
+                    create: { taxSystem: TaxSystem.USN_6 },
+                },
+            },
         });
         tenantIdStr = tenant.id;
 
@@ -37,7 +39,9 @@ async function main() {
                 memberships: {
                     create: {
                         tenantId: tenant.id,
-                        role: Role.OWNER
+                        role: Role.OWNER,
+                        status: 'ACTIVE',
+                        joinedAt: new Date(),
                     }
                 }
             }

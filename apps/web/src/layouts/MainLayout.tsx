@@ -1,10 +1,13 @@
 import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart } from 'lucide-react';
+import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users } from 'lucide-react';
 import { useEffect } from 'react';
+import AccessStateBanner from '../components/AccessStateBanner';
+import OnboardingWidget from '../components/OnboardingWidget';
 
 export default function MainLayout() {
-    const { user, logout, isTelegram } = useAuth();
+    const { user, activeTenant, logout, isTelegram } = useAuth();
+    const canSeeTeam = activeTenant?.role !== 'STAFF';
     const navigate = useNavigate();
     const location = useLocation();
 
@@ -56,9 +59,9 @@ export default function MainLayout() {
                     <Package className="h-8 w-8 text-blue-600 mr-2" />
                     <div>
                         <div className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Sklad Optima</div>
-                        {user?.store?.name && (
+                        {activeTenant?.name && (
                             <div className="text-[10px] uppercase tracking-wider text-blue-600 font-bold truncate max-w-[160px]">
-                                {user.store.name}
+                                {activeTenant.name}
                             </div>
                         )}
                     </div>
@@ -113,6 +116,16 @@ export default function MainLayout() {
                                 </>
                             )}
                         </NavLink>
+                        {canSeeTeam && (
+                            <NavLink to="/app/team" className={navClass}>
+                                {({ isActive }) => (
+                                    <>
+                                        <Users className={iconClass(isActive)} />
+                                        Команда
+                                    </>
+                                )}
+                            </NavLink>
+                        )}
                     </nav>
                 </div>
                 <div className="border-t border-slate-200 p-4">
@@ -137,9 +150,9 @@ export default function MainLayout() {
                     <Package className="h-7 w-7 text-blue-600" />
                     <div className="ml-2 flex flex-col">
                         <span className="text-lg font-bold text-slate-900 leading-none">Sklad</span>
-                        {user?.store?.name && (
+                        {activeTenant?.name && (
                             <span className="text-[10px] text-blue-600 font-bold truncate max-w-[120px]">
-                                {user.store.name}
+                                {activeTenant.name}
                             </span>
                         )}
                     </div>
@@ -152,9 +165,16 @@ export default function MainLayout() {
             {/* Main content */}
             <div className="flex flex-1 flex-col overflow-hidden md:mt-0 mt-14">
                 <main className="flex-1 overflow-y-auto bg-slate-50 p-3 sm:p-4 md:p-6 lg:p-8 pb-20 md:pb-8">
+                    {activeTenant && (
+                        <div className="mb-4">
+                            <AccessStateBanner accessState={activeTenant.accessState} />
+                        </div>
+                    )}
                     <Outlet />
                 </main>
             </div>
+
+            <OnboardingWidget />
 
             {/* Mobile bottom navigation */}
             <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-10 safe-area-bottom">
@@ -207,6 +227,16 @@ export default function MainLayout() {
                             </>
                         )}
                     </NavLink>
+                    {canSeeTeam && (
+                        <NavLink to="/app/team" className={mobileNavClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <Users className={mobileIconClass(isActive)} />
+                                    <span>Команда</span>
+                                </>
+                            )}
+                        </NavLink>
+                    )}
                 </nav>
             </div>
         </div>

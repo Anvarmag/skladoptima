@@ -1,11 +1,29 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import axios from 'axios';
 
-// Configure global axios defaults
 axios.defaults.baseURL = import.meta.env.VITE_API_URL || '/api';
-axios.defaults.withCredentials = true; // Send httpOnly cookies
+axios.defaults.withCredentials = true;
 
-// Telegram WebApp type declarations
+// CSRF: store token fetched from server, attach to all mutating requests
+let _csrfToken = '';
+const MUTATING_METHODS = ['post', 'put', 'patch', 'delete'];
+
+async function refreshCsrfToken(): Promise<void> {
+    try {
+        const res = await axios.get('/auth/csrf-token');
+        _csrfToken = res.data.csrfToken ?? '';
+    } catch {
+        // non-fatal — server will reject mutations with CSRF_TOKEN_INVALID if needed
+    }
+}
+
+axios.interceptors.request.use((config) => {
+    if (config.method && MUTATING_METHODS.includes(config.method.toLowerCase())) {
+        config.headers['X-CSRF-Token'] = _csrfToken;
+    }
+    return config;
+});
+
 declare global {
     interface Window {
         Telegram?: {
@@ -37,54 +55,102 @@ declare global {
     }
 }
 
-interface User {
+export interface AuthUser {
     id: string;
     email: string;
-    store?: {
+    phone?: string | null;
+    status: 'PENDING_VERIFICATION' | 'ACTIVE' | 'LOCKED' | 'DELETED';
+    emailVerifiedAt?: string | null;
+    lastLoginAt?: string | null;
+    memberships?: Array<{
         id: string;
-        name: string;
-    };
+        role: string;
+        tenantId: string;
+        tenant: { id: string; name: string; accessState: string };
+    }>;
+    preferences?: { lastUsedTenantId?: string | null; locale?: string | null; timezone?: string | null } | null;
+}
+
+export interface ActiveTenant {
+    id: string;
+    name: string;
+    accessState: string;
+    role: string;
+}
+
+export interface TenantSummary {
+    id: string;
+    name: string;
+    accessState: string;
+    status: string;
+    role: string;
+    isAvailable: boolean;
 }
 
 interface AuthContextType {
-    user: User | null;
+    user: AuthUser | null;
+    activeTenant: ActiveTenant | null;
+    tenants: TenantSummary[];
     loading: boolean;
     isTelegram: boolean;
-    checkAuth: () => Promise<void>;
+    nextRoute: string | null;
+    checkAuth: () => Promise<string | null>;
     logout: () => Promise<void>;
+    switchTenant: (tenantId: string) => Promise<void>;
+    linkAccountViaTelegram: (email: string, password: string) => Promise<any>;
 }
 
 const AuthContext = createContext<AuthContextType>({
     user: null,
+    activeTenant: null,
+    tenants: [],
     loading: true,
     isTelegram: false,
-    checkAuth: async () => { },
-    logout: async () => { },
+    nextRoute: null,
+    checkAuth: async () => null,
+    logout: async () => {},
+    switchTenant: async () => {},
+    linkAccountViaTelegram: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const [user, setUser] = useState<User | null>(null);
+    const [user, setUser] = useState<AuthUser | null>(null);
+    const [activeTenant, setActiveTenant] = useState<ActiveTenant | null>(null);
+    const [tenants, setTenants] = useState<TenantSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [isTelegram, setIsTelegram] = useState(false);
+    const [nextRoute, setNextRoute] = useState<string | null>(null);
 
-    const checkAuth = async () => {
+    const checkAuth = async (): Promise<string | null> => {
         try {
             const res = await axios.get('/auth/me');
-            setUser(res.data);
-        } catch (error) {
+            setUser(res.data.user);
+            setActiveTenant(res.data.activeTenant ?? null);
+            setTenants(res.data.tenants ?? []);
+            setNextRoute(res.data.nextRoute ?? null);
+            return res.data.nextRoute ?? null;
+        } catch {
             setUser(null);
+            setActiveTenant(null);
+            setTenants([]);
+            setNextRoute(null);
+            return null;
         } finally {
             setLoading(false);
         }
     };
 
+    const switchTenant = async (tenantId: string): Promise<void> => {
+        await axios.post(`/tenants/${tenantId}/switch`);
+        await checkAuth();
+    };
+
     const loginViaTelegram = async (initData: string) => {
         try {
-            const res = await axios.post('/auth/telegram', { initData });
-            setUser(res.data.user);
+            await axios.post('/auth/telegram', { initData });
+            await checkAuth();
         } catch (error: any) {
             if (error.response?.data?.message === 'account_not_linked') {
-                console.log('Telegram account not linked yet');
                 setUser(null);
             } else {
                 console.error('Telegram auth failed', error);
@@ -98,18 +164,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const linkAccountViaTelegram = async (email: string, password: string) => {
         const tg = window.Telegram?.WebApp;
         if (!tg || !tg.initData) return;
-
-        try {
-            const res = await axios.post('/auth/telegram/link', {
-                initData: tg.initData,
-                email,
-                password
-            });
-            setUser(res.data.user);
-            return res.data;
-        } catch (error: any) {
-            throw error;
-        }
+        const res = await axios.post('/auth/telegram/link', {
+            initData: tg.initData,
+            email,
+            password,
+        });
+        await checkAuth();
+        return res.data;
     };
 
     const logout = async () => {
@@ -119,26 +180,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } else {
                 await axios.post('/auth/logout');
             }
-            setUser(null);
         } catch (error) {
             console.error('Logout error', error);
+        } finally {
+            setUser(null);
+            setActiveTenant(null);
+            setTenants([]);
+            setNextRoute(null);
         }
     };
 
     useEffect(() => {
         const tg = window.Telegram?.WebApp;
-        if (tg && tg.initData) {
-            setIsTelegram(true);
-            tg.ready();
-            tg.expand();
-            loginViaTelegram(tg.initData);
-        } else {
-            checkAuth();
-        }
+        refreshCsrfToken().then(() => {
+            if (tg && tg.initData) {
+                setIsTelegram(true);
+                tg.ready();
+                tg.expand();
+                loginViaTelegram(tg.initData);
+            } else {
+                checkAuth();
+            }
+        });
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, loading, isTelegram, checkAuth, logout, linkAccountViaTelegram } as any}>
+        <AuthContext.Provider value={{ user, activeTenant, tenants, loading, isTelegram, nextRoute, checkAuth, logout, switchTenant, linkAccountViaTelegram }}>
             {children}
         </AuthContext.Provider>
     );

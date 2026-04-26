@@ -41,7 +41,9 @@ export class UserService implements OnModuleInit {
                     data: {
                         userId: user.id,
                         tenantId: tenant.id,
-                        role: Role.OWNER
+                        role: Role.OWNER,
+                        status: 'ACTIVE',
+                        joinedAt: new Date(),
                     }
                 });
             });
@@ -83,7 +85,9 @@ export class UserService implements OnModuleInit {
                 data: {
                     userId: user.id,
                     tenantId: tenant.id,
-                    role: Role.OWNER
+                    role: Role.OWNER,
+                    status: 'ACTIVE',
+                    joinedAt: new Date(),
                 }
             });
 
@@ -146,7 +150,9 @@ export class UserService implements OnModuleInit {
                 data: {
                     userId: user.id,
                     tenantId: tenant.id,
-                    role: Role.OWNER
+                    role: Role.OWNER,
+                    status: 'ACTIVE',
+                    joinedAt: new Date(),
                 }
             });
 

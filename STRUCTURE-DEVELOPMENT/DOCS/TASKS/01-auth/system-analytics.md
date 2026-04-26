@@ -16,12 +16,33 @@
 - Все ссылки на старое поле `password` обновлены в `auth.service.ts`, `jwt.strategy.ts`, `user.service.ts`.
 - Убрано логирование пароля в plaintext из `seedAdmin`.
 
+**Выполнено (T1-02, 2026-04-25):**
+- Register + email verification + resend flow реализованы (детали в TASK_AUTH_2.md).
+
+**Выполнено (T1-03, 2026-04-25):**
+- Server-side AuthSession с refresh token rotation и reuse/COMPROMISED detection.
+- `POST /auth/login` — создаёт сессию, выставляет два httpOnly cookie (`Authentication` 15м, `Refresh` 30д, path `/auth/refresh`).
+- `POST /auth/refresh` — ротирует refresh token, детектирует reuse → COMPROMISED для всех активных сессий.
+- `POST /auth/logout` / `POST /auth/logout-all` — серверный revoke по sessionId / всех сессий пользователя.
+- `GET /auth/me` — user + memberships + routing hint (`/onboarding`, `/app`, `/tenant-picker`).
+- `JwtStrategy` — проверяет sessionId против `AuthSession.status = ACTIVE` (server-side invalidation).
+
+**Выполнено (T1-04, 2026-04-25):**
+- `POST /auth/password-resets` — forgot-password с нейтральным ответом (не раскрывает наличие аккаунта). Отменяет предыдущие PENDING challenges перед созданием нового. Rate limit: cooldown 60с + лимит 3 запроса в час; превышение возвращает нейтральный `{ sent: true }`.
+- `POST /auth/password-resets/confirm` — reset по одноразовому токену (SHA-256 хеш, TTL 24ч). Состояния not-found / used / cancelled → один код `AUTH_RESET_TOKEN_INVALID`; expired → `AUTH_RESET_TOKEN_EXPIRED`. После успеха: обновляет passwordHash, отзывает все ACTIVE сессии (reason `PASSWORD_RESET`), очищает auth cookies.
+- `POST /auth/change-password` — смена пароля авторизованным пользователем. Требует текущий пароль; запрещает повторное использование того же пароля (`AUTH_NEW_PASSWORD_SAME_AS_CURRENT`). После успеха: обновляет passwordHash, отзывает все ACTIVE сессии кроме текущей (reason `PASSWORD_CHANGE`) — пользователь остаётся залогиненным.
+- Добавлены DTOs: `ForgotPasswordDto`, `ResetPasswordDto`, `ChangePasswordDto`.
+- Приватный хелпер `createAndSendResetChallenge` — по аналогии с verification challenge.
+
+**Выполнено (2026-04-26, исправления по аудиту):**
+- JWT payload расширен: `{ sub, sessionId, activeTenantId, membershipVersion }` — gap T1-03 закрыт.
+- `User.membershipVersion` — счётчик, инкрементируется атомарно при всех операциях с memberships.
+- `ActiveTenantGuard` использует `activeTenantId` из JWT когда `membershipVersion` совпадает (экономия DB-хита).
+- `REFRESH_TOKEN_TTL_MS` исправлен с 30 дней на 7 дней — устранено рассогласование с cookie TTL.
+
 **Ещё не реализовано:**
-- login с server-side session + refresh rotation (`T1-03`);
-- forgot/reset/change password (`T1-04`);
-- rate limiting, soft-lock, audit events (`T1-05`);
-- frontend auth flows (`T1-20`, `T1-21`, `T1-22`);
-- стыки `auth → tenant`, `auth → team invites`, `auth → onboarding` на уровне кода.
+- async email delivery — EmailService остаётся stub (`T1-30`);
+- стыки `auth → tenant`, `auth → team invites`, `auth → onboarding` на уровне кода (`T1-07`).
 
 ### Целевое состояние (to-be)
 
@@ -542,14 +563,17 @@ curl -X POST /api/v1/auth/login \
 
 - [x] T1-01: Auth data model — схема БД, миграция, code references
 - [x] T1-02: Register + verify email flow
-- [ ] T1-03: Login / logout / me / session lifecycle
-- [ ] T1-04: Forgot / reset / change password
-- [ ] T1-05: Rate limiting, soft-lock, audit events
-- [ ] T1-06: Tenant bootstrap после auth (02-tenant)
+- [x] T1-03: Login / logout / me / session lifecycle
+- [x] T1-04: Forgot / reset / change password
+- [x] T1-05: Rate limiting, soft-lock, audit events
+- [x] T1-06: Frontend auth flows (login, register, verify-email, forgot/reset-password, post-login routing)
+- [x] T1-07 (QA): Regression unit-tests — 54 теста на auth.service (register/verify/login/soft-lock/refresh/logout/reset/change-password + observability)
+- [ ] T1-07: Tenant bootstrap после auth (02-tenant)
 - [ ] T1-07: Tenant switch и trusted tenant context
-- [ ] T1-20: Register / login / verify UI
-- [ ] T1-21: Forgot / reset password UI
-- [ ] T1-22: Post-login redirect logic
+- [x] T1-20: Register / login / verify UI — покрыто T1-06
+- [x] T1-21: Forgot / reset password UI — покрыто T1-06
+- [x] T1-22: Post-login redirect logic — покрыто T1-06
+- [ ] T1-07: JWT payload — добавить `activeTenantId` и `membershipVersion` в токен (gap, см. TASK_AUTH_3.md)
 - [ ] T1-30: Async email delivery настроен
 - [ ] T1-40: Auth happy-path e2e тесты
 - [ ] T1-41: Tenant entry и isolation regression тесты
@@ -561,5 +585,11 @@ curl -X POST /api/v1/auth/login \
 | 2026-04-18 | Создана системная аналитика для модуля auth и зафиксированы открытые вопросы | Codex |
 | 2026-04-18 | Зафиксированы продуктовые решения по verify policy, reset TTL, logout-all, invite auto-linking и soft-lock policy | Codex |
 | 2026-04-18 | Закрыты оставшиеся MVP-вопросы по CAPTCHA и change email/phone policy | Codex |
+| 2026-04-25 | T1-03 выполнен: server-side AuthSession, refresh rotation, reuse/COMPROMISED detection, logout/logout-all, GET /auth/me с routing hint | Claude |
 | 2026-04-25 | T1-01 выполнен: обновлена схема БД (AuthSession, EmailVerificationChallenge, PasswordResetChallenge, UserPreference, AuthIdentity, расширен User), создана миграция, обновлены code references. Добавлен чеклист реализации 24.1 | Claude |
 | 2026-04-25 | T1-02 выполнен: register (PENDING_VERIFICATION + AuthIdentity), verifyEmail (SHA-256 token, lifecycle), resendVerification (cooldown 60s + 3/h), login-блокировка по status, EmailService stub | Claude |
+| 2026-04-25 | T1-04 выполнен: forgot/reset/change-password endpoints, SHA-256 reset token TTL 24ч, neutral response без enumeration, revoke сессий после reset/change. Аудит MVP: добавлен rate limit на forgotPassword (60s + 3/h) и same-password check в changePassword (`AUTH_NEW_PASSWORD_SAME_AS_CURRENT`) | Claude |
+| 2026-04-25 | T1-05 выполнен: LoginAttempt модель + миграция, soft-lock (5 попыток / 15 мин по email+IP, скользящее окно), timing-attack fix в validateUser (bcrypt всегда выполняется), структурированные audit events (11 событий) через NestJS Logger, IP пробрасывается во все auth-методы контроллера | Claude |
+| 2026-04-25 | T1-06 выполнен: AuthContext рефакторинг (AuthUser тип, nextRoute, Telegram fix), Login (error codes, soft-lock state, verify-email state, forgot-password link, post-login routing), Register (убран storeName, pending-verification state, min 8 символов), новые страницы VerifyEmail / ForgotPassword / ResetPassword, маршруты в App.tsx | Claude |
+| 2026-04-25 | T1-07 (QA/Regression) выполнен: auth.service.spec.ts — 54 unit-теста (0.5 с). Покрыты: register, verifyEmail, resendVerification, validateUser (soft-lock, timing-protection, verify-blocked, locked/deleted), loginUser, refreshSession (rotation + reuse/COMPROMISED), logout/logout-all, getMe (routing hint), forgotPassword/resetPassword/changePassword. Отдельная группа observability верифицирует эмиссию 10 критических audit-событий через Logger spy. bcrypt замокан для скорости, $transaction поддерживает оба режима (callback + array). | Claude |
+| 2026-04-26 | Hotfixes: исправлен баг getMe (множественные tenant без lastUsed → /tenant-picker вместо /app), refresh cookie TTL приведён к 7 дням согласно аналитике (был 30 дней), зафиксирован gap JWT payload (activeTenantId/membershipVersion отсутствуют), T1-20/21/22 закрыты как покрытые T1-06 | Claude |

@@ -436,12 +436,22 @@ curl -X POST /api/v1/tenants/tnt_123/switch \
 
 ## 23. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
+- [x] Текущее и целевое состояние раздела зафиксированы.
 - [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] AccessState, data isolation и retention lifecycle описаны отдельно и явно.
+- [x] AccessState, data isolation и retention lifecycle описаны отдельно и явно.
 - [ ] Async-процессы, observability и тестовая матрица описаны.
 - [ ] Стыки с auth, team, billing и admin не противоречат друг другу.
-- [ ] Открытые продуктовые решения выделены отдельно.
+- [x] Открытые продуктовые решения выделены отдельно.
+
+## 23.1 Чеклист реализации (по задачам)
+
+- [x] T2-01: Tenant data model — схема, миграция, code references
+- [x] T2-02: Tenant create / list / get / switch API
+- [x] T2-03: Tenant isolation guard и active tenant bootstrap
+- [x] T2-04: AccessState policy layer и internal transition endpoints
+- [x] T2-05: Settings management и access warnings read-model
+- [x] T2-06: Closure / retention lifecycle
+- [x] T2-07: QA, regression и observability
 
 ## 24. История изменений
 
@@ -450,3 +460,10 @@ curl -X POST /api/v1/tenants/tnt_123/switch \
 | 2026-04-18 | Создана системная аналитика для модуля tenant и зафиксированы открытые вопросы | Codex |
 | 2026-04-18 | Зафиксированы решения по `TRIAL_EXPIRED` и освобождению ИНН после удаления tenant | Codex |
 | 2026-04-18 | Зафиксированы решения по восстановлению `CLOSED` tenant и отображению закрытой компании в selector/history | Codex |
+| 2026-04-26 | T2-02 выполнен: TenantModule с нуля — POST /tenants (транзакция: Tenant+Settings+Membership+AccessStateEvent, TRIAL_ACTIVE, upsert lastUsedTenantId), GET /tenants, GET /tenants/current, GET /tenants/:id, POST /tenants/:id/switch, inn-uniqueness guard, closed-tenant block, tsc clean | Claude |
+| 2026-04-26 | T2-03 выполнен: ActiveTenantGuard (глобальный APP_GUARD) — trusted tenant context из X-Tenant-Id header или UserPreference, жёсткий/мягкий режим, блокировка CLOSED по status и accessState; @SkipTenantGuard / @ActiveTenantId декораторы; getMe расширен до полного bootstrap (activeTenant, tenants[], nextRoute); jwt.strategy исправлен (убран memberships[0]); switchTenant блокирует accessState=CLOSED; tsc clean | Claude |
+| 2026-04-26 | TASK_TENANT_6 выполнен: closeTenant (транзакция: status+accessState=CLOSED, closedAt, TenantAccessStateEvent, TenantClosureJob scheduledFor=+90дней); restoreTenant (проверка retention window, CLOSED→SUSPENDED, ARCHIVED closureJob); retentionUntil в formatTenantSummary; closureJob include в list/get/current; новые POST endpoints /close и /restore; tsc clean | Claude |
+| 2026-04-26 | TASK_TENANT_5 выполнен: AccessStatePolicy (allowed transitions map, assertTransitionAllowed, isWriteAllowed, getWarnings); TenantWriteGuard (блокирует TRIAL_EXPIRED/SUSPENDED/CLOSED без DB); transitionAccessState в сервисе (транзакция: update tenant + TenantAccessStateEvent + audit); getAccessWarnings endpoint; ActiveTenantGuard теперь устанавливает req.activeTenant{id,status,accessState}; TenantWriteGuard применён на write-методах product/settings/sync контроллеров; tsc clean | Claude |
+| 2026-04-26 | TASK_TENANT_4 выполнен: RequireActiveTenantGuard создан и применён на всех 6 доменных контроллерах (product, finance, settings, analytics, sync, audit); req.user.tenantId → req.activeTenantId везде (24 вхождения); удалён дублирующий @UseGuards(JwtAuthGuard) из settings.controller; guard chain JwtAuthGuard→ActiveTenantGuard→RequireActiveTenantGuard зафиксирован; tsc clean | Claude |
+| 2026-04-26 | T2-07 выполнен: AuthContext расширен (activeTenant, tenants, switchTenant); AccessStateBanner; страницы CreateCompany (/onboarding) и TenantPicker (/tenant-picker); App.tsx — роуты + nextRoute-редиректы; MainLayout — замена store.name на activeTenant.name, баннер предупреждений; 44 регрессионных теста tenant.service.spec (create/switch/isolation/access-state/close/restore/observability — 44/44 passed); Logger в 3 guards (cross_tenant_access_denied, tenant_context_required, tenant_write_blocked); tsc clean | Claude |
+| 2026-04-26 | T2-01 выполнен: расширена модель Tenant (inn, status, primaryOwnerUserId, closedAt), добавлен GRACE_PERIOD в AccessState, новые enum TenantStatus/TenantActorType/TenantClosureJobStatus, новые модели TenantSettings/TenantAccessStateEvent/TenantClosureJob, data-migration taxSystem→TenantSettings, обновлены finance.service/settings.service/seed.ts, prisma validate + tsc чисто | Claude |

@@ -1,15 +1,19 @@
-import { Injectable, NotFoundException, BadRequestException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { ActionType, Product } from '@prisma/client';
 
 @Injectable()
 export class ProductService {
+    private readonly logger = new Logger(ProductService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly auditService: AuditService,
+        private readonly onboardingService: OnboardingService,
     ) { }
 
     async create(createProductDto: CreateProductDto, photoPath: string | null, actorUserId: string, tenantId: string) {
@@ -48,6 +52,11 @@ export class ProductService {
                 tenantId,
             });
 
+            // T4-04: domain event — первый товар завершает шаг add_products
+            this.onboardingService.markStepDone('TENANT_ACTIVATION', tenantId, 'add_products', 'domain_event').catch((err: unknown) =>
+                this.logger.warn(JSON.stringify({ event: 'onboarding_step_update_failed', stepKey: 'add_products', err: (err as any)?.message })),
+            );
+
             return product;
         }
 
@@ -72,6 +81,11 @@ export class ProductService {
             actorUserId,
             tenantId,
         });
+
+        // T4-04: domain event — первый товар завершает шаг add_products
+        this.onboardingService.markStepDone('TENANT_ACTIVATION', tenantId, 'add_products', 'domain_event').catch((err: unknown) =>
+            this.logger.warn(JSON.stringify({ event: 'onboarding_step_update_failed', stepKey: 'add_products', err: (err as any)?.message })),
+        );
 
         return product;
     }
