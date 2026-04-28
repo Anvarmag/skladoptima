@@ -5,6 +5,8 @@ import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UserService } from '../users/user.service';
 import { EmailService } from './email.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
+import { ReferralAttributionService } from '../referrals/referral-attribution.service';
 import * as bcrypt from 'bcrypt';
 
 // bcrypt is slow at cost 12 — mock it for unit tests
@@ -32,6 +34,8 @@ function makePrismaMock() {
             findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(),
         },
         loginAttempt: { count: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
+        invitation: { findMany: jest.fn().mockResolvedValue([]), update: jest.fn() },
+        membership: { create: jest.fn() },
         $transaction: jest.fn().mockImplementation((arg: any) =>
             typeof arg === 'function' ? arg(mock) : Promise.all(arg),
         ),
@@ -114,6 +118,28 @@ describe('AuthService', () => {
                 { provide: UserService, useValue: { findByEmail: jest.fn(), findById: jest.fn() } },
                 { provide: JwtService, useValue: jwtService },
                 { provide: EmailService, useValue: emailService },
+                {
+                    provide: OnboardingService,
+                    useValue: {
+                        markStepDone: jest.fn().mockResolvedValue(undefined),
+                        initUserBootstrap: jest.fn().mockResolvedValue(undefined),
+                    },
+                },
+                {
+                    // TASK_REFERRALS_1: stub чтобы не тянуть реальный prisma
+                    // в auth-spec'е. captureRegistration вызывается только
+                    // если dto.referralCode передан — в текущих тестах нет.
+                    provide: ReferralAttributionService,
+                    useValue: {
+                        captureRegistration: jest.fn().mockResolvedValue({
+                            captured: false, attributionId: null, reason: null,
+                        }),
+                        lockOnTenantCreation: jest.fn().mockResolvedValue({
+                            locked: false, attributionId: null,
+                            status: 'ATTRIBUTED', rejectionReason: null, skipped: true,
+                        }),
+                    },
+                },
             ],
         }).compile();
 

@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, IsOptional, Matches } from 'class-validator';
+import { IsEmail, IsString, MinLength, IsOptional, Matches, MaxLength } from 'class-validator';
 
 export class RegisterDto {
     @IsEmail()
@@ -12,4 +12,37 @@ export class RegisterDto {
     @IsString()
     @MinLength(8)
     password: string;
+
+    // ─── TASK_REFERRALS_1: attribution context ────────────────────────
+    // Все поля optional — регистрация работает и без referral.
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(32)
+    referralCode?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(128)
+    utmSource?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(128)
+    utmMedium?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(128)
+    utmCampaign?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(128)
+    utmContent?: string;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(128)
+    utmTerm?: string;
 }

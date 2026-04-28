@@ -206,14 +206,16 @@ curl -X POST /api/v1/catalog/products \
 
 ## 12. Чеклист реализации
 
-- [ ] Миграции catalog-таблиц.
-- [ ] CRUD products + soft delete/restore.
-- [ ] Import preview/commit pipeline.
-- [ ] Mapping API auto/manual.
-- [ ] Фильтры/поиск и пагинация.
-- [ ] Guard write-actions по tenant access-state.
-- [ ] Source-of-change policy для manual/import/sync.
-- [ ] Аудит операций каталога.
+- [x] Миграции catalog-таблиц. *(TASK_CATALOG_1, 2026-04-26)*
+- [x] CRUD products + soft delete/restore. *(TASK_CATALOG_2, 2026-04-26)*
+- [x] Import preview/commit pipeline. *(TASK_CATALOG_3, 2026-04-26)*
+- [x] Mapping API auto/manual. *(TASK_CATALOG_4, 2026-04-26)*
+- [x] Фильтры/поиск и пагинация. *(базовая реализация уже есть)*
+- [x] Guard write-actions по tenant access-state. *(TenantWriteGuard уже работает)*
+- [x] Source-of-change policy для manual/import/sync. *(поле sourceOfTruth добавлено в TASK_CATALOG_1)*
+- [x] Frontend каталог: фильтр активных/архивных, SKU reuse UX, import preview/commit, access-state guards, mappings badge. *(TASK_CATALOG_6, 2026-04-26)*
+- [x] Аудит операций каталога и observability (Logger + structured events). *(TASK_CATALOG_7, 2026-04-26)*
+- [x] Regression suite: product/import/mapping/guard — 78 тестов. *(TASK_CATALOG_7, 2026-04-26)*
 
 ## 13. Критерии готовности (DoD)
 
@@ -350,3 +352,10 @@ curl -X POST /api/v1/catalog/products \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Доработаны guards по tenant state, product lifecycle, source-of-change policy и открытые вопросы по полям/merge/SKU reuse | Codex |
 | 2026-04-18 | Зафиксированы обязательные поля MVP, ручной merge дублей и policy создания нового товара после soft delete SKU | Codex |
+| 2026-04-26 | TASK_CATALOG_1 выполнен: миграция catalog data model, ProductChannelMapping, CatalogImportJob/Item, расширение Product (brand, barcode, status, sourceOfTruth, createdBy, updatedBy) | Claude |
+| 2026-04-26 | TASK_CATALOG_2 выполнен: restore endpoint, 2-шаговый SKU reuse flow (409 SKU_SOFT_DELETED + confirmRestoreId), PATCH метод, mainImageFileId в DTO, PRODUCT_RESTORED в ActionType | Claude |
+| 2026-04-26 | TASK_CATALOG_3 выполнен: import preview/commit pipeline — ImportService, ImportController, ImportPreviewDto, ImportCommitDto; идемпотентность по idempotencyKey и jobId; soft-deleted SKU policy; race-condition защита при commit | Claude |
+| 2026-04-26 | TASK_CATALOG_4 выполнен: MappingService + MappingController (GET unmatched, GET mappings, POST manual, POST auto-match, POST merge, DELETE); защита от перепривязки (409 MAPPING_ALREADY_EXISTS); идемпотентный auto-match по SKU; безопасный merge с переносом маппингов; новые ActionType MAPPING_CREATED/DELETED/PRODUCT_MERGED + миграция | Claude |
+| 2026-04-26 | TASK_CATALOG_5 выполнен: source-conflict detection в import preview (type='source_conflict' в validationErrors); аудит per-row + IMPORT_COMMITTED в commit; source-of-change защита importFromWb (skip MANUAL/IMPORT); исправлен sourceOfTruth=SYNC в legacy sync; проверено guard-покрытие всех write-entrypoints; IMPORT_COMMITTED в ActionType + миграция | Claude |
+| 2026-04-26 | TASK_CATALOG_6 выполнен: backend status-фильтр в GET /products; frontend — AccessStateBanner + read-only режим, фильтр Активные/Архив + восстановление, SKU reuse 2-шаговый диалог, import preview/commit modal с source_conflict warnings, бейдж несопоставленных маппингов, расширенный Product interface (status, brand, category, deletedAt, sourceOfTruth) | Claude |
+| 2026-04-26 | TASK_CATALOG_7 выполнен: Logger + structured events в ImportService (preview/commit/conflict) и MappingService (conflict/auto-match/merge); 78 regression тестов в 4 файлах (product.service, import.service, mapping.service, tenant-write.guard); fix pre-existing auth.service.spec.ts | Claude |

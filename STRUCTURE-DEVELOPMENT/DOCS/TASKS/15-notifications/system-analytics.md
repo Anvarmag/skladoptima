@@ -1,7 +1,7 @@
 # Уведомления — Системная аналитика
 
-> Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Статус: [x] Завершён (MVP)
+> Последнее обновление: 2026-04-28
 > Связанный раздел: `15-notifications`
 
 ## 1. Назначение модуля
@@ -172,11 +172,16 @@ curl -X PATCH /api/v1/notifications/preferences \
 
 ## 11. Чеклист реализации
 
-- [ ] Таблицы events/dispatch/inbox/preferences.
-- [ ] Очереди и retry delivery.
-- [ ] API preferences + inbox.
+- [x] Таблицы events/dispatch/inbox/preferences.
+- [x] Очереди и retry delivery.
+- [x] API preferences + inbox.
 - [ ] Интеграция каналов email/telegram/max.
-- [ ] Dedup/throttle политики.
+- [x] Dedup/throttle политики.
+- [x] Frontend inbox (Notifications.tsx) с read/unread сценариями.
+- [x] Frontend preferences в Settings.tsx (каналы + категории, mandatory lock).
+- [x] Bell-иконка с unread badge в MainLayout (desktop + mobile).
+- [x] QA regression suite (48 unit-тестов, 5 spec-файлов).
+- [x] Observability: NotificationsMetricsService + delivery latency в status API.
 
 ## 12. Критерии готовности (DoD)
 
@@ -287,10 +292,10 @@ curl -X PATCH /api/v1/notifications/preferences \
 
 ## 23. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
-- [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] Async-процессы, observability и тестовая матрица описаны.
-- [ ] Риски, ограничения и rollout-порядок зафиксированы.
+- [x] Текущее и целевое состояние раздела зафиксированы.
+- [x] Backend API, frontend поведение и модель данных согласованы между собой.
+- [x] Async-процессы, observability и тестовая матрица описаны.
+- [x] Риски, ограничения и rollout-порядок зафиксированы.
 
 ## 24. История изменений
 
@@ -299,3 +304,10 @@ curl -X PATCH /api/v1/notifications/preferences \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены mandatory policy, MVP channel scope и открытые решения по digest/channel set | Codex |
 | 2026-04-18 | Зафиксированы confirmed decisions по MVP-каналам и отказу от digest в первой версии | Codex |
+| 2026-04-28 | TASK_NOTIFICATIONS_1 выполнена: добавлены 5 enums + 4 модели в schema.prisma, создана миграция 20260428260000_notifications_data_model | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_2 выполнена: реализован NotificationsModule с policy engine, orchestrator и публичным API publishEvent() | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_3 выполнена: delivery worker (@Cron/30s), InAppAdapter, EmailAdapter (stub+provider-ready), retry backoff, throttle suppression | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_4 выполнена: inbox API (feed+markRead), preferences API (get/update+mandatory validation), status surfaces (channel health+24h delivery stats), NotificationsController, Prisma client regenerated | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_5 выполнена: исправлен баг uppercase keys в DEFAULT_CHANNEL_PREFERENCES (non-mandatory события не доставлялись без preferences), убран redundant severity check в _assignPolicy, добавлены THROTTLE_WINDOW_MS и FUTURE_CHANNELS константы | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_6 выполнена: создан api/notifications.ts, страница Notifications.tsx (inbox + read/unread + filter), preferences-секция в Settings.tsx (mandatory lock + toggle каналов/категорий), Bell с unread badge в MainLayout (desktop + mobile), маршрут /app/notifications | Claude |
+| 2026-04-28 | TASK_NOTIFICATIONS_7 выполнена: 5 spec-файлов (48 тестов, все зелёные), NotificationsMetricsService (in-process counters + p50/p95 latency + alert thresholds), интеграция метрик в delivery worker / policy / notifications service через @Optional(), delivery latency в status API, GET /api/notifications/metrics endpoint | Claude |

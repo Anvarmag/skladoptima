@@ -12,6 +12,7 @@ import { EmailService } from './email.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { ReferralAttributionService } from '../referrals/referral-attribution.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -40,11 +41,15 @@ export class AuthService {
         private readonly jwtService: JwtService,
         private readonly emailService: EmailService,
         private readonly onboardingService: OnboardingService,
+        private readonly referralAttributionService: ReferralAttributionService,
     ) {}
 
     // ─── Register ────────────────────────────────────────────────────────────────
 
-    async register(dto: RegisterDto) {
+    async register(
+        dto: RegisterDto,
+        context?: { sourceIp?: string | null; userAgent?: string | null },
+    ) {
         const email = dto.email.toLowerCase().trim();
 
         const existing = await this.prisma.user.findUnique({ where: { email } });
@@ -84,6 +89,34 @@ export class AuthService {
         });
 
         await this.createAndSendVerificationChallenge(user.id, email);
+
+        // TASK_REFERRALS_1 §13: capture attribution context на этапе
+        // успешной регистрации. Не блокируем регистрацию, если код битый
+        // или сервис упал — referral это growth-механика, не критичный
+        // путь signup.
+        if (dto.referralCode) {
+            try {
+                await this.referralAttributionService.captureRegistration({
+                    referralCode: dto.referralCode,
+                    referredUserId: user.id,
+                    utmSource: dto.utmSource ?? null,
+                    utmMedium: dto.utmMedium ?? null,
+                    utmCampaign: dto.utmCampaign ?? null,
+                    utmContent: dto.utmContent ?? null,
+                    utmTerm: dto.utmTerm ?? null,
+                    sourceIp: context?.sourceIp ?? null,
+                    userAgent: context?.userAgent ?? null,
+                });
+            } catch (err: unknown) {
+                this.logger.warn(
+                    JSON.stringify({
+                        event: 'referral_capture_failed_soft',
+                        userId: user.id,
+                        err: (err as any)?.message,
+                    }),
+                );
+            }
+        }
 
         this.auditLog('auth_user_registered', { userId: user.id, email });
 

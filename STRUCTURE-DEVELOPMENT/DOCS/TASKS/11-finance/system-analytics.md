@@ -1,7 +1,7 @@
 # Юнит-экономика (Finance) — Системная аналитика
 
 > Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Последнее обновление: 2026-04-28
 > Связанный раздел: `11-finance`
 
 ## 1. Назначение модуля
@@ -186,11 +186,11 @@ curl -X GET '/api/v1/finance/unit-economics?periodType=month&from=2026-03-01&to=
 
 ## 11. Чеклист реализации
 
-- [ ] Миграции `product_finance_profiles`, `finance_snapshots`, warnings.
-- [ ] Расчетный сервис с прозрачными формулами.
-- [ ] API таблицы, детали и dashboard.
-- [ ] Warnings по неполным данным.
-- [ ] Тесты на корректность формул.
+- [x] Миграции `product_finance_profiles`, `finance_snapshots`, warnings. _(TASK_FINANCE_1 — миграция `20260428000000_finance_data_model`)_
+- [x] Расчетный сервис с прозрачными формулами. _(TASK_FINANCE_2 — `FinanceCalculatorService` + `FINANCE_FORMULA_VERSION='mvp-v1'`, 20 проходящих spec-тестов)_
+- [x] API таблицы, детали и dashboard. _(TASK_FINANCE_4 — 8 endpoint'ов, snapshot-driven, breakdown с isIncomplete/warnings/freshness)_
+- [x] Warnings по неполным данным. _(TASK_FINANCE_4 — `/finance/warnings` endpoint + аккуратная маркировка через `isIncomplete` и `warnings[]`)_
+- [x] Тесты на корректность формул. _(TASK_FINANCE_7 — 87 jest-тестов в 6 suites: calculator/snapshot/policy/metrics/cost-profile/read)_
 
 ## 12. Критерии готовности (DoD)
 
@@ -301,3 +301,10 @@ curl -X GET '/api/v1/finance/unit-economics?periodType=month&from=2026-03-01&to=
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены tenant-state guards, formula/source versioning и открытые решения по обязательным cost components и manual inputs | Codex |
 | 2026-04-18 | Подтверждены обязательные MVP cost components и ограничение manual input только product cost profile | Codex |
+| 2026-04-28 | TASK_FINANCE_1: data model `ProductFinanceProfile / FinanceSnapshot / FinanceDataWarning` + 3 enum'а (`FinanceSnapshotPeriodType`, `FinanceSnapshotStatus`, `FinanceWarningType`). Идемпотентность rebuild через `UNIQUE(tenantId, periodFrom, periodTo, formulaVersion)`. Manual input ограничен `baseCost/packagingCost/additionalCost`. Legacy `Product.purchasePrice` сохранён для обратной совместимости finance.service. | Anvar |
+| 2026-04-28 | TASK_FINANCE_2: `FinanceCalculatorService` (pure function, без БД). Формулы MVP-v1: `COGS / Profit / Margin / ROI`. §14 правило неполного: критичные `MISSING_COST/FEES/LOGISTICS` → `isIncomplete=true`, optional `TAX/ADS/RETURNS` → warning без incomplete. Деление на ноль → `null`, не Infinity. `formulaVersion='mvp-v1'` экспортируется как readonly константа для §12 reproducibility. 20 unit-тестов покрывают всю §16 матрицу формул. | Anvar |
+| 2026-04-28 | TASK_FINANCE_3: `FinanceSnapshotService` — orchestrator (Loader → Calculator → Persist + Warning sync). Идемпотентность через UNIQUE upsert + `wasReplaced` флаг. Source freshness diagnostics + `STALE_FINANCIAL_SOURCE` warning при stale > 48ч. Tenant guard блокирует rebuild при TRIAL_EXPIRED/SUSPENDED/CLOSED. Rebuild не дёргает внешний sync — только нормализованные internal источники (Order/OrderItem/ProductFinanceProfile/MarketplaceReport). 14 unit-тестов покрывают §16 happy path, incomplete cases, stale source, tenant guards, period validation. | Anvar |
+| 2026-04-28 | TASK_FINANCE_4: REST API `/api/finance` — `GET unit-economics / :productId / dashboard / snapshots/status / warnings` + `PATCH products/:productId/cost` (Owner/Admin) + `POST snapshots/rebuild` (Owner/Admin). `FinanceReadService` читает snapshot текущей `formulaVersion` (snapshot/read-model вместо realtime join). `FinanceCostProfileService` с whitelist полей baseCost/packagingCost/additionalCost/costCurrency, role gating через membership lookup, audit `updatedBy + isCostManual=true`. Legacy `/unit-economics/legacy` сохранён до TASK_FINANCE_5. | Anvar |
+| 2026-04-28 | TASK_FINANCE_5: централизованный `FinancePolicyService` — `assertRebuildAllowed / isReadAllowed / assertManualCostInputAllowed / evaluateStaleness`. Константы `MANUAL_COST_FIELDS_WHITELIST` (4 поля), `FINANCE_SOURCE_OF_TRUTH` (10 полей), `STALE_SOURCE_WINDOW_HOURS=48`. Stale vs Incomplete classification из 4 состояний (`FRESH_AND_COMPLETE / STALE_BUT_COMPLETE / INCOMPLETE_BUT_FRESH / STALE_AND_INCOMPLETE`). Snapshot/cost-profile сервисы рефакторены на политику. Runtime whitelist enforcement в cost-profile (defense in depth поверх DTO). 21 spec-тест включая regression invariants на whitelist. | Anvar |
+| 2026-04-28 | TASK_FINANCE_6: фронтенд `/app/finance` переписан под доменный snapshot-driven `/api/finance`. SnapshotMetaCard с 4-цветным freshness badge (`FRESH_AND_COMPLETE / STALE_BUT_COMPLETE / INCOMPLETE_BUT_FRESH / STALE_AND_INCOMPLETE`). 6 KPI tiles + aggregated warnings + Top profitable / Negative margin SKUs lists. Profitability table с фильтрами (search + incompleteOnly). ProductDrawer с breakdown расходов, warnings explanations и cost editor (whitelist 3 полей). Paused banner + disabled write actions при TRIAL_EXPIRED/SUSPENDED/CLOSED. Удалён legacy bypass через `PUT /products/:id`. | Anvar |
+| 2026-04-28 | TASK_FINANCE_7: `FinanceMetricsRegistry` с 8 метриками §19 (`finance_snapshots_generated / snapshot_generation_failures / warning_incomplete_count / negative_margin_sku_count / cost_profile_updates / finance_rebuild_blocked_by_tenant / finance_manual_input_rejected / finance_snapshot_build_latency_ms`). Инструментация snapshot и cost-profile сервисов с try/catch обёртками. 3 новых spec'а — finance-cost-profile (14 тестов: role/whitelist/validation/audit), finance-read (11 тестов: list/detail/dashboard/warnings), finance-metrics (5 тестов). Итого **87 jest-тестов в 6 suites**: calculator/snapshot/policy/metrics/cost-profile/read. Полное покрытие §16 матрицы. | Anvar |

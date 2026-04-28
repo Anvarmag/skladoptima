@@ -1,15 +1,26 @@
 import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users } from 'lucide-react';
-import { useEffect } from 'react';
+import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users, Boxes, Building2, Plug, RefreshCw, Gift, Bell } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { notificationsApi } from '../api/notifications';
 import AccessStateBanner from '../components/AccessStateBanner';
 import OnboardingWidget from '../components/OnboardingWidget';
 
 export default function MainLayout() {
     const { user, activeTenant, logout, isTelegram } = useAuth();
     const canSeeTeam = activeTenant?.role !== 'STAFF';
+    const isOwner = activeTenant?.role === 'OWNER';
     const navigate = useNavigate();
     const location = useLocation();
+
+    const [unreadCount, setUnreadCount] = useState(0);
+
+    useEffect(() => {
+        if (!activeTenant) return;
+        notificationsApi.getInbox({ limit: 1, unreadOnly: true })
+            .then(r => setUnreadCount(r.unreadCount))
+            .catch(() => { /* non-critical */ });
+    }, [activeTenant]);
 
     // Telegram BackButton support
     useEffect(() => {
@@ -72,7 +83,39 @@ export default function MainLayout() {
                             {({ isActive }) => (
                                 <>
                                     <Package className={iconClass(isActive)} />
-                                    Остатки
+                                    Каталог
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/inventory" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <Boxes className={iconClass(isActive)} />
+                                    Учёт остатков
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/warehouses" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <Building2 className={iconClass(isActive)} />
+                                    Склады
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/integrations" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <Plug className={iconClass(isActive)} />
+                                    Подключения
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/sync" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <RefreshCw className={iconClass(isActive)} />
+                                    Синхронизация
                                 </>
                             )}
                         </NavLink>
@@ -108,6 +151,21 @@ export default function MainLayout() {
                                 </>
                             )}
                         </NavLink>
+                        <NavLink to="/app/notifications" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <div className={`relative mr-3 flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-500'}`}>
+                                        <Bell className="h-6 w-6" />
+                                        {unreadCount > 0 && (
+                                            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-600 px-0.5 text-[9px] font-bold text-white">
+                                                {unreadCount > 99 ? '99+' : unreadCount}
+                                            </span>
+                                        )}
+                                    </div>
+                                    Уведомления
+                                </>
+                            )}
+                        </NavLink>
                         <NavLink to="/app/settings" className={navClass}>
                             {({ isActive }) => (
                                 <>
@@ -122,6 +180,16 @@ export default function MainLayout() {
                                     <>
                                         <Users className={iconClass(isActive)} />
                                         Команда
+                                    </>
+                                )}
+                            </NavLink>
+                        )}
+                        {isOwner && (
+                            <NavLink to="/app/referrals" className={navClass}>
+                                {({ isActive }) => (
+                                    <>
+                                        <Gift className={iconClass(isActive)} />
+                                        Рефералы
                                     </>
                                 )}
                             </NavLink>
@@ -183,7 +251,23 @@ export default function MainLayout() {
                         {({ isActive }) => (
                             <>
                                 <Package className={mobileIconClass(isActive)} />
-                                <span>Склад</span>
+                                <span>Каталог</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/inventory" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <Boxes className={mobileIconClass(isActive)} />
+                                <span>Остатки</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/warehouses" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <Building2 className={mobileIconClass(isActive)} />
+                                <span>Склады</span>
                             </>
                         )}
                     </NavLink>
@@ -219,6 +303,21 @@ export default function MainLayout() {
                             </>
                         )}
                     </NavLink>
+                    <NavLink to="/app/notifications" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <div className="relative">
+                                    <Bell className={mobileIconClass(isActive)} />
+                                    {unreadCount > 0 && (
+                                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-600 px-0.5 text-[8px] font-bold text-white">
+                                            {unreadCount > 9 ? '9+' : unreadCount}
+                                        </span>
+                                    )}
+                                </div>
+                                <span>Уведомл.</span>
+                            </>
+                        )}
+                    </NavLink>
                     <NavLink to="/app/settings" className={mobileNavClass}>
                         {({ isActive }) => (
                             <>
@@ -233,6 +332,16 @@ export default function MainLayout() {
                                 <>
                                     <Users className={mobileIconClass(isActive)} />
                                     <span>Команда</span>
+                                </>
+                            )}
+                        </NavLink>
+                    )}
+                    {isOwner && (
+                        <NavLink to="/app/referrals" className={mobileNavClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <Gift className={mobileIconClass(isActive)} />
+                                    <span>Рефералы</span>
                                 </>
                             )}
                         </NavLink>

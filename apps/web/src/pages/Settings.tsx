@@ -1,10 +1,42 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Save, CheckCircle, XCircle, Loader, Store } from 'lucide-react';
+import { Save, CheckCircle, XCircle, Loader, Store, Bell, Lock, Mail, Smartphone } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { notificationsApi, type NotificationPreferences } from '../api/notifications';
 
 type TestStatus = 'idle' | 'loading' | 'ok' | 'error';
 
+// ── Toggle switch ──────────────────────────────────────────────────────────
+function Toggle({
+    checked, onChange, disabled,
+}: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+    return (
+        <button
+            type="button"
+            onClick={() => !disabled && onChange(!checked)}
+            disabled={disabled}
+            aria-checked={checked}
+            className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${checked ? 'bg-blue-600' : 'bg-slate-300'} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+        >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+        </button>
+    );
+}
+
+const MANDATORY_CATEGORIES = new Set(['auth', 'billing', 'system']);
+const CATEGORY_LABELS: Record<string, string> = {
+    auth: 'Безопасность и авторизация',
+    billing: 'Подписка и оплата',
+    sync: 'Синхронизация',
+    inventory: 'Остатки',
+    referral: 'Реферальная программа',
+    system: 'Системные уведомления',
+};
+
 export default function Settings() {
+    const { activeTenant } = useAuth();
+    const isOwner = activeTenant?.role === 'OWNER';
+
     const [ozonClientId, setOzonClientId] = useState('');
     const [ozonApiKey, setOzonApiKey] = useState('');
     const [ozonWarehouseId, setOzonWarehouseId] = useState('');
@@ -21,6 +53,47 @@ export default function Settings() {
     const [wbTest, setWbTest] = useState<{ status: TestStatus; msg: string }>({ status: 'idle', msg: '' });
     const [ozonTest, setOzonTest] = useState<{ status: TestStatus; msg: string }>({ status: 'idle', msg: '' });
     const [syncing, setSyncing] = useState(false);
+
+    // ── Notification preferences state (owner only) ──────────────────────
+    const [notifPrefs, setNotifPrefs] = useState<NotificationPreferences | null>(null);
+    const [savingPrefs, setSavingPrefs] = useState(false);
+    const [prefsSaved, setPrefsSaved] = useState(false);
+
+    useEffect(() => {
+        if (!isOwner) return;
+        notificationsApi.getPreferences()
+            .then(setNotifPrefs)
+            .catch(() => { /* silent — section hidden if failed */ });
+    }, [isOwner]);
+
+    const handleToggleChannel = (key: keyof NotificationPreferences['channels'], value: boolean) => {
+        if (!notifPrefs) return;
+        setNotifPrefs({ ...notifPrefs, channels: { ...notifPrefs.channels, [key]: value } });
+    };
+
+    const handleToggleCategory = (key: keyof NotificationPreferences['categories'], value: boolean) => {
+        if (!notifPrefs) return;
+        setNotifPrefs({ ...notifPrefs, categories: { ...notifPrefs.categories, [key]: value } });
+    };
+
+    const handleSavePrefs = async () => {
+        if (!notifPrefs) return;
+        setSavingPrefs(true);
+        try {
+            const updated = await notificationsApi.updatePreferences({
+                channels: notifPrefs.channels,
+                categories: notifPrefs.categories,
+            });
+            setNotifPrefs(updated);
+            setPrefsSaved(true);
+            setTimeout(() => setPrefsSaved(false), 3000);
+        } catch {
+            setMessage({ text: 'Не удалось сохранить настройки уведомлений', type: 'error' });
+            setTimeout(() => setMessage({ text: '', type: '' }), 4000);
+        } finally {
+            setSavingPrefs(false);
+        }
+    };
 
     useEffect(() => {
         const fetchSettings = async () => {
@@ -363,6 +436,96 @@ export default function Settings() {
                     </button>
                 </div>
             </form>
+
+            {/* ── Notification Preferences ─────────────────────── */}
+            {isOwner && notifPrefs && (
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <div className="flex items-center mb-6 border-b border-slate-100 pb-4">
+                        <div className="w-10 h-10 rounded bg-slate-100 flex items-center justify-center mr-4 text-slate-600">
+                            <Bell size={24} />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-bold text-slate-900">Уведомления</h2>
+                            <p className="text-sm text-slate-500">Каналы и категории доставки уведомлений.</p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-start gap-2 bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 mb-6 text-sm text-amber-800">
+                        <Lock size={14} className="mt-0.5 flex-shrink-0 text-amber-600" />
+                        <span>Критичные уведомления безопасности, оплаты и системных сбоев доставляются всегда и не могут быть отключены полностью.</span>
+                    </div>
+
+                    <div className="mb-6">
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Каналы доставки</p>
+                        <div className="space-y-1">
+                            <div className="flex items-center justify-between py-2.5 border-b border-slate-50">
+                                <div className="flex items-center gap-2">
+                                    <Smartphone size={16} className="text-slate-400" />
+                                    <span className="text-sm font-medium text-slate-700">В приложении</span>
+                                    <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded font-medium">всегда активен для критичных</span>
+                                </div>
+                                <Toggle
+                                    checked={notifPrefs.channels.in_app}
+                                    onChange={v => handleToggleChannel('in_app', v)}
+                                />
+                            </div>
+                            <div className="flex items-center justify-between py-2.5">
+                                <div className="flex items-center gap-2">
+                                    <Mail size={16} className="text-slate-400" />
+                                    <span className="text-sm font-medium text-slate-700">Email</span>
+                                </div>
+                                <Toggle
+                                    checked={notifPrefs.channels.email}
+                                    onChange={v => handleToggleChannel('email', v)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mb-6">
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">Категории</p>
+                        <div className="space-y-0">
+                            {(Object.keys(notifPrefs.categories) as Array<keyof NotificationPreferences['categories']>).map(key => {
+                                const mandatory = MANDATORY_CATEGORIES.has(key);
+                                const val = notifPrefs.categories[key];
+                                return (
+                                    <div key={key} className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
+                                        <div className="flex items-center gap-2">
+                                            {mandatory && <Lock size={12} className="text-amber-500 flex-shrink-0" />}
+                                            <span className="text-sm text-slate-700">{CATEGORY_LABELS[key] ?? key}</span>
+                                            {mandatory && <span className="text-[10px] text-amber-600 font-medium">обязательно</span>}
+                                        </div>
+                                        <Toggle
+                                            checked={val}
+                                            onChange={v => handleToggleCategory(key, v)}
+                                            disabled={mandatory}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
+                        {prefsSaved && (
+                            <span className="flex items-center gap-1 text-sm text-emerald-600 font-medium">
+                                <CheckCircle size={14} /> Сохранено
+                            </span>
+                        )}
+                        <button
+                            type="button"
+                            onClick={handleSavePrefs}
+                            disabled={savingPrefs}
+                            className="flex items-center gap-2 px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-sm transition-all font-medium disabled:bg-blue-400 text-sm"
+                        >
+                            {savingPrefs
+                                ? <><Loader size={14} className="animate-spin" /> Сохранение...</>
+                                : <><Save size={14} /> Сохранить</>
+                            }
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* ── Status Message ──────────────────────────────────── */}
             {message.text && (

@@ -5,12 +5,18 @@ import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Products from './pages/Products';
+import Inventory from './pages/Inventory';
+import Warehouses from './pages/Warehouses';
+import MarketplaceAccounts from './pages/MarketplaceAccounts';
+import SyncRuns from './pages/SyncRuns';
 import History from './pages/History';
 import Orders from './pages/Orders';
 import Analytics from './pages/Analytics';
 import UnitEconomics from './pages/UnitEconomics';
 import Settings from './pages/Settings';
 import Team from './pages/Team';
+import ReferralCenter from './pages/ReferralCenter';
+import Notifications from './pages/Notifications';
 import AcceptInvite from './pages/AcceptInvite';
 import OnboardingPage from './pages/OnboardingPage';
 import TenantPicker from './pages/TenantPicker';
@@ -71,12 +77,18 @@ function App() {
                 </PrivateRoute>
             }>
                 <Route index element={<Products />} />
+                <Route path="inventory" element={<Inventory />} />
+                <Route path="warehouses" element={<Warehouses />} />
+                <Route path="integrations" element={<MarketplaceAccounts />} />
+                <Route path="sync" element={<SyncRuns />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="finance" element={<UnitEconomics />} />
                 <Route path="history" element={<History />} />
                 <Route path="orders" element={<Orders />} />
+                <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="team" element={<Team />} />
+                <Route path="referrals" element={<ReferralCenter />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/app" replace />} />

@@ -1,8 +1,18 @@
 # Синхронизация — Системная аналитика
 
 > Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Последнее обновление: 2026-04-26 (TASK_SYNC_7)
 > Связанный раздел: `09-sync`
+
+## Прогресс реализации
+
+- [x] TASK_SYNC_1 — Data Model, Run Registry и Queue Orchestration (2026-04-26)
+- [x] TASK_SYNC_2 — Manual Run API, Retry Flow и Lifecycle Statuses (2026-04-26)
+- [x] TASK_SYNC_3 — Preflight Checks, Tenant/Account Policy Guards (2026-04-26)
+- [x] TASK_SYNC_4 — Item-Level Diagnostics, Conflicts и Idempotency (2026-04-26)
+- [x] TASK_SYNC_5 — Worker Execution Pipeline и Downstream Handoff (2026-04-26)
+- [x] TASK_SYNC_6 — Frontend History, Run Details и Conflict UX (2026-04-26)
+- [x] TASK_SYNC_7 — QA, Regression и Observability (2026-04-26)
 
 ## 1. Назначение модуля
 
@@ -184,11 +194,11 @@ curl -X POST /api/v1/sync/runs \
 
 ## 11. Чеклист реализации
 
-- [ ] Таблицы sync runs/conflicts.
-- [ ] Queue worker и retry policy.
-- [ ] API manual run/retry.
-- [ ] Статусы в UI и оповещения об ошибках.
-- [ ] Интеграционные тесты partial/failure paths.
+- [x] Таблицы sync runs/conflicts. (TASK_SYNC_1, 2026-04-26 — `SyncRun`, `SyncRunItem`, `SyncConflict` + 6 enum + queue contract в `sync-run.contract.ts`)
+- [x] Queue worker и retry policy. (TASK_SYNC_5, 2026-04-26 — `SyncRunWorker` с stateless `processRun(runId)`, 6-уровневая `AdapterOutcome` taxonomy, экспоненциальный backoff 30s/2min/10min, AUTH_FAILURE без auto-retry, RATE_LIMIT с удвоенным backoff, handoff в `MarketplaceAccountsService.reportSyncRun()`. Production adapter runners — отдельный rollout. 22 unit-теста)
+- [x] API manual run/retry. (TASK_SYNC_2, 2026-04-26 — `POST/GET /sync/runs`, `GET /sync/runs/:id`, `POST /sync/runs/:id/retry`; preflight blocks материализуются как `BLOCKED` run, retry создаёт новый run с `originRunId`; 23 unit-теста)
+- [x] Статусы в UI и оповещения об ошибках. (TASK_SYNC_6, 2026-04-26 — страница `/app/sync` с tabs «История запусков»/«Конфликты», detail view с UX-словарём для blocked reasons и error codes, manual sync now + retry с блокировкой при paused tenant state, tenant full sync намеренно скрыт. Frontend-only задача)
+- [x] Интеграционные тесты partial/failure paths. (TASK_SYNC_7, 2026-04-26 — `sync-runs.regression.spec.ts` мапит §16 test matrix 1:1, 23 теста + observability invariants. Полная регрессия 407/407 в 20 suites. Observability runbook `SYNC_OBSERVABILITY.md` с 16 events, 13 machine codes, 10 алертов и SQL для метрик §19)
 
 ## 12. Критерии готовности (DoD)
 
@@ -302,3 +312,10 @@ curl -X POST /api/v1/sync/runs \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены tenant/account preflight guards, blocked run semantics и открытые решения по manual actions и depth of item-level diagnostics | Codex |
 | 2026-04-18 | Подтвержден минимальный manual sync MVP и problem-only item-level reporting | Codex |
+| 2026-04-26 | TASK_SYNC_1: реализованы таблицы `SyncRun`/`SyncRunItem`/`SyncConflict` (§8), 6 enum (включая отделение `BLOCKED` от `FAILED` per §20), queue contract `SyncRunJob`/`BuildSyncRunJob` (§14), наименования observability-событий (§19). Sync.service пока работает на legacy `MarketplaceAccount.lastSyncStatus` — переключение в TASK_SYNC_2/3. | Claude |
+| 2026-04-26 | TASK_SYNC_2: реализован manual sync API (`POST/GET /sync/runs`, `GET /sync/runs/:id`, `POST /sync/runs/:id/retry`) в новом модуле `sync-runs/`. Preflight (tenant access state, account lifecycle/credentials, concurrency guard) материализует политические блокировки как полноценный `BLOCKED` run (§10/§20: blocked ≠ failed). Retry создаёт новый run с `triggerType=RETRY`, `originRunId`, `attemptNumber+1`; idempotency через DB UNIQUE(`tenantId, jobKey`). Tenant full sync намеренно не выведен в API (§10/§13/§17). 23 unit-теста. | Claude |
+| 2026-04-26 | TASK_SYNC_3: вынесен preflight в shared `SyncPreflightService` — single source of truth для tenant/account/credentials/concurrency policy. Используется тремя слоями: API admission (createRun), будущий worker runtime (TASK_SYNC_5), legacy scheduled poll (`marketplace_sync/sync.service.ts`). Удалён старый `_isTenantPaused` в legacy; добавлен per-account preflight в `syncStore` (раньше WB/Ozon API дёргались даже для INACTIVE/INVALID-credentials аккаунтов). 14 новых unit-тестов на preflight (всего sync-runs: 37/37). | Claude |
+| 2026-04-26 | TASK_SYNC_4: добавлен `SyncDiagnosticsService` — writer для item-level (FAILED/CONFLICT/BLOCKED, отвергает SUCCESS/SKIPPED per §8) и конфликтов; +3 endpoint'а `GET /sync/conflicts`, `GET /sync/conflicts/:id`, `POST /sync/conflicts/:id/resolve` (resolve идемпотентен). `Idempotency-Key` HTTP header в `POST /sync/runs` (приоритет над body field; mismatch → 400). Контракт `external_event_id → InventoryEffectLock.sourceEventId` для §14 dedup задокументирован. 20 новых unit-тестов (всего sync-runs: 57/57). | Claude |
+| 2026-04-26 | TASK_SYNC_5: реализован `SyncRunWorker` — stateless engine с публичным `processRun(runId)`. Lifecycle через conditional updateMany (race-safe pickup), runtime preflight (re-check tenant/account state), stage orchestration в каноническом порядке §13 (PULL_METADATA → PULL_ORDERS → PULL_STOCKS → PUSH_STOCKS), FULL_SYNC раскрывается в полный набор. 6-уровневая `AdapterOutcome` taxonomy (SUCCESS/PARTIAL/POLICY_BLOCK/AUTH_FAILURE/TECHNICAL_FAILURE/RATE_LIMIT) с `classifyHttpError` helper. Retry policy: backoff [30s, 2min, 10min], AUTH_FAILURE без auto-retry, RATE_LIMIT удваивает backoff. Handoff sync health через `MarketplaceAccountsService.reportSyncRun()` (existing public API). Production WB/Ozon adapter runners и queue dispatcher — отдельный rollout. 22 новых unit-теста (всего sync-runs: 79). | Claude |
+| 2026-04-26 | TASK_SYNC_6: новая страница `/app/sync` ([SyncRuns.tsx](apps/web/src/pages/SyncRuns.tsx), ~640 строк) с tabs «История запусков» / «Конфликты», detail view с раздельными blocked/failed/partial banners, UX-словарём для 7 blocked reason codes и 6 error codes (title + hint + action). Кнопки `sync now` и `retry` блокируются при `TRIAL_EXPIRED/SUSPENDED/CLOSED` через `disabled + Lock icon + tooltip`. Tenant full sync намеренно скрыт (§10/§13/§17). Resolve конфликта работает в paused state (внутреннее audit действие). Role-based: только OWNER/ADMIN могут триггерить sync, MANAGER читает + закрывает конфликты. Маршрут добавлен в App.tsx, навигация — в MainLayout. Backend не трогался (198/198 регрессия чистая). | Claude |
+| 2026-04-26 | TASK_SYNC_7: регрессионный spec `sync-runs.regression.spec.ts` (23 теста) мапит §16 test matrix 1:1 — manual/scheduled/partial/retry/rate-limit/duplicate event/conflict/3 paused states/preflight blocked vs failed/success-no-trace + observability invariants. Observability runbook `SYNC_OBSERVABILITY.md` (~290 строк, 9 разделов): 16 канонических events, 13 machine codes, маппинг на метрики §19, 10 алертов P0-P2 с actions, SQL queries, рекомендации дашбордов, регрессионная карта. Итог: 102/102 в 5 suites модуля sync-runs, 407/407 в 20 suites глобально. | Claude |

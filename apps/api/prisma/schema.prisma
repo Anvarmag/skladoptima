@@ -65,8 +65,46 @@ enum ActionType {
   PRODUCT_CREATED
   PRODUCT_UPDATED
   PRODUCT_DELETED
+  PRODUCT_RESTORED
   STOCK_ADJUSTED
   ORDER_DEDUCTED
+  MAPPING_CREATED
+  MAPPING_DELETED
+  PRODUCT_MERGED
+  IMPORT_COMMITTED
+}
+
+enum AuditActorType {
+  user
+  system
+  support
+  marketplace
+}
+
+enum AuditSource {
+  ui
+  api
+  worker
+  marketplace
+}
+
+enum AuditVisibilityScope {
+  tenant
+  internal_only
+}
+
+enum AuditRedactionLevel {
+  none
+  partial
+  strict
+}
+
+enum SecurityEventType {
+  login_success
+  login_failed
+  password_reset_requested
+  password_changed
+  session_revoked
 }
 
 enum MembershipStatus {
@@ -115,7 +153,7 @@ enum AuthProvider {
 }
 
 enum OnboardingScope {
-  USER_BOOTSTRAP    // до создания tenant (шаг: create_company)
+  USER_BOOTSTRAP // до создания tenant (шаг: create_company)
   TENANT_ACTIVATION // после создания tenant (интеграции, каталог, команда)
 }
 
@@ -130,6 +168,395 @@ enum OnboardingStepStatus {
   VIEWED
   DONE
   SKIPPED
+}
+
+enum ProductSourceOfTruth {
+  MANUAL
+  IMPORT
+  SYNC
+}
+
+enum ProductStatus {
+  ACTIVE
+  DELETED
+}
+
+enum ChannelMarketplace {
+  WB
+  OZON
+  YANDEX_MARKET
+  SITE
+}
+
+enum ImportJobStatus {
+  PREVIEW
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ImportJobSource {
+  API_SYNC
+  EXCEL
+}
+
+enum ImportItemAction {
+  CREATE
+  UPDATE
+  SKIP
+  MANUAL_REVIEW
+}
+
+// Inventory enums
+enum StockMovementType {
+  MANUAL_ADD
+  MANUAL_REMOVE
+  ORDER_RESERVED
+  ORDER_RELEASED
+  ORDER_DEDUCTED
+  INVENTORY_ADJUSTMENT
+  RETURN_LOGGED
+  CONFLICT_DETECTED
+}
+
+enum StockMovementSource {
+  USER
+  SYSTEM
+  MARKETPLACE
+}
+
+enum InventoryFulfillmentMode {
+  FBS
+  FBO
+}
+
+enum InventoryEffectType {
+  ORDER_RESERVE
+  ORDER_RELEASE
+  ORDER_DEDUCT
+  SYNC_RECONCILE
+}
+
+enum InventoryEffectStatus {
+  PROCESSING
+  APPLIED
+  IGNORED
+  FAILED
+}
+
+// Warehouse enums (см. system-analytics §8)
+enum WarehouseType {
+  FBS
+  FBO
+}
+
+enum WarehouseStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum WarehouseSourceMarketplace {
+  WB
+  OZON
+  YANDEX_MARKET
+}
+
+// Marketplace account lifecycle (см. 08-marketplace-accounts §8/§14)
+enum MarketplaceLifecycleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MarketplaceCredentialStatus {
+  VALIDATING
+  VALID
+  INVALID
+  NEEDS_RECONNECT
+  UNKNOWN
+}
+
+enum MarketplaceSyncHealthStatus {
+  HEALTHY
+  DEGRADED
+  PAUSED
+  ERROR
+  UNKNOWN
+}
+
+enum MarketplaceLastSyncStatus {
+  SUCCESS
+  PARTIAL_SUCCESS
+  FAILED
+}
+
+// Sync run lifecycle (см. 09-sync §8/§13).
+// Статусы покрывают весь жизненный цикл от постановки в очередь до
+// завершения, включая отдельные `BLOCKED` (policy/preflight отказ) и
+// `CANCELLED` (явная отмена) — они НЕ являются `FAILED`, чтобы support и
+// пользователь могли отделить интеграционные инциденты от продуктовой
+// блокировки.
+enum SyncRunStatus {
+  QUEUED
+  IN_PROGRESS
+  SUCCESS
+  PARTIAL_SUCCESS
+  FAILED
+  BLOCKED
+  CANCELLED
+}
+
+enum SyncTriggerType {
+  MANUAL
+  SCHEDULED
+  RETRY
+}
+
+enum SyncTriggerScope {
+  ACCOUNT
+  TENANT_FULL
+}
+
+// Тип элемента, обрабатываемого в рамках run (только для проблемных
+// записей — успехи в MVP агрегируются на уровне run, см. §8/§12).
+enum SyncRunItemType {
+  STOCK
+  ORDER
+  PRODUCT
+  WAREHOUSE
+}
+
+// Этап pipeline, на котором произошёл item-level результат (см. §9).
+enum SyncRunItemStage {
+  PREFLIGHT
+  PULL
+  TRANSFORM
+  APPLY
+  PUSH
+}
+
+// Item-level статус. В MVP создаётся ТОЛЬКО для FAILED/SKIPPED/CONFLICT/
+// BLOCKED (правило §8: success path хранится агрегатами в `SyncRun`).
+// SUCCESS оставлен в enum как future-compatible значение.
+enum SyncRunItemStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+  CONFLICT
+  BLOCKED
+}
+
+// -------------------------------------------------------------------
+// Orders (TASK_ORDERS_1) — см. 10-orders system-analytics §8/§13/§15.
+// -------------------------------------------------------------------
+
+// FBS / FBO. Дублирует значения InventoryFulfillmentMode/WarehouseType,
+// но изолированный enum защищает orders domain от случайной семантической
+// сцепки с inventory enum'ами при будущих изменениях (например, hybrid
+// модели у Yandex Market).
+enum OrderFulfillmentMode {
+  FBS
+  FBO
+}
+
+// Внутренний lifecycle заказа. В MVP business-critical для FBS только
+// RESERVED / CANCELLED / FULFILLED — внешние PACKED/SHIPPED остаются в
+// `externalStatus` и НЕ создают отдельный внутренний переход (§13 MVP
+// правило). DISPLAY_ONLY_FBO — для FBO заказов, которые показываем без
+// stock-effect. UNRESOLVED — для случаев, когда SKU не сматчен или
+// warehouse scope неопределён, и мы намеренно не запускаем reserve
+// "в никуда" (§9 шаг 8, §14).
+enum OrderInternalStatus {
+  IMPORTED
+  RESERVED
+  CANCELLED
+  FULFILLED
+  DISPLAY_ONLY_FBO
+  UNRESOLVED
+}
+
+// Состояние применения inventory side-effect для заказа. Отделено от
+// internal_status, потому что заказ может быть RESERVED логически, но
+// stock-effect ещё PENDING/FAILED (§9 шаг 8). NOT_REQUIRED — для FBO,
+// где `affectsStock=false`. BLOCKED — отказ по tenant/account state
+// (§4 сценарий 4, §10).
+enum OrderStockEffectStatus {
+  NOT_REQUIRED
+  PENDING
+  APPLIED
+  BLOCKED
+  FAILED
+}
+
+// Статус матчинга order item на наш каталог (по SKU / channel mapping).
+// UNMATCHED item сохраняется в заказе, но не участвует в stock-effect,
+// пока не будет resolved (§14).
+enum OrderItemMatchStatus {
+  MATCHED
+  UNMATCHED
+}
+
+// Тип события в order timeline. Покрывает provenance (RECEIVED), маппинг
+// статусов (STATUS_CHANGED), inventory side-effects (RESERVED/RELEASED/
+// DEDUCTED), idempotency-диагностику (DUPLICATE_IGNORED, OUT_OF_ORDER_
+// IGNORED) и failure диагностику (STOCK_EFFECT_FAILED). См. §15.
+enum OrderEventType {
+  RECEIVED
+  STATUS_CHANGED
+  RESERVED
+  RESERVE_RELEASED
+  DEDUCTED
+  RETURN_LOGGED
+  DUPLICATE_IGNORED
+  OUT_OF_ORDER_IGNORED
+  STOCK_EFFECT_FAILED
+}
+
+// -------------------------------------------------------------------
+// Finance / Unit Economics (TASK_FINANCE_1) — см. 11-finance system-
+// analytics §8/§13/§14.
+// -------------------------------------------------------------------
+
+// Тип периода для finance snapshot. `WEEK`/`MONTH` — детерминированные
+// календарные окна (для nightly job), `CUSTOM` — произвольный
+// from/to для on-demand rebuild owner/admin'а (§4 сценарий 2).
+enum FinanceSnapshotPeriodType {
+  WEEK
+  MONTH
+  CUSTOM
+}
+
+// Состояние сгенерированного snapshot. `INCOMPLETE` отделён от `READY`
+// и `FAILED` сознательно: расчёт прошёл, но критичные source отсутствуют
+// (см. §14 правило неполного расчёта). Это НЕ ошибка — данные показываем
+// с warning, а не молчаливыми нулями (§20 риск).
+enum FinanceSnapshotStatus {
+  READY
+  INCOMPLETE
+  FAILED
+}
+
+// Типы предупреждений о неполных данных (§13 правило источников истины,
+// §14 MVP правило обязательных cost components). Стабильный enum —
+// потому что UI рендерит их человекочитаемыми объяснениями и
+// фильтрует /api/v1/finance/warnings по типу.
+//
+// `MISSING_COST` / `MISSING_FEES` / `MISSING_LOGISTICS` — критичные
+// для MVP компоненты (§14): отсутствие → `INCOMPLETE` snapshot.
+// `MISSING_TAX` / `MISSING_ADS_COST` / `MISSING_RETURNS_DATA` — optional/
+// improving inputs: создают warning, но не блокируют расчёт.
+// `STALE_FINANCIAL_SOURCE` — отдельный тип для §14 правила stale
+// snapshot (источники не обновлялись дольше допустимого окна).
+enum FinanceWarningType {
+  MISSING_COST
+  MISSING_FEES
+  MISSING_LOGISTICS
+  MISSING_TAX
+  MISSING_ADS_COST
+  MISSING_RETURNS_DATA
+  STALE_FINANCIAL_SOURCE
+}
+
+// -------------------------------------------------------------------
+// Analytics / Sales Insight (TASK_ANALYTICS_1) — см. 12-analytics
+// system-analytics §8/§13/§14.
+// -------------------------------------------------------------------
+
+// Метрика, по которой строится ABC-классификация. В MVP §14 правило —
+// `REVENUE_NET`, чтобы не смешивать gross-выручку с ещё не снятыми
+// удержаниями/возвратным шумом. `UNITS` — для будущего расширения
+// drill-down по штучной популярности.
+enum AnalyticsAbcMetric {
+  REVENUE_NET
+  UNITS
+}
+
+// Состояние снапшота analytics-витрины. `STALE` отделён от `INCOMPLETE`
+// сознательно (§19 stale-vs-incomplete board): STALE — источник перестал
+// обновляться, но расчёт корректен; INCOMPLETE — источник свежий, но
+// часть компонентов отсутствует. Оба состояния одновременно представимы
+// в UI, поэтому хранятся раздельно. `FAILED` — pipeline упал, payload
+// недоступен.
+enum AnalyticsSnapshotStatus {
+  READY
+  STALE
+  INCOMPLETE
+  FAILED
+}
+
+// Приоритет рекомендации. Стабильный enum — UI рендерит цветовой бейдж
+// и сортировку. `HIGH` — низкий остаток + высокий спрос; `MEDIUM` —
+// деградация рейтинга/рост возвратов; `LOW` — фоновые подсказки.
+enum AnalyticsRecommendationPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// Жизненный цикл рекомендации. В MVP §15 правило — рекомендации остаются
+// `ACTIVE` (read-only); `DISMISSED` / `APPLIED` зарезервированы под
+// будущий пользовательский workflow и пока выставляются только rule
+// engine'ом при автоматическом устаревании сигнала.
+enum AnalyticsRecommendationStatus {
+  ACTIVE
+  DISMISSED
+  APPLIED
+}
+
+// -------------------------------------------------------------------
+// Referrals (TASK_REFERRALS_1 + TASK_REFERRALS_2) — см. 14-referrals system-analytics §8/§13.
+// -------------------------------------------------------------------
+
+// Тип операции в бонусном леджере (TASK_REFERRALS_2).
+//   CREDIT — зачисление (referral reward, ручная корректировка support).
+//   DEBIT  — списание (оплата подписки с применением бонусов, TASK_REFERRALS_3).
+enum BonusTransactionType {
+  CREDIT
+  DEBIT
+}
+
+// Жизненный цикл referral attribution (§9 + §10).
+//   - ATTRIBUTED — context зафиксирован при регистрации, но tenant ещё
+//     не создан. Промежуточное состояние, не даёт reward.
+//   - PAID — tenant создан, прошла первая успешная оплата (TASK_REFERRALS_4
+//     billing trigger). Готов к credit, но reward ещё не выдан.
+//   - REWARDED — bonus credit зачислен (TASK_REFERRALS_4); идемпотентно
+//     терминальное состояние.
+//   - REJECTED — self-referral / fraud / invalid: reward никогда не будет.
+//   - FRAUD_REVIEW — спорный кейс на ручной разбор (TASK_REFERRALS_5).
+enum ReferralAttributionStatus {
+  ATTRIBUTED
+  PAID
+  REWARDED
+  REJECTED
+  FRAUD_REVIEW
+}
+
+// Промокоды (TASK_REFERRALS_4) — тип скидки и stack policy.
+enum DiscountType {
+  PERCENT
+  FIXED
+}
+
+// MVP stack rule §14: промокод и бонусный баланс взаимно исключаемы (EXCLUSIVE).
+// COMBINABLE_WITH_BONUS зарезервирован для будущих кампаний.
+enum PromoStackPolicy {
+  EXCLUSIVE
+  COMBINABLE_WITH_BONUS
+}
+
+// Типы событий в audit-логе рефералов (TASK_REFERRALS_5).
+enum ReferralAuditEventType {
+  ATTRIBUTION_CAPTURED
+  ATTRIBUTION_LOCKED
+  ATTRIBUTION_REJECTED
+  ATTRIBUTION_FRAUD_REVIEW
+  REWARD_CREDITED
+  REWARD_SKIPPED
+  PROMO_APPLIED
+  PROMO_REJECTED
+  FRAUD_RECHECK_COMPLETED
 }
 
 // -------------------------------------------------------------------
@@ -156,18 +583,32 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  memberships        Membership[]
-  auditLogs          AuditLog[]
-  authSessions       AuthSession[]
-  emailVerifications EmailVerificationChallenge[]
-  passwordResets     PasswordResetChallenge[]
-  preferences        UserPreference?
-  authIdentities     AuthIdentity[]
-  ownedTenants       Tenant[]                     @relation("TenantPrimaryOwner")
-  sentInvitations    Invitation[]                 @relation("InvitationSentBy")
-  acceptedInvitations Invitation[]                @relation("InvitationAcceptedBy")
-  teamEvents         TeamEvent[]                  @relation("TeamEventActor")
-  onboardingStates   OnboardingState[]
+  memberships                    Membership[]
+  auditLogs                      AuditLog[]
+  securityEvents                 SecurityEvent[]
+  authSessions                   AuthSession[]
+  emailVerifications             EmailVerificationChallenge[]
+  passwordResets                 PasswordResetChallenge[]
+  preferences                    UserPreference?
+  authIdentities                 AuthIdentity[]
+  ownedTenants                   Tenant[]                     @relation("TenantPrimaryOwner")
+  sentInvitations                Invitation[]                 @relation("InvitationSentBy")
+  acceptedInvitations            Invitation[]                 @relation("InvitationAcceptedBy")
+  teamEvents                     TeamEvent[]                  @relation("TeamEventActor")
+  onboardingStates               OnboardingState[]
+  createdProducts                Product[]                    @relation("ProductCreatedBy")
+  updatedProducts                Product[]                    @relation("ProductUpdatedBy")
+  createdMappings                ProductChannelMapping[]      @relation("MappingCreatedBy")
+  createdImportJobs              CatalogImportJob[]           @relation("ImportJobCreatedBy")
+  stockMovements                 StockMovement[]              @relation("StockMovementActor")
+  warehouseMetadataUpdates       Warehouse[]                  @relation("WarehouseMetadataUpdatedBy")
+  deactivatedMarketplaceAccounts MarketplaceAccount[]         @relation("MarketplaceAccountDeactivatedBy")
+  updatedFinanceProfiles         ProductFinanceProfile[]      @relation("FinanceProfileUpdatedBy")
+  generatedFinanceSnapshots      FinanceSnapshot[]            @relation("FinanceSnapshotGeneratedBy")
+  ownedReferralLinks             ReferralLink[]               @relation("ReferralLinkOwner")
+  referralAttributionsAsReferred ReferralAttribution[]        @relation("ReferralReferredUser")
+  bonusWallet                    BonusWallet?                 @relation("BonusWalletOwner")
+  notificationInboxItems         NotificationInbox[]
 }
 
 // Серверные сессии с refresh token rotation и reuse detection
@@ -222,8 +663,8 @@ model PasswordResetChallenge {
 
 // Пользовательские настройки — последний активный тенант
 model UserPreference {
-  userId           String  @id
-  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId           String   @id
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastUsedTenantId String?
   locale           String?
   timezone         String?
@@ -277,15 +718,39 @@ model Tenant {
   accessStateEvents TenantAccessStateEvent[]
   closureJob        TenantClosureJob?
 
-  memberships         Membership[]
-  marketplaceAccounts MarketplaceAccount[]
-  products            Product[]
-  orders              MarketplaceOrder[]
-  auditLogs           AuditLog[]
-  reports             MarketplaceReport[]
-  invitations         Invitation[]
-  teamEvents          TeamEvent[]
-  onboardingStates    OnboardingState[]
+  memberships              Membership[]
+  marketplaceAccounts      MarketplaceAccount[]
+  products                 Product[]
+  orders                   MarketplaceOrder[]
+  auditLogs                AuditLog[]
+  securityEvents           SecurityEvent[]
+  reports                  MarketplaceReport[]
+  invitations              Invitation[]
+  teamEvents               TeamEvent[]
+  onboardingStates         OnboardingState[]
+  channelMappings          ProductChannelMapping[]
+  importJobs               CatalogImportJob[]
+  stockBalances            StockBalance[]
+  stockMovements           StockMovement[]
+  inventoryEffectLocks     InventoryEffectLock[]
+  inventorySettings        InventorySettings?
+  warehouses               Warehouse[]
+  marketplaceAccountEvents MarketplaceAccountEvent[]
+  syncRuns                 SyncRun[]
+  syncConflicts            SyncConflict[]
+  domainOrders             Order[]
+  orderEvents              OrderEvent[]
+  productFinanceProfiles   ProductFinanceProfile[]
+  financeSnapshots         FinanceSnapshot[]
+  financeDataWarnings      FinanceDataWarning[]
+  analyticsDailyMetrics    AnalyticsMaterializedDaily[]
+  analyticsAbcSnapshots    AnalyticsAbcSnapshot[]
+  analyticsRecommendations AnalyticsRecommendation[]
+  referralLinks            ReferralLink[]
+  referralAttributions     ReferralAttribution[]      @relation("ReferralReferredTenant")
+  notificationEvents       NotificationEvent[]
+  notificationPreferences  NotificationPreferences?
+  notificationInboxItems   NotificationInbox[]
 }
 
 // Настройки компании, вынесены из Tenant для чистоты модели
@@ -354,16 +819,16 @@ model Membership {
 }
 
 model Invitation {
-  id    String           @id @default(uuid())
-  email String
-  role  Role
+  id     String           @id @default(uuid())
+  email  String
+  role   Role
   status InvitationStatus @default(PENDING)
 
   tokenHash String @unique
 
-  expiresAt    DateTime
-  acceptedAt   DateTime?
-  cancelledAt  DateTime?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  cancelledAt DateTime?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -382,9 +847,9 @@ model Invitation {
 }
 
 model TeamEvent {
-  id          String   @id @default(uuid())
-  eventType   String
-  payload     Json?
+  id        String @id @default(uuid())
+  eventType String
+  payload   Json?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -406,20 +871,235 @@ model MarketplaceAccount {
   name        String
   marketplace MarketplaceType
 
+  // Legacy plaintext credentials. НЕ удаляем в TASK_1, чтобы существующие
+  // sync.service / settings.service продолжали работать. Полная миграция в
+  // encrypted MarketplaceCredential — TASK_MARKETPLACE_ACCOUNTS_2/3.
   clientId    String?
   apiKey      String?
   statApiKey  String?
   warehouseId String?
 
+  // Legacy sync indicators. Сохранены для обратной совместимости рядом с
+  // новыми статусами ниже.
   lastSyncAt     DateTime?
   lastSyncStatus String?
   lastSyncError  String?
+
+  // ── Lifecycle (TASK_MARKETPLACE_ACCOUNTS_1) ─────────────────────────
+  // Человекочитаемое имя подключения внутри (tenant, marketplace).
+  // На уровне БД enforced UNIQUE(tenantId, marketplace, label).
+  label String @db.VarChar(128)
+
+  lifecycleStatus  MarketplaceLifecycleStatus  @default(ACTIVE)
+  credentialStatus MarketplaceCredentialStatus @default(UNKNOWN)
+  syncHealthStatus MarketplaceSyncHealthStatus @default(UNKNOWN)
+  syncHealthReason String?                     @db.VarChar(64)
+
+  lastValidatedAt            DateTime?
+  lastValidationErrorCode    String?   @db.VarChar(64)
+  lastValidationErrorMessage String?
+
+  // Новый enum-based result для sync, не конфликтует с legacy String.
+  lastSyncResult       MarketplaceLastSyncStatus?
+  lastSyncErrorCode    String?                    @db.VarChar(64)
+  lastSyncErrorMessage String?
+
+  deactivatedAt     DateTime?
+  deactivatedBy     String?
+  deactivatedByUser User?     @relation("MarketplaceAccountDeactivatedBy", fields: [deactivatedBy], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  warehouses  Warehouse[]
+  credential  MarketplaceCredential?
+  events      MarketplaceAccountEvent[]
+  syncRuns    SyncRun[]
+  orders      Order[]
+  orderEvents OrderEvent[]
+
+  @@unique([tenantId, marketplace, label])
+  @@index([tenantId, lifecycleStatus])
+  @@index([tenantId, credentialStatus])
+  @@index([tenantId, syncHealthStatus])
+}
+
+/// Шифрованное хранилище credentials (1:1 c MarketplaceAccount).
+/// `encryptedPayload` — opaque ciphertext, расшифровывается только в
+/// adapter-слое sync. `maskedPreview` JSONB содержит безопасные «хвосты»
+/// для UI (например, `{ "apiKey": "***xxxx", "warehouseId": "1234" }`).
+/// `encryptionKeyVersion` и `schemaVersion` поддерживают rotation/migration.
+model MarketplaceCredential {
+  id                   String             @id @default(uuid())
+  accountId            String             @unique
+  account              MarketplaceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  encryptedPayload     Bytes
+  encryptionKeyVersion Int
+  schemaVersion        Int                @default(1)
+  maskedPreview        Json?
+  rotatedAt            DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+}
+
+/// Append-only журнал событий жизненного цикла подключения (см. §15
+/// system-analytics: created/validated/deactivated/credentials_rotated и т.д.).
+model MarketplaceAccountEvent {
+  id        String             @id @default(uuid())
+  tenantId  String
+  tenant    Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId String
+  account   MarketplaceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  eventType String             @db.VarChar(64)
+  payload   Json?
+  createdAt DateTime           @default(now())
+
+  @@index([tenantId, accountId, createdAt])
+  @@index([tenantId, eventType, createdAt])
+}
+
+// -------------------------------------------------------------------
+// 3b. SYNC RUN REGISTRY (TASK_SYNC_1)
+// -------------------------------------------------------------------
+
+/// Run registry синхронизации (см. 09-sync §8/§9/§13). Хранит lifecycle
+/// каждого manual/scheduled/retry запуска: postановку в очередь, preflight,
+/// blocked/cancelled, агрегированные счётчики и финальный результат.
+///
+/// `marketplaceAccountId` nullable, чтобы поддержать `tenant_full` scope
+/// (run, охватывающий все аккаунты сразу — future-only по §10/§13, но
+/// схема готова заранее). Удаление аккаунта переводит ссылку в NULL и не
+/// ломает историю run'ов.
+///
+/// `originRunId` — self-relation для retry-цепочек. `jobKey`/`idempotencyKey`
+/// обеспечивают дедупликацию входящих job'ов на стороне worker (см. §14).
+///
+/// Правило MVP §8: success path хранится агрегатами здесь
+/// (`processedCount`/`errorCount`/`durationMs`), а не полным item-level
+/// логом — `SyncRunItem` создаётся ТОЛЬКО для проблемных кейсов.
+model SyncRun {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  marketplaceAccountId String?
+  marketplaceAccount   MarketplaceAccount? @relation(fields: [marketplaceAccountId], references: [id], onDelete: SetNull)
+
+  triggerType  SyncTriggerType
+  triggerScope SyncTriggerScope @default(ACCOUNT)
+
+  /// Допустимые значения: PULL_STOCKS, PUSH_STOCKS, PULL_ORDERS, PULL_METADATA, FULL_SYNC.
+  /// TEXT[] (а не enum[]) — расширение списка не должно требовать миграции
+  /// БД. Валидируется на application слое через SyncTypes константу.
+  syncTypes String[] @default([])
+
+  status SyncRunStatus @default(QUEUED)
+
+  // Retry chain: новый run с triggerType=RETRY ссылается на свой источник.
+  originRunId String?
+  originRun   SyncRun?  @relation("SyncRunRetryChain", fields: [originRunId], references: [id], onDelete: SetNull)
+  retries     SyncRun[] @relation("SyncRunRetryChain")
+
+  // Queue / idempotency.
+  jobKey         String? @db.VarChar(128)
+  idempotencyKey String? @db.VarChar(128)
+
+  requestedBy String?
+
+  // Diagnostic причина для status=BLOCKED. Машинный код, не free-text:
+  // например `TENANT_TRIAL_EXPIRED`, `TENANT_SUSPENDED`, `ACCOUNT_INACTIVE`,
+  // `CREDENTIALS_INVALID`, `CONCURRENCY_GUARD`.
+  blockedReason String? @db.VarChar(64)
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+  durationMs Int?
+
+  // Aggregated counters (правило §8): все успехи и ошибки run'а уровня items.
+  processedCount Int @default(0)
+  errorCount     Int @default(0)
+
+  // Последняя ошибка run-уровня (отдельно от item-level errors в SyncRunItem).
+  errorCode    String? @db.VarChar(64)
+  errorMessage String?
+
+  // Retry policy metadata (см. §10/§14, queue contract).
+  attemptNumber Int       @default(1)
+  maxAttempts   Int       @default(3)
+  nextAttemptAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items     SyncRunItem[]
+  conflicts SyncConflict[]
+  orders    Order[]
+
+  // Idempotency на уровне БД: один и тот же jobKey не попадёт в очередь дважды.
+  @@unique([tenantId, jobKey])
+  // UI-фильтры: список последних запусков по tenant и по конкретному аккаунту.
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, marketplaceAccountId, createdAt])
+  @@index([originRunId])
+}
+
+/// Item-level диагностика sync run. Создаётся ТОЛЬКО для проблемных
+/// результатов (failed/skipped/conflict/blocked) — success path остаётся
+/// агрегированным в `SyncRun.processedCount` (см. §8/§20: иначе storage и
+/// diagnostic noise растут быстрее реальной пользы).
+///
+/// `itemKey` — внешний идентификатор затронутой сущности (sku, posting
+/// number, barcode); `externalEventId` — id события маркетплейса для
+/// дедупликации (см. §14). `payload`/`error` — произвольная диагностика
+/// для расследования без прямого доступа к БД.
+model SyncRunItem {
+  id    String  @id @default(uuid())
+  runId String
+  run   SyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  itemType SyncRunItemType
+  itemKey  String            @db.VarChar(128)
+  stage    SyncRunItemStage
+  status   SyncRunItemStatus
+
+  externalEventId String? @db.VarChar(128)
+  payload         Json?
+  error           Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([runId, status])
+  @@index([runId, itemType])
+  @@index([runId, stage])
+}
+
+/// Реестр конфликтов sync (см. §8/§9/§19). Конфликт — это событие/данные,
+/// которые нельзя безопасно применить автоматически (например, ручная
+/// корректировка inventory разошлась с подтверждённым внешним заказом).
+/// Run при этом не падает, а помечается `PARTIAL_SUCCESS`. `resolvedAt`
+/// заполняется, когда support/пользователь явно закрыл конфликт.
+model SyncConflict {
+  id       String  @id @default(uuid())
+  tenantId String
+  tenant   Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId    String
+  run      SyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  entityType   String  @db.VarChar(64)
+  entityId     String? @db.VarChar(128)
+  conflictType String  @db.VarChar(64)
+  payload      Json?
+
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  // UI: открытые конфликты по tenant.
+  @@index([tenantId, resolvedAt, createdAt])
+  @@index([tenantId, entityType, entityId])
+  @@index([runId])
 }
 
 // -------------------------------------------------------------------
@@ -440,6 +1120,8 @@ model Product {
   commissionRate Float?
   logisticsCost  Float?
 
+  brand    String? @db.VarChar(128)
+  barcode  String? @db.VarChar(128)
   category String?
   width    Float?
   height   Float?
@@ -454,6 +1136,15 @@ model Product {
   wbFbs   Int @default(0)
   wbFbo   Int @default(0)
 
+  mainImageFileId String?
+  sourceOfTruth   ProductSourceOfTruth @default(MANUAL)
+  status          ProductStatus        @default(ACTIVE)
+
+  createdBy     String?
+  updatedBy     String?
+  createdByUser User?   @relation("ProductCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?   @relation("ProductUpdatedBy", fields: [updatedBy], references: [id])
+
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -461,8 +1152,17 @@ model Product {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  channelMappings ProductChannelMapping[]
+  stockBalances   StockBalance[]
+  stockMovements  StockMovement[]
+  orderItems      OrderItem[]
+  financeProfile  ProductFinanceProfile?
+  financeWarnings FinanceDataWarning[]
+  analyticsRecommendations AnalyticsRecommendation[]
+
   @@unique([tenantId, sku])
   @@unique([tenantId, wbBarcode])
+  @@index([tenantId, status])
 }
 
 model MarketplaceOrder {
@@ -493,6 +1193,173 @@ model MarketplaceOrder {
   @@unique([tenantId, marketplaceOrderId])
 }
 
+// -------------------------------------------------------------------
+// 4a. ORDERS DOMAIN (TASK_ORDERS_1) — см. 10-orders system-analytics
+// §8/§9/§13/§15.
+//
+// Доменная модель заказов отдельная от legacy `MarketplaceOrder`, чтобы:
+//   1. Не сломать существующий sync.service (он продолжает писать в
+//      `MarketplaceOrder` — переключение на доменную модель будет в
+//      следующих TASK_ORDERS_2/3).
+//   2. Поддержать ingestion с провенансом (`marketplaceAccountId`,
+//      `syncRunId`, `externalEventId`) и многострочными `OrderItem`,
+//      чего у плоской `MarketplaceOrder` нет.
+//   3. Различать FBS и FBO в data-model явно через `fulfillmentMode`,
+//      `affectsStock`, `stockEffectStatus` (§9 шаги 5-9).
+// -------------------------------------------------------------------
+
+/// Header заказа маркетплейса. Уникален в рамках (tenant, marketplace,
+/// marketplace_order_id). `marketplaceAccountId` обязателен — мы всегда
+/// знаем, какой аккаунт принёс заказ. `syncRunId` опционален: позволяет
+/// восстановить связку с конкретным `SyncRun` без обращения к сырым
+/// логам (§12 DoD), но для исторических/manual reprocess может быть NULL.
+///
+/// `internalStatus` — наш собственный lifecycle (см. §13). `externalStatus`
+/// — последний raw статус от маркетплейса (включая PACKED/SHIPPED, которые
+/// не создают внутренний переход в MVP).
+///
+/// `affectsStock` — материализованный флаг "влияет ли заказ на остатки"
+/// (true для FBS-c-warehouse, false для FBO/display-only). Отделён от
+/// `stockEffectStatus`, потому что заказ может быть affects_stock=true,
+/// но фактически stockEffectStatus=PENDING (warehouse scope ещё не
+/// определён) или FAILED (inventory отказал).
+///
+/// `warehouseId` nullable: для FBS-заказов он определяется warehouse
+/// scope матчинга, для FBO/UNRESOLVED — остаётся NULL.
+model Order {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  marketplace          MarketplaceType
+  marketplaceAccountId String
+  marketplaceAccount   MarketplaceAccount @relation(fields: [marketplaceAccountId], references: [id], onDelete: Cascade)
+
+  // Связь с конкретным sync run, который доставил последнее событие
+  // заказа. SET NULL — удаление run'а не теряет сам заказ.
+  syncRunId String?
+  syncRun   SyncRun? @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  marketplaceOrderId String @db.VarChar(128)
+
+  fulfillmentMode OrderFulfillmentMode
+
+  externalStatus String?             @db.VarChar(128)
+  internalStatus OrderInternalStatus @default(IMPORTED)
+
+  affectsStock      Boolean                @default(false)
+  stockEffectStatus OrderStockEffectStatus @default(NOT_REQUIRED)
+
+  // Warehouse scope для FBS effects. Для FBO/UNRESOLVED — NULL.
+  // SET NULL: архивация склада не должна осиротить или удалить заказ.
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  // Время создания у маркетплейса (нормализованное), отдельно от нашего
+  // `createdAt` (когда мы записали заказ).
+  orderCreatedAt DateTime?
+  // Время последней успешной обработки order event (см. §9 шаг 4 для
+  // out-of-order detection).
+  processedAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items  OrderItem[]
+  events OrderEvent[]
+
+  // §8: уникальность в рамках tenant/marketplace/external id. Account
+  // НЕ входит в ключ сознательно: один и тот же заказ не может
+  // принадлежать двум разным аккаунтам того же маркетплейса.
+  @@unique([tenantId, marketplace, marketplaceOrderId])
+  // UI: списки заказов с фильтрами по статусу и времени.
+  @@index([tenantId, internalStatus, createdAt])
+  @@index([tenantId, marketplaceAccountId, createdAt])
+  // Диагностика stuck pending stock-effects (§19 alerts).
+  @@index([tenantId, stockEffectStatus, createdAt])
+  // Поиск всех заказов конкретного sync run (диагностика incident'ов).
+  @@index([syncRunId])
+}
+
+/// Строки заказа. У одного `Order` может быть N items (§14). `productId`
+/// и `warehouseId` nullable: мы НЕ блокируем сохранение заказа из-за
+/// отсутствия маппинга — вместо этого item помечается `UNMATCHED` и
+/// исключается из stock-effect, пока не будет resolved.
+model OrderItem {
+  id      String @id @default(uuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  sku  String? @db.VarChar(128)
+  name String? @db.VarChar(255)
+
+  matchStatus OrderItemMatchStatus @default(UNMATCHED)
+
+  // Warehouse scope именно для этой строки (актуально, если разные
+  // позиции FBS-заказа лежат на разных складах). NULL — пока не
+  // определён.
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+
+  quantity Int
+  // PostgreSQL NUMERIC(12,2) — точное представление цен без float-дрифта.
+  price    Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Диагностика: список unresolved items по tenant'у (§19 alerts:
+  // unmatched_sku_orders).
+  @@index([orderId])
+  @@index([orderId, matchStatus])
+  @@index([productId])
+}
+
+/// Append-only журнал событий заказа: provenance каждого внешнего
+/// события, маппинг статусов, side-effects, идемпотентные ignores и
+/// failures. См. §15.
+///
+/// `externalEventId` — стабильный идентификатор события маркетплейса
+/// (например, version-stamp postingа). UNIQUE(tenantId,
+/// marketplaceAccountId, externalEventId) реализует идемпотентность на
+/// уровне БД: повторная доставка того же события не создаст вторую
+/// запись и, как следствие, не запустит повторный reserve/deduct
+/// (§9 шаг 3, §12 DoD).
+///
+/// Account входит в ключ, потому что один и тот же external_event_id
+/// в разных аккаунтах семантически разный (разные интеграционные
+/// каналы). Это согласовано с pattern'ом `SyncRunItem.externalEventId`.
+model OrderEvent {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  marketplaceAccountId String
+  marketplaceAccount   MarketplaceAccount @relation(fields: [marketplaceAccountId], references: [id], onDelete: Cascade)
+
+  externalEventId String         @db.VarChar(128)
+  eventType       OrderEventType
+
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  // §8: DB-level idempotency. Повторный event с тем же external id
+  // в рамках того же account отклоняется на уровне UNIQUE constraint;
+  // application слой ловит ошибку и пишет один `DUPLICATE_IGNORED`.
+  @@unique([tenantId, marketplaceAccountId, externalEventId])
+  // Order timeline (UI /orders/:id/timeline) — последние события заказа.
+  @@index([orderId, createdAt])
+  // Диагностика по типам событий внутри tenant (§19 dashboards:
+  // duplicate/out-of-order monitor).
+  @@index([tenantId, eventType, createdAt])
+}
+
 model MarketplaceReport {
   id          String          @id @default(uuid())
   reportId    String
@@ -518,27 +1385,124 @@ model MarketplaceReport {
   @@unique([tenantId, reportId])
 }
 
+// -------------------------------------------------------------------
+// 4b. КАТАЛОГ — CHANNEL MAPPINGS И IMPORT JOBS
+// -------------------------------------------------------------------
+
+model ProductChannelMapping {
+  id                String             @id @default(uuid())
+  tenantId          String
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId         String
+  product           Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  marketplace       ChannelMarketplace
+  externalProductId String             @db.VarChar(128)
+  externalSku       String?            @db.VarChar(128)
+  isAutoMatched     Boolean            @default(false)
+  createdBy         String?
+  createdByUser     User?              @relation("MappingCreatedBy", fields: [createdBy], references: [id])
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@unique([tenantId, marketplace, externalProductId])
+  @@index([tenantId, productId])
+}
+
+model CatalogImportJob {
+  id             String          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  source         ImportJobSource
+  status         ImportJobStatus @default(PREVIEW)
+  totalRows      Int             @default(0)
+  createdCount   Int             @default(0)
+  updatedCount   Int             @default(0)
+  errorCount     Int             @default(0)
+  idempotencyKey String?         @db.VarChar(128)
+  createdBy      String?
+  createdByUser  User?           @relation("ImportJobCreatedBy", fields: [createdBy], references: [id])
+  createdAt      DateTime        @default(now())
+  finishedAt     DateTime?
+
+  items CatalogImportJobItem[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+}
+
+model CatalogImportJobItem {
+  id               String            @id @default(uuid())
+  jobId            String
+  job              CatalogImportJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  rowNumber        Int
+  rawPayload       Json
+  validationErrors Json?
+  action           ImportItemAction?
+
+  @@index([jobId])
+}
+
 model AuditLog {
-  id         String     @id @default(uuid())
-  actionType ActionType
-  createdAt  DateTime   @default(now())
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
-  productId  String?
-  productSku String?
+  // Canonical audit fields (from system analytics spec)
+  eventType     String?
+  eventDomain   String?
+  entityType    String?
+  entityId      String?
+  actorType     AuditActorType?
+  actorId       String?
+  actorRole     String?
+  source        AuditSource?
+  requestId     String?
+  correlationId String?
+  before        Json?
+  after         Json?
+  changedFields Json?
+  metadata      Json?
 
+  visibilityScope AuditVisibilityScope @default(tenant)
+  redactionLevel  AuditRedactionLevel  @default(none)
+
+  // Legacy fields — kept for backward compat, will be removed after writer migration (TASK_AUDIT_2)
+  actionType  ActionType?
+  productId   String?
+  productSku  String?
   beforeTotal Int?
   afterTotal  Int?
   delta       Int?
-
-  beforeName String?
-  afterName  String?
-
+  beforeName  String?
+  afterName   String?
   actorUserId String?
-  actorUser   User?   @relation(fields: [actorUserId], references: [id])
+  actorUser   User?       @relation(fields: [actorUserId], references: [id])
   note        String?
 
-  tenantId String
-  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, actorId, createdAt(sort: Desc)])
+  @@index([requestId])
+}
+
+model SecurityEvent {
+  id        String            @id @default(uuid())
+  tenantId  String?
+  tenant    Tenant?           @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  userId    String?
+  user      User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType SecurityEventType
+  ip        String?
+  userAgent String?
+  requestId String?
+  metadata  Json?
+  createdAt DateTime          @default(now())
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([eventType])
+  @@index([requestId])
 }
 
 // -------------------------------------------------------------------
@@ -576,6 +1540,140 @@ model OnboardingState {
   @@index([tenantId])
 }
 
+// -------------------------------------------------------------------
+// 6. INVENTORY — Балансы, движения, idempotency, настройки
+// -------------------------------------------------------------------
+
+// Агрегированный баланс по (tenant, product, warehouse).
+// available — STORED GENERATED column (onHand - reserved); сервисный код
+// никогда не должен записывать его явно — Prisma пропускает поле с
+// @default(dbgenerated()), а БД сама вычисляет значение.
+model StockBalance {
+  id              String                   @id @default(uuid())
+  tenantId        String
+  tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product                  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId     String
+  fulfillmentMode InventoryFulfillmentMode @default(FBS)
+  isExternal      Boolean                  @default(false)
+  onHand          Int                      @default(0)
+  reserved        Int                      @default(0)
+  available       Int                      @default(dbgenerated())
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  @@unique([tenantId, productId, warehouseId])
+  @@index([tenantId, productId])
+  @@index([tenantId, fulfillmentMode])
+}
+
+// Лог любого изменения остатка/резерва. Источник истины для расследований.
+model StockMovement {
+  id             String              @id @default(uuid())
+  tenantId       String
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId      String
+  product        Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseId    String?
+  movementType   StockMovementType
+  delta          Int
+  onHandBefore   Int?
+  onHandAfter    Int?
+  reservedBefore Int?
+  reservedAfter  Int?
+  reasonCode     String?             @db.VarChar(64)
+  comment        String?
+  source         StockMovementSource
+  sourceEventId  String?             @db.VarChar(128)
+  idempotencyKey String?             @db.VarChar(128)
+  actorUserId    String?
+  actorUser      User?               @relation("StockMovementActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now())
+
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, sourceEventId])
+  @@index([tenantId, movementType, createdAt])
+}
+
+// Idempotency-замок для применения внешних/business-событий ровно один раз.
+// UNIQUE(tenantId, effectType, sourceEventId) гарантирует, что один и тот же
+// reserve/release/deduct не применится дважды.
+model InventoryEffectLock {
+  id            String                @id @default(uuid())
+  tenantId      String
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  effectType    InventoryEffectType
+  sourceEventId String                @db.VarChar(128)
+  status        InventoryEffectStatus @default(PROCESSING)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@unique([tenantId, effectType, sourceEventId])
+  @@index([tenantId, status])
+}
+
+// Настройки инвентаря на уровне tenant. Пока — только low-stock порог.
+model InventorySettings {
+  tenantId          String   @id
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lowStockThreshold Int      @default(5)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// -------------------------------------------------------------------
+// 7. WAREHOUSES — справочник внешних складов (TASK_WAREHOUSES_1)
+// -------------------------------------------------------------------
+
+/// Справочник внешних складов tenant. Источник истины — marketplace API
+/// (sync upsert по `(tenantId, marketplaceAccountId, externalWarehouseId)`).
+/// `aliasName` и `labels` — единственные поля, которые редактирует tenant;
+/// остальные атрибуты read-only по политике §13/§20 system-analytics.
+/// Lifecycle ACTIVE → INACTIVE (склад исчез из API после safe-window) →
+/// ARCHIVED (долго не возвращается). Удаление запрещено — историческая
+/// связь с inventory должна сохраняться.
+model Warehouse {
+  id                   String             @id @default(uuid())
+  tenantId             String
+  tenant               Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  marketplaceAccountId String
+  marketplaceAccount   MarketplaceAccount @relation(fields: [marketplaceAccountId], references: [id], onDelete: Cascade)
+
+  externalWarehouseId String  @db.VarChar(128)
+  name                String  @db.VarChar(255)
+  city                String? @db.VarChar(128)
+
+  warehouseType     WarehouseType
+  sourceMarketplace WarehouseSourceMarketplace
+
+  // tenant-локальные поля (могут редактироваться через PATCH /metadata).
+  aliasName String?  @db.VarChar(255)
+  labels    String[] @default([])
+
+  status             WarehouseStatus @default(ACTIVE)
+  deactivationReason String?         @db.VarChar(64)
+
+  firstSeenAt   DateTime  @default(now())
+  lastSyncedAt  DateTime?
+  inactiveSince DateTime?
+
+  metadataUpdatedAt     DateTime?
+  metadataUpdatedBy     String?
+  metadataUpdatedByUser User?     @relation("WarehouseMetadataUpdatedBy", fields: [metadataUpdatedBy], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders     Order[]
+  orderItems OrderItem[]
+
+  @@unique([tenantId, marketplaceAccountId, externalWarehouseId])
+  @@index([tenantId, status])
+  @@index([tenantId, sourceMarketplace, warehouseType])
+  @@index([marketplaceAccountId, status])
+}
+
 // Прогресс по каждому шагу онбординга (один ряд на stepKey)
 model OnboardingStepProgress {
   id                String               @id @default(uuid())
@@ -593,3 +1691,670 @@ model OnboardingStepProgress {
   @@unique([onboardingStateId, stepKey])
   @@index([onboardingStateId])
 }
+
+
+// -------------------------------------------------------------------
+// Finance domain (TASK_FINANCE_1) — см. 11-finance system-analytics
+// §8/§13/§14.
+//
+// Зачем отдельные таблицы рядом с legacy полями `Product.purchasePrice`
+// и др.: §13 правило источников истины запрещает finance модулю опираться
+// на разрозненные поля каталога без явного profile. Legacy `Product.*Cost`
+// сохраняется (его использует существующий `finance.service.ts` MVP),
+// переключение читателей на `ProductFinanceProfile` — TASK_FINANCE_2/3.
+// -------------------------------------------------------------------
+
+/// Профиль себестоимости товара. Manual input в MVP разрешён ТОЛЬКО для
+/// `baseCost`, `packagingCost`, `additionalCost` (§10 + §13: ручной ввод
+/// периодных расходов и подмена marketplace fees запрещены).
+/// `isCostManual=true` фиксирует, что значения введены вручную, а не
+/// получены автоматическим pipeline'ом — нужно для warning'ов когда
+/// автомат хочет перетереть значение, но manual явно выставлен.
+model ProductFinanceProfile {
+  id              String  @id @default(uuid())
+  tenantId        String
+  tenant          Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId       String  @unique
+  product         Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // NUMERIC(12,2) — точное представление денег без float-дрифта.
+  baseCost        Decimal? @db.Decimal(12, 2)
+  packagingCost   Decimal? @db.Decimal(12, 2)
+  additionalCost  Decimal? @db.Decimal(12, 2)
+
+  costCurrency    String  @default("RUB") @db.VarChar(3)
+  isCostManual    Boolean @default(true)
+
+  updatedBy       String?
+  updatedByUser   User?    @relation("FinanceProfileUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Один профиль на (tenant, product) — UNIQUE на productId уже даёт
+  // это, но явный композитный индекс ускоряет фильтр по tenantId.
+  @@index([tenantId, productId])
+}
+
+/// Снимок периода юнит-экономики (§14 формулы MVP). Содержит
+/// агрегированный `payload JSONB` с per-SKU цифрами + сводными KPI.
+/// `formulaVersion` гарантирует воспроизводимость: если мы поменяли
+/// формулу, старые snapshots сохраняют свою версию и UI рендерит
+/// исторические периоды стабильно (§20 риск non-reproducible reports).
+///
+/// `snapshotStatus=INCOMPLETE` отделён от `READY` и `FAILED` сознательно:
+/// расчёт прошёл, но критичные source отсутствуют — UI показывает данные
+/// с warning, а не молчаливыми нулями (§14 правило неполного расчёта).
+///
+/// Идемпотентность по `(tenantId, periodFrom, periodTo, formulaVersion)`
+/// — повторный rebuild того же периода с той же формулой не создаёт
+/// дубль; новая формула версионирует snapshot отдельно.
+model FinanceSnapshot {
+  id              String                    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  periodFrom      DateTime                  @db.Date
+  periodTo        DateTime                  @db.Date
+  periodType      FinanceSnapshotPeriodType
+
+  formulaVersion  String                    @db.VarChar(32)
+  snapshotStatus  FinanceSnapshotStatus     @default(READY)
+
+  payload         Json
+  // Source diagnostics: когда последний raw report пришёл, какой sync_run
+  // использовался, считается ли источник `stale` per §14. Структура:
+  // { orders: { lastEventAt, isStale }, fees: {...}, ads: {...} }.
+  sourceFreshness Json?
+
+  generatedAt     DateTime                  @default(now())
+  generatedBy     String?
+  generatedByUser User?                     @relation("FinanceSnapshotGeneratedBy", fields: [generatedBy], references: [id], onDelete: SetNull)
+
+  warnings        FinanceDataWarning[]
+
+  // Идемпотентность rebuild — UNIQUE по (tenant, period, formula).
+  @@unique([tenantId, periodFrom, periodTo, formulaVersion])
+  // UI: список последних snapshot'ов tenant'а.
+  @@index([tenantId, periodTo, generatedAt])
+  @@index([tenantId, snapshotStatus, generatedAt])
+}
+
+/// Предупреждение о неполных или устаревших данных (§13 правило
+/// источников истины + §14 правило неполного расчёта).
+///
+/// Привязка к `productId` опциональна: warning может быть как per-SKU
+/// (`MISSING_COST`), так и tenant-wide (`STALE_FINANCIAL_SOURCE` без
+/// конкретного товара). Привязка к `snapshotId` тоже опциональна:
+/// realtime-расчёт без snapshot ещё может вернуть warning'и для UI.
+///
+/// `isActive=false` + `resolvedAt` фиксируется warning resolution job'ом
+/// (§15) после появления недостающих данных — мы НЕ удаляем warning
+/// физически, чтобы аналитика могла видеть историю incomplete-периодов.
+model FinanceDataWarning {
+  id           String              @id @default(uuid())
+  tenantId     String
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId    String?
+  product      Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  snapshotId   String?
+  snapshot     FinanceSnapshot?    @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  warningType  FinanceWarningType
+  isActive     Boolean             @default(true)
+
+  // Дополнительный контекст: missingComponents, lastReliableAt и т.п.
+  details      Json?
+
+  createdAt    DateTime            @default(now())
+  resolvedAt   DateTime?
+
+  // §19 dashboards: completeness board / stale-source board.
+  @@index([tenantId, isActive, warningType])
+  @@index([tenantId, productId])
+  @@index([snapshotId])
+}
+
+
+// -------------------------------------------------------------------
+// Analytics domain (TASK_ANALYTICS_1) — см. 12-analytics system-analytics
+// §8/§13/§18.
+//
+// Зачем отдельный data-layer рядом с уже существующим `analytics.service.ts`:
+// §13 явно требует, чтобы dashboard и ABC не считались on-the-fly из OLTP.
+// Текущий MVP агрегирует `MarketplaceOrder` циклом по дням — это ляжет на
+// первой большой выборке. Эти таблицы — read-model витрина, которая
+// заполняется nightly job'ом (TASK_ANALYTICS_2/3) и читается API без
+// тяжёлых join'ов.
+//
+// Legacy `analytics.service.ts` сохраняется (его дёргает frontend) —
+// переключение читателей на новые таблицы происходит в TASK_ANALYTICS_4
+// одновременно с появлением fast read API.
+// -------------------------------------------------------------------
+
+/// Дневной материализованный слой (§8 + §13). Одна строка на (tenant, date)
+/// — ключевая витрина для revenue dynamics, dashboard KPI и базы под ABC.
+///
+/// Все денежные поля — `Decimal(14,2)` для точности агрегатов; `by_marketplace`
+/// — JSONB вида `{ "WB": { "revenueNet": 12345.67, "ordersCount": 12,
+/// "unitsSold": 18 }, "OZON": {...} }` — позволяет дашборду показывать
+/// per-channel разбивку без отдельной таблицы на каждый маркетплейс.
+///
+/// `sourceFreshness` — диагностика, по которой UI решает рисовать `fresh`
+/// / `stale` / `incomplete` бейдж (§7 frontend поведение). Структура:
+/// `{ orders: { lastEventAt, isStale }, finance: {...}, integrations: {...} }`.
+///
+/// `formulaVersion` фиксирует версию набора формул KPI (`avg_check =
+/// revenue_net / orders_count` и т.п.) — если правила меняются, старые
+/// строки пересчитываются rebuild'ом, а не молчаливо переинтерпретируются
+/// (§20 риск non-explainable аналитики).
+model AnalyticsMaterializedDaily {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  date           DateTime @db.Date
+
+  revenueGross   Decimal  @default(0) @db.Decimal(14, 2)
+  revenueNet     Decimal  @default(0) @db.Decimal(14, 2)
+  ordersCount    Int      @default(0)
+  unitsSold      Int      @default(0)
+  returnsCount   Int      @default(0)
+  avgCheck       Decimal  @default(0) @db.Decimal(12, 2)
+
+  byMarketplace  Json
+  sourceFreshness Json?
+
+  formulaVersion String                  @db.VarChar(32)
+  snapshotStatus AnalyticsSnapshotStatus @default(READY)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // §15 идемпотентность daily aggregation: повторный запуск job'а на тот же
+  // (tenant, date) — upsert, а не дубль.
+  @@unique([tenantId, date])
+  // Revenue dynamics / dashboard читают окно `[from, to]` per tenant,
+  // отсортированное по date desc — самый горячий индекс модуля.
+  @@index([tenantId, date])
+  // §19 stale-vs-incomplete board.
+  @@index([tenantId, snapshotStatus, date])
+}
+
+/// ABC-снапшот за период (§14 правила ABC). Хранится payload'ом, потому
+/// что внутри — массив SKU с накопительной долей и групповой меткой;
+/// отдельная таблица per-SKU тут оверкилл (snapshot читается целиком
+/// при открытии экрана и редко поштучно).
+///
+/// Идемпотентность по `(tenantId, periodFrom, periodTo, metric,
+/// formulaVersion)` — пересчёт того же периода с той же метрикой и
+/// версией формулы переписывает payload, а смена metric / formulaVersion
+/// создаёт отдельный snapshot, чтобы не терять историю интерпретации.
+///
+/// `snapshotStatus=INCOMPLETE` — частично пересчитан (например, не все
+/// маркетплейсы отдали отчёты по периоду). `STALE` — daily layer под ABC
+/// не обновлялся допустимое окно. UI показывает обе ситуации с бейджем,
+/// но не скрывает данные (§14 + §20).
+model AnalyticsAbcSnapshot {
+  id             String                  @id @default(uuid())
+  tenantId       String
+  tenant         Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  periodFrom     DateTime                @db.Date
+  periodTo       DateTime                @db.Date
+  metric         AnalyticsAbcMetric
+
+  formulaVersion String                  @db.VarChar(32)
+  snapshotStatus AnalyticsSnapshotStatus @default(READY)
+
+  payload        Json
+  sourceFreshness Json?
+
+  generatedAt    DateTime                @default(now())
+
+  // §15 идемпотентность rebuild + историзация по (period, metric, formula).
+  @@unique([tenantId, periodFrom, periodTo, metric, formulaVersion])
+  // UI: список последних снапшотов tenant'а, сортировка по periodTo.
+  @@index([tenantId, periodTo, generatedAt])
+  // §19 health board.
+  @@index([tenantId, snapshotStatus, generatedAt])
+}
+
+/// Explainable rule-based рекомендация (§9 шаг 5 + §20 риск
+/// «recommendation должна быть объяснимой»). Каждая запись — конкретный
+/// сигнал: `ruleKey` идентифицирует правило-эвристику, `reasonCode` —
+/// машинно-читаемое объяснение, `message` — человекочитаемая копия для UI.
+///
+/// `productId` опционален: рекомендация может быть привязана к SKU
+/// (`LOW_STOCK_HIGH_DEMAND`) или быть tenant-wide (`STALE_ANALYTICS_SOURCE`).
+///
+/// `payload` — дополнительный контекст для drill-down: какие именно
+/// числа спровоцировали правило (current stock, daily velocity и т.п.),
+/// чтобы UI мог раскрыть «почему именно это правило сработало».
+///
+/// `status=ACTIVE` — рекомендация актуальна. `DISMISSED` / `APPLIED`
+/// зарезервированы под будущий workflow (§15 MVP правило: пользовательский
+/// dismiss/applied не входит в первую версию). В MVP rule engine выставляет
+/// `DISMISSED` сам, когда сигнал устаревает (например, остаток пополнен).
+model AnalyticsRecommendation {
+  id             String                          @id @default(uuid())
+  tenantId       String
+  tenant         Tenant                          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  productId      String?
+  product        Product?                        @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  ruleKey        String                          @db.VarChar(64)
+  reasonCode     String                          @db.VarChar(64)
+  priority       AnalyticsRecommendationPriority
+  status         AnalyticsRecommendationStatus   @default(ACTIVE)
+
+  message        String
+  payload        Json?
+
+  formulaVersion String                          @db.VarChar(32)
+
+  createdAt      DateTime                        @default(now())
+  updatedAt      DateTime                        @updatedAt
+  resolvedAt     DateTime?
+
+  // §15 идемпотентность recommendation refresh: один активный сигнал
+  // на (tenant, product, ruleKey). Повторный запуск engine'а на том же
+  // продукте с тем же правилом — upsert в актуальное состояние.
+  // NB: productId NULL участвует в UNIQUE как самостоятельное значение
+  // (Postgres NULLS DISTINCT — поведение по умолчанию), что нам и нужно
+  // для tenant-wide правил без привязки к SKU.
+  @@unique([tenantId, productId, ruleKey])
+  // UI: топ активных рекомендаций по приоритету.
+  @@index([tenantId, status, priority])
+  // Drill-down по конкретному SKU.
+  @@index([tenantId, productId])
+}
+
+
+// -------------------------------------------------------------------
+// Referrals domain (TASK_REFERRALS_1) — см. 14-referrals system-analytics
+// §8/§13.
+// -------------------------------------------------------------------
+
+/// Реферальная ссылка/код владельца. Один владелец может иметь несколько
+/// ссылок (под разные кампании), но §6 MVP хранит **одну активную ссылку
+/// на (ownerUserId, tenantId)** — UNIQUE даёт идемпотентность getOrCreate.
+///
+/// `code` — короткий, чувствительный к регистру публичный токен (8 символов
+/// base32). UNIQUE глобально, чтобы не было коллизий между tenant'ами.
+model ReferralLink {
+  id          String   @id @default(uuid())
+  ownerUserId String
+  ownerUser   User     @relation("ReferralLinkOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  code        String   @unique @db.VarChar(32)
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  attributions ReferralAttribution[]
+
+  // §6: одна активная ссылка на (owner, tenant). Для MVP одна — точка
+  // получения через `GET /referrals/link` (TASK_REFERRALS_1).
+  @@unique([ownerUserId, tenantId])
+  @@index([ownerUserId])
+}
+
+/// Атрибуция приглашения. Создаётся в два этапа (§13):
+///   1. Регистрация — `referredUserId` зафиксирован, `referredTenantId=null`,
+///      статус `ATTRIBUTED`. Сохраняется attribution context (utm_*,
+///      sourceIp, userAgent) — без потери источника после редиректов.
+///   2. Tenant creation — `referredTenantId` заполняется. UNIQUE на
+///      `referredTenantId` обеспечивает attribution **lock**: tenant
+///      нельзя silently переподписать на другой referral_code.
+///
+/// Self-referral (owner === referred user или referred user уже member
+/// tenant'а ссылки) → статус `REJECTED`, reward не начисляется.
+///
+/// `referralCode` денормализован сюда же как snapshot — даже если
+/// `ReferralLink` потом удалят, attribution остаётся читаемой для аудита.
+model ReferralAttribution {
+  id                 String                    @id @default(uuid())
+
+  referralLinkId     String?
+  referralLink       ReferralLink?             @relation(fields: [referralLinkId], references: [id], onDelete: SetNull)
+
+  /// Snapshot кода (на случай удаления ссылки).
+  referralCode       String                    @db.VarChar(32)
+
+  /// Зафиксированный пользователь — UNIQUE: один user — одна attribution
+  /// (защита от перезаписи при повторных регистрациях).
+  referredUserId     String                    @unique
+  referredUser       User                      @relation("ReferralReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  /// Tenant этого пользователя. UNIQUE — §13 attribution lock; NULL до
+  /// шага tenant creation.
+  referredTenantId   String?                   @unique
+  referredTenant     Tenant?                   @relation("ReferralReferredTenant", fields: [referredTenantId], references: [id], onDelete: SetNull)
+
+  status             ReferralAttributionStatus @default(ATTRIBUTED)
+  rejectionReason    String?                   @db.VarChar(64)
+
+  // §13 attribution context — фиксируется на регистрации, переживает
+  // signup flow без потери источника.
+  utmSource          String?                   @db.VarChar(128)
+  utmMedium          String?                   @db.VarChar(128)
+  utmCampaign        String?                   @db.VarChar(128)
+  utmContent         String?                   @db.VarChar(128)
+  utmTerm            String?                   @db.VarChar(128)
+  sourceIp           String?                   @db.VarChar(64)
+  userAgent          String?                   @db.VarChar(512)
+
+  registrationAttributedAt DateTime            @default(now())
+  tenantLockedAt           DateTime?
+  firstPaidAt              DateTime?
+
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  // §6 + §19: фильтрация по статусу для referral funnel dashboards.
+  @@index([referralLinkId, status])
+  @@index([status, registrationAttributedAt])
+  // TASK_REFERRALS_5: fraud-rule queries по IP + времени.
+  @@index([sourceIp, registrationAttributedAt])
+}
+
+/// Бонусный кошелёк владельца (TASK_REFERRALS_2). Один кошелёк на owner.
+/// `balance` — материализованный агрегат леджера `BonusTransaction`. Он
+/// обновляется атомарно (в одной DB-транзакции) вместе с записью в леджер,
+/// чтобы не требовать SUM-пересчёта при каждом GET /bonus-balance.
+///
+/// Прямой UPDATE balance без создания BonusTransaction запрещён на уровне
+/// сервиса — только `credit` и `debit`, которые всегда пишут в леджер.
+model BonusWallet {
+  id          String   @id @default(uuid())
+  ownerUserId String   @unique
+  ownerUser   User     @relation("BonusWalletOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  balance     Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  transactions BonusTransaction[]
+}
+
+/// Append-only леджер бонусных операций (TASK_REFERRALS_2).
+///
+/// `UNIQUE(walletId, reasonCode, referredTenantId)` — идемпотентность
+/// reward credit: одному referred tenant соответствует не более одного
+/// credit с тем же reasonCode. PostgreSQL обрабатывает NULL как DISTINCT,
+/// поэтому для операций без referredTenantId (debit за подписку) несколько
+/// строк с NULL разрешены.
+///
+/// `reasonCode` — машинный код операции:
+///   REFERRAL_REWARD   — reward credit за первый платёж реферала (TASK_REFERRALS_4);
+///   BONUS_SPEND       — списание на оплату подписки (TASK_REFERRALS_3);
+///   SUPPORT_CREDIT    — ручное зачисление support (через audit-only путь).
+model BonusTransaction {
+  id               String               @id @default(uuid())
+  walletId         String
+  wallet           BonusWallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type             BonusTransactionType
+  amount           Decimal              @db.Decimal(12, 2)
+  reasonCode       String               @db.VarChar(64)
+  referredTenantId String?              @db.VarChar(36)
+  metadata         Json?
+  createdAt        DateTime             @default(now())
+
+  // §8 идемпотентность reward credit: (wallet, reasonCode, referredTenant) → UNIQUE.
+  // NULL-referredTenantId = manual/spend операции (несколько разрешены).
+  @@unique([walletId, reasonCode, referredTenantId])
+  @@index([walletId, createdAt])
+}
+
+// -------------------------------------------------------------------
+// 15. NOTIFICATIONS enums (TASK_NOTIFICATIONS_1)
+// -------------------------------------------------------------------
+
+// Доменная категория события (§13 system-analytics). AUTH/BILLING/SYSTEM —
+// mandatory; остальные — управляемые preferences.
+enum NotificationCategory {
+  AUTH
+  BILLING
+  SYNC
+  INVENTORY
+  REFERRAL
+  SYSTEM
+}
+
+// Канал доставки. MVP: EMAIL + IN_APP; TELEGRAM/MAX — future-ready.
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  TELEGRAM
+  MAX
+}
+
+// Уровень важности события. CRITICAL включает mandatory protection
+// (preferences не могут заглушить).
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+// Политика доставки. DIGEST не входит в MVP (§22 confirmed decisions),
+// но enum определён заранее как future-compatible.
+enum NotificationDispatchPolicy {
+  INSTANT
+  DIGEST
+  SCHEDULED
+  THROTTLED
+}
+
+// Жизненный цикл dispatch-задачи по каналу.
+// SKIPPED — событие было заглушено dedup/preferences без ошибки.
+enum NotificationDispatchStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Промокоды (TASK_REFERRALS_4) — §8/§14 system-analytics.
+//
+// Логика:
+//   - `applicablePlanCodes` пуст → промокод применим ко всем планам.
+//   - `maxUses` NULL → без глобального лимита использований.
+//   - `stackPolicy = EXCLUSIVE` (MVP default) → нельзя комбинировать
+//     с бонусным балансом в одном checkout (§14 stack rule).
+//   - Идемпотентность apply: PromoRedemption UNIQUE(promoId, tenantId)
+//     гарантирует, что один tenant не применит один промокод дважды.
+// ─────────────────────────────────────────────────────────────────────
+
+model PromoCode {
+  id                  String           @id @default(uuid())
+  code                String           @unique @db.VarChar(32)
+  discountType        DiscountType
+  discountValue       Decimal          @db.Decimal(12, 2)
+  stackPolicy         PromoStackPolicy @default(EXCLUSIVE)
+  applicablePlanCodes String[]
+  maxUses             Int?
+  usedCount           Int              @default(0)
+  expiresAt           DateTime?
+  isActive            Boolean          @default(true)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  redemptions PromoRedemption[]
+}
+
+// -------------------------------------------------------------------
+// 15. NOTIFICATIONS data model (TASK_NOTIFICATIONS_1)
+// -------------------------------------------------------------------
+
+/// Источник уведомления — доменное событие, опубликованное внутренним
+/// модулем. `category` и `severity` определяют mandatory policy и приоритет
+/// delivery. `is_mandatory=true` защищает событие от подавления
+/// preferences пользователя (§22 confirmed decisions + §4 сценарий 4).
+///
+/// `dedup_key` — опциональный ключ дедупликации в формате
+/// `<category>:<event_type>:<entity_id>` (например,
+/// `SYNC:RUN_FAILED:acc_xxx`). Вместе с tenant_id формирует окно
+/// дедупликации (§10 — 15 мин по умолчанию).
+///
+/// `payload` — произвольный контекст доменного модуля; не показывается
+/// пользователю напрямую, используется workers для форматирования
+/// сообщений (§9 step 2).
+model NotificationEvent {
+  id         String                 @id @default(uuid())
+  tenantId   String
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  category    NotificationCategory
+  severity    NotificationSeverity  @default(INFO)
+  isMandatory Boolean               @default(false)
+
+  dedup_key   String?               @db.VarChar(128)
+
+  payload     Json?
+
+  createdAt   DateTime              @default(now())
+
+  dispatches  NotificationDispatch[]
+
+  // §10 dedup window: быстрый поиск дублей по (tenant, category, dedup_key).
+  @@index([tenantId, category, createdAt])
+  @@index([tenantId, dedup_key, createdAt])
+}
+
+/// Задача доставки для одного канала (один event → N dispatch по каналам).
+/// `policy` определяет способ и время доставки; `status` отражает
+/// текущий lifecycle от QUEUED до DELIVERED/FAILED/SKIPPED.
+///
+/// `attempts` и `lastError` поддерживают retry с backoff (§15 async).
+/// `scheduledAt` — запланированное время для SCHEDULED/THROTTLED policy.
+/// `sentAt` / `deliveredAt` — временны́е метки для SLA диагностики (§18).
+model NotificationDispatch {
+  id        String                       @id @default(uuid())
+  eventId   String
+  event     NotificationEvent            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  channel   NotificationChannel
+  policy    NotificationDispatchPolicy   @default(INSTANT)
+  status    NotificationDispatchStatus   @default(QUEUED)
+
+  attempts    Int      @default(0)
+  lastError   String?
+
+  scheduledAt DateTime? @db.Timestamptz(6)
+  sentAt      DateTime? @db.Timestamptz(6)
+  deliveredAt DateTime? @db.Timestamptz(6)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Worker queue: все QUEUED задачи по каналу, отсортированные по времени.
+  @@index([channel, status, createdAt])
+  // Диагностика retry storm: dispatches с ошибками по event'у.
+  @@index([eventId, status])
+}
+
+/// Настройки уведомлений на уровне tenant (owner-managed).
+/// `channels` — JSONB: `{"email": true, "in_app": true, "telegram": false, "max": false}`.
+/// `categories` — JSONB: `{"sync": true, "billing": true, "inventory": false}`.
+/// `primaryChannel` — предпочтительный канал для неmandatory событий.
+///
+/// §10 правило: preferences не могут выключить AUTH/BILLING/SYSTEM
+/// mandatory alerts на всех каналах одновременно — enforcement на уровне
+/// service/orchestrator, а не в БД (§20 риск).
+///
+/// `timezone` денормализован из TenantSettings для delivery scheduling
+/// без join'а (§18 SCHEDULED policy).
+model NotificationPreferences {
+  tenantId       String              @id
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  channels       Json                @default("{\"email\": true, \"in_app\": true, \"telegram\": false, \"max\": false}")
+  categories     Json                @default("{\"auth\": true, \"billing\": true, \"sync\": true, \"inventory\": true, \"referral\": true, \"system\": true}")
+  primaryChannel NotificationChannel @default(IN_APP)
+
+  // digest_time зарезервирован для будущего DIGEST policy (§22: не входит в MVP).
+  digestTime     String?             @db.VarChar(8)
+  timezone       String?             @db.VarChar(64)
+
+  updatedAt      DateTime            @updatedAt
+}
+
+/// In-app inbox — личный ящик уведомлений пользователя внутри продукта.
+/// Создаётся worker'ом для канала IN_APP (§9 step 6).
+///
+/// `isRead` + `readAt` поддерживают UX read/unread и аналитику
+/// notification engagement (§7 frontend behaviour).
+///
+/// `tenantId` денормализован рядом с `userId` для row-level tenant
+/// isolation при multi-tenant queries без join через User.
+model NotificationInbox {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  message   String
+
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  // Inbox feed: последние непрочитанные per (tenant, user).
+  @@index([tenantId, userId, isRead, createdAt])
+  // Bulk mark-read по tenant (например, "пометить всё прочитанным").
+  @@index([userId, isRead])
+}
+
+/// Факт применения промокода конкретным tenant'ом в checkout.
+/// UNIQUE(promoId, tenantId) — один tenant не может применить
+/// один промокод дважды (идемпотентность apply).
+model PromoRedemption {
+  id        String    @id @default(uuid())
+  promoId   String
+  promo     PromoCode @relation(fields: [promoId], references: [id], onDelete: Cascade)
+  tenantId  String
+  appliedAt DateTime  @default(now())
+
+  @@unique([promoId, tenantId])
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Referral Audit Log (TASK_REFERRALS_5) — §19 observability.
+//
+// Персистентный audit trail для:
+//   - attribution decisions (captured / locked / rejected / fraud_review);
+//   - reward credit/skip events;
+//   - promo apply/reject events;
+//   - fraud recheck результаты.
+//
+// Fire-and-forget: ошибки записи не прерывают основной flow.
+// ─────────────────────────────────────────────────────────────────────
+model ReferralAuditLog {
+  id            String                 @id @default(uuid())
+  eventType     ReferralAuditEventType
+  attributionId String?
+  actorId       String?
+  tenantId      String?
+  ruleId        String?                @db.VarChar(64)
+  data          Json?
+  createdAt     DateTime               @default(now())
+
+  // §19: быстрый поиск аудит-событий по attribution, типу и tenant.
+  @@index([attributionId])
+  @@index([eventType, createdAt])
+  @@index([tenantId])
+}
+

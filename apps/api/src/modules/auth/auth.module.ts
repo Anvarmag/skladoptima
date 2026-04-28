@@ -8,11 +8,13 @@ import { CsrfService } from './csrf.service';
 import { CsrfGuard } from './csrf.guard';
 import { UserModule } from '../users/user.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { ReferralModule } from '../referrals/referral.module';
 
 @Module({
     imports: [
         UserModule,
         OnboardingModule,
+        ReferralModule,
         JwtModule.register({
             secret: process.env.JWT_SECRET || 'super-secret-key-change-me',
             signOptions: { expiresIn: '15m' },

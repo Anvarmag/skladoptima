@@ -19,6 +19,13 @@ import { MaxNotifierModule } from './modules/max-notifier/max-notifier.module';
 import { TenantModule } from './modules/tenants/tenant.module';
 import { TeamModule } from './modules/team/team.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { WarehousesModule } from './modules/warehouses/warehouses.module';
+import { MarketplaceAccountsModule } from './modules/marketplace-accounts/marketplace-accounts.module';
+import { SyncRunsModule } from './modules/sync-runs/sync-runs.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { ReferralModule } from './modules/referrals/referral.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 
 // Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
 // или перенесены в apps/worker.
@@ -39,6 +46,13 @@ import { OnboardingModule } from './modules/onboarding/onboarding.module';
     TenantModule,
     TeamModule,
     OnboardingModule,
+    InventoryModule,
+    WarehousesModule,
+    MarketplaceAccountsModule,
+    SyncRunsModule,
+    OrdersModule,
+    ReferralModule,
+    NotificationsModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',

@@ -82,7 +82,7 @@ export class SettingsService {
         if (dto.wbApiKey !== undefined || dto.wbWarehouseId !== undefined) {
             let wb = await this.prisma.marketplaceAccount.findFirst({ where: { tenantId, marketplace: MarketplaceType.WB } });
             if (!wb) {
-                wb = await this.prisma.marketplaceAccount.create({ data: { tenantId, marketplace: MarketplaceType.WB, name: 'Wildberries' } });
+                wb = await this.prisma.marketplaceAccount.create({ data: { tenantId, marketplace: MarketplaceType.WB, name: 'Wildberries', label: 'Wildberries' } });
             }
             await this.prisma.marketplaceAccount.update({
                 where: { id: wb.id },
@@ -98,7 +98,7 @@ export class SettingsService {
         if (dto.ozonClientId !== undefined || dto.ozonApiKey !== undefined || dto.ozonWarehouseId !== undefined) {
             let ozon = await this.prisma.marketplaceAccount.findFirst({ where: { tenantId, marketplace: MarketplaceType.OZON } });
             if (!ozon) {
-                ozon = await this.prisma.marketplaceAccount.create({ data: { tenantId, marketplace: MarketplaceType.OZON, name: 'Ozon' } });
+                ozon = await this.prisma.marketplaceAccount.create({ data: { tenantId, marketplace: MarketplaceType.OZON, name: 'Ozon', label: 'Ozon' } });
             }
             await this.prisma.marketplaceAccount.update({
                 where: { id: ozon.id },

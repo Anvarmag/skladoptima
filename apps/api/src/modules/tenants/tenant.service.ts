@@ -10,6 +10,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { TransitionAccessStateDto } from './dto/transition-access-state.dto';
 import { AccessStatePolicy } from './access-state.policy';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { ReferralAttributionService } from '../referrals/referral-attribution.service';
 
 const RETENTION_WINDOW_DAYS = 90;
 
@@ -21,6 +22,7 @@ export class TenantService {
         private readonly prisma: PrismaService,
         private readonly policy: AccessStatePolicy,
         private readonly onboardingService: OnboardingService,
+        private readonly referralAttributionService: ReferralAttributionService,
     ) {}
 
     // ─── Create ───────────────────────────────────────────────────────────────────
@@ -75,6 +77,41 @@ export class TenantService {
         });
 
         this.auditLog('tenant_created', { tenantId: tenant.id, userId, inn: dto.inn });
+
+        // TASK_REFERRALS_1 §13: lock attribution на этом tenant'е, если
+        // user пришёл по referral. Self-referral check внутри сервиса.
+        // Fire-and-forget: ошибка lock'а не должна откатывать tenant
+        // creation — bonus-механика не критична для signup. Conflict
+        // (already locked) и REJECTED статусы логируются для аудита.
+        this.referralAttributionService
+            .lockOnTenantCreation({
+                referredUserId: userId,
+                referredTenantId: tenant.id,
+            })
+            .then((res) => {
+                if (!res.skipped) {
+                    this.logger.log(
+                        JSON.stringify({
+                            event: 'referral_attribution_lock',
+                            tenantId: tenant.id,
+                            userId,
+                            attributionId: res.attributionId,
+                            status: res.status,
+                            rejectionReason: res.rejectionReason,
+                        }),
+                    );
+                }
+            })
+            .catch((err: unknown) =>
+                this.logger.warn(
+                    JSON.stringify({
+                        event: 'referral_lock_failed_soft',
+                        tenantId: tenant.id,
+                        userId,
+                        err: (err as any)?.message,
+                    }),
+                ),
+            );
 
         // T4-03: handoff — fire-and-forget, не блокируем ответ
         this.handleTenantCreatedOnboarding(userId, tenant.id).catch((err: unknown) =>

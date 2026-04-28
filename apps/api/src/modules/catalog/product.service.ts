@@ -1,10 +1,16 @@
-import { Injectable, Logger, NotFoundException, BadRequestException, OnModuleInit } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    BadRequestException,
+    ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { ActionType, Product } from '@prisma/client';
+import { ActionType, ProductStatus, ProductSourceOfTruth } from '@prisma/client';
 
 @Injectable()
 export class ProductService {
@@ -16,59 +22,99 @@ export class ProductService {
         private readonly onboardingService: OnboardingService,
     ) { }
 
-    async create(createProductDto: CreateProductDto, photoPath: string | null, actorUserId: string, tenantId: string) {
-        // Check for any product with this SKU, including deleted ones
+    // ----------------------------------------------------------------
+    // CREATE
+    // ----------------------------------------------------------------
+
+    async create(
+        dto: CreateProductDto,
+        photoPath: string | null,
+        actorEmail: string,
+        tenantId: string,
+        userId?: string,
+    ) {
         const existing = await this.prisma.product.findFirst({
-            where: { sku: createProductDto.sku, tenantId }
+            where: { sku: dto.sku, tenantId },
         });
 
-        const total = createProductDto.initialTotal ? parseInt(createProductDto.initialTotal, 10) : 0;
+        const total = dto.initialTotal ? parseInt(dto.initialTotal, 10) : 0;
 
         if (existing) {
             if (!existing.deletedAt) {
-                throw new BadRequestException('SKU already exists in your store');
+                // Активный товар с таким SKU уже есть
+                throw new ConflictException({
+                    code: 'SKU_ALREADY_EXISTS',
+                    message: 'SKU already exists in your store',
+                });
             }
-            // If it was deleted, "restore" it with new data
+
+            // Soft-deleted товар — требуем явного подтверждения
+            if (!dto.confirmRestoreId) {
+                throw new ConflictException({
+                    code: 'SKU_SOFT_DELETED',
+                    message: 'A deleted product with this SKU exists. Pass confirmRestoreId to restore it with the new data.',
+                    deletedProductId: existing.id,
+                });
+            }
+
+            if (dto.confirmRestoreId !== existing.id) {
+                throw new BadRequestException({
+                    code: 'CONFIRM_RESTORE_ID_MISMATCH',
+                    message: 'confirmRestoreId does not match the deleted product',
+                });
+            }
+
+            // Явное подтверждение — восстанавливаем с новыми данными
             const product = await this.prisma.product.update({
                 where: { id: existing.id },
                 data: {
-                    name: createProductDto.name,
-                    photo: photoPath || existing.photo,
+                    name: dto.name,
+                    photo: photoPath ?? existing.photo,
                     total,
                     reserved: 0,
-                    wbBarcode: createProductDto.wbBarcode || null,
-                    deletedAt: null, // RESTORE
+                    wbBarcode: dto.wbBarcode ?? null,
+                    brand: dto.brand ?? existing.brand,
+                    barcode: dto.barcode ?? existing.barcode,
+                    mainImageFileId: dto.mainImageFileId ?? existing.mainImageFileId,
+                    deletedAt: null,
+                    status: ProductStatus.ACTIVE,
+                    sourceOfTruth: ProductSourceOfTruth.MANUAL,
+                    updatedBy: userId ?? null,
                 },
             });
 
             await this.auditService.logAction({
-                actionType: ActionType.PRODUCT_CREATED,
+                actionType: ActionType.PRODUCT_RESTORED,
                 productId: product.id,
                 productSku: product.sku,
                 afterTotal: product.total,
                 afterName: product.name,
-                actorUserId,
-                note: 'Product restored after soft-delete',
+                actorUserId: actorEmail,
+                note: 'Restored via create with confirmRestoreId',
                 tenantId,
             });
 
-            // T4-04: domain event — первый товар завершает шаг add_products
-            this.onboardingService.markStepDone('TENANT_ACTIVATION', tenantId, 'add_products', 'domain_event').catch((err: unknown) =>
-                this.logger.warn(JSON.stringify({ event: 'onboarding_step_update_failed', stepKey: 'add_products', err: (err as any)?.message })),
-            );
-
+            this._triggerOnboardingAddProducts(tenantId);
             return product;
         }
 
+        // Новый товар
         const product = await this.prisma.product.create({
             data: {
-                sku: createProductDto.sku,
-                name: createProductDto.name,
+                sku: dto.sku,
+                name: dto.name,
                 photo: photoPath,
                 total,
                 reserved: 0,
-                wbBarcode: createProductDto.wbBarcode || null,
-                tenantId: tenantId,
+                wbBarcode: dto.wbBarcode ?? null,
+                brand: dto.brand ?? null,
+                barcode: dto.barcode ?? null,
+                mainImageFileId: dto.mainImageFileId ?? null,
+                tenantId,
+                status: ProductStatus.ACTIVE,
+                sourceOfTruth: ProductSourceOfTruth.MANUAL,
+                createdBy: userId ?? null,
+                updatedBy: userId ?? null,
             },
         });
 
@@ -78,30 +124,36 @@ export class ProductService {
             productSku: product.sku,
             afterTotal: product.total,
             afterName: product.name,
-            actorUserId,
+            actorUserId: actorEmail,
             tenantId,
         });
 
-        // T4-04: domain event — первый товар завершает шаг add_products
-        this.onboardingService.markStepDone('TENANT_ACTIVATION', tenantId, 'add_products', 'domain_event').catch((err: unknown) =>
-            this.logger.warn(JSON.stringify({ event: 'onboarding_step_update_failed', stepKey: 'add_products', err: (err as any)?.message })),
-        );
-
+        this._triggerOnboardingAddProducts(tenantId);
         return product;
     }
 
-    async findAll(tenantId: string, page = 1, limit = 20, search?: string) {
+    // ----------------------------------------------------------------
+    // LIST
+    // ----------------------------------------------------------------
+
+    async findAll(tenantId: string, page = 1, limit = 20, search?: string, status?: string) {
         const skip = (page - 1) * limit;
 
-        const where: any = {
-            tenantId,
-            deletedAt: null,
-        };
+        const where: any = { tenantId };
+
+        if (status === 'deleted') {
+            where.status = ProductStatus.DELETED;
+            where.deletedAt = { not: null };
+        } else {
+            where.status = ProductStatus.ACTIVE;
+            where.deletedAt = null;
+        }
 
         if (search) {
             where.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
                 { sku: { contains: search, mode: 'insensitive' } },
+                { brand: { contains: search, mode: 'insensitive' } },
             ];
         }
 
@@ -125,50 +177,71 @@ export class ProductService {
         };
     }
 
-    async findOne(id: string, tenantId: string) {
-        const product = await this.prisma.product.findUnique({
-            where: { id }
-        });
+    // ----------------------------------------------------------------
+    // DETAIL
+    // ----------------------------------------------------------------
 
-        if (!product || product.tenantId !== tenantId || product.deletedAt) {
-            throw new NotFoundException('Product not found or access denied');
+    async findOne(id: string, tenantId: string, includeDeleted = false) {
+        const product = await this.prisma.product.findUnique({ where: { id } });
+
+        if (!product || product.tenantId !== tenantId) {
+            throw new NotFoundException({ code: 'PRODUCT_NOT_FOUND' });
         }
 
-        return {
-            ...product,
-            available: Math.max(0, product.total),
-        };
+        if (!includeDeleted && product.deletedAt) {
+            throw new NotFoundException({ code: 'PRODUCT_NOT_FOUND' });
+        }
+
+        return { ...product, available: Math.max(0, product.total) };
     }
 
-    async update(id: string, updateDto: UpdateProductDto, photoPath: string | null, actorUserId: string, tenantId: string) {
+    // ----------------------------------------------------------------
+    // UPDATE (PATCH)
+    // ----------------------------------------------------------------
+
+    async update(
+        id: string,
+        dto: UpdateProductDto,
+        photoPath: string | null,
+        actorEmail: string,
+        tenantId: string,
+        userId?: string,
+    ) {
         const product = await this.findOne(id, tenantId);
 
-        if (updateDto.sku && updateDto.sku !== product.sku) {
+        if (dto.sku && dto.sku !== product.sku) {
             const existingSku = await this.prisma.product.findFirst({
-                where: { sku: updateDto.sku, tenantId }
+                where: { sku: dto.sku, tenantId },
             });
-            if (existingSku) throw new BadRequestException('SKU already exists in your store');
+            if (existingSku) {
+                throw new ConflictException({ code: 'SKU_ALREADY_EXISTS', message: 'SKU already exists in your store' });
+            }
         }
 
         const updated = await this.prisma.product.update({
             where: { id },
             data: {
-                sku: updateDto.sku ?? product.sku,
-                name: updateDto.name ?? product.name,
-                wbBarcode: updateDto.wbBarcode !== undefined ? (updateDto.wbBarcode || null) : product.wbBarcode,
+                ...(dto.sku !== undefined && { sku: dto.sku }),
+                ...(dto.name !== undefined && { name: dto.name }),
+                ...(dto.brand !== undefined && { brand: dto.brand || null }),
+                ...(dto.barcode !== undefined && { barcode: dto.barcode || null }),
+                ...(dto.wbBarcode !== undefined && { wbBarcode: dto.wbBarcode || null }),
                 ...(photoPath && { photo: photoPath }),
-                ...(updateDto.ozonFbs !== undefined && { ozonFbs: updateDto.ozonFbs }),
-                ...(updateDto.ozonFbo !== undefined && { ozonFbo: updateDto.ozonFbo }),
-                ...(updateDto.wbFbs !== undefined && { wbFbs: updateDto.wbFbs }),
-                ...(updateDto.wbFbo !== undefined && { wbFbo: updateDto.wbFbo }),
-                ...(updateDto.purchasePrice !== undefined && { purchasePrice: updateDto.purchasePrice }),
-                ...(updateDto.commissionRate !== undefined && { commissionRate: updateDto.commissionRate }),
-                ...(updateDto.logisticsCost !== undefined && { logisticsCost: updateDto.logisticsCost }),
-                ...(updateDto.category !== undefined && { category: updateDto.category }),
-                ...(updateDto.width !== undefined && { width: updateDto.width }),
-                ...(updateDto.height !== undefined && { height: updateDto.height }),
-                ...(updateDto.length !== undefined && { length: updateDto.length }),
-                ...(updateDto.weight !== undefined && { weight: updateDto.weight }),
+                ...(dto.mainImageFileId !== undefined && { mainImageFileId: dto.mainImageFileId || null }),
+                ...(dto.ozonFbs !== undefined && { ozonFbs: dto.ozonFbs }),
+                ...(dto.ozonFbo !== undefined && { ozonFbo: dto.ozonFbo }),
+                ...(dto.wbFbs !== undefined && { wbFbs: dto.wbFbs }),
+                ...(dto.wbFbo !== undefined && { wbFbo: dto.wbFbo }),
+                ...(dto.purchasePrice !== undefined && { purchasePrice: dto.purchasePrice }),
+                ...(dto.commissionRate !== undefined && { commissionRate: dto.commissionRate }),
+                ...(dto.logisticsCost !== undefined && { logisticsCost: dto.logisticsCost }),
+                ...(dto.category !== undefined && { category: dto.category }),
+                ...(dto.width !== undefined && { width: dto.width }),
+                ...(dto.height !== undefined && { height: dto.height }),
+                ...(dto.length !== undefined && { length: dto.length }),
+                ...(dto.weight !== undefined && { weight: dto.weight }),
+                sourceOfTruth: ProductSourceOfTruth.MANUAL,
+                updatedBy: userId ?? null,
             },
         });
 
@@ -178,19 +251,83 @@ export class ProductService {
             productSku: updated.sku,
             beforeName: product.name,
             afterName: updated.name,
-            actorUserId,
+            actorUserId: actorEmail,
             tenantId,
         });
 
-        return updated;
+        return { ...updated, available: Math.max(0, updated.total) };
     }
 
-    async adjustStock(id: string, delta: number, actorUserId: string, tenantId: string, note?: string) {
+    // ----------------------------------------------------------------
+    // SOFT DELETE
+    // ----------------------------------------------------------------
+
+    async remove(id: string, actorEmail: string, tenantId: string, userId?: string) {
+        const product = await this.findOne(id, tenantId);
+
+        await this.prisma.product.update({
+            where: { id },
+            data: {
+                deletedAt: new Date(),
+                status: ProductStatus.DELETED,
+                updatedBy: userId ?? null,
+            },
+        });
+
+        await this.auditService.logAction({
+            actionType: ActionType.PRODUCT_DELETED,
+            productId: product.id,
+            productSku: product.sku,
+            actorUserId: actorEmail,
+            tenantId,
+        });
+
+        return { message: 'Product deleted successfully' };
+    }
+
+    // ----------------------------------------------------------------
+    // RESTORE
+    // ----------------------------------------------------------------
+
+    async restore(id: string, actorEmail: string, tenantId: string, userId?: string) {
+        // includeDeleted=true чтобы найти архивированный товар
+        const product = await this.findOne(id, tenantId, true);
+
+        if (!product.deletedAt) {
+            throw new ConflictException({ code: 'PRODUCT_ALREADY_ACTIVE', message: 'Product is not deleted' });
+        }
+
+        const restored = await this.prisma.product.update({
+            where: { id },
+            data: {
+                deletedAt: null,
+                status: ProductStatus.ACTIVE,
+                updatedBy: userId ?? null,
+            },
+        });
+
+        await this.auditService.logAction({
+            actionType: ActionType.PRODUCT_RESTORED,
+            productId: restored.id,
+            productSku: restored.sku,
+            afterName: restored.name,
+            actorUserId: actorEmail,
+            tenantId,
+        });
+
+        return { ...restored, available: Math.max(0, restored.total) };
+    }
+
+    // ----------------------------------------------------------------
+    // STOCK ADJUST
+    // ----------------------------------------------------------------
+
+    async adjustStock(id: string, delta: number, actorEmail: string, tenantId: string, note?: string) {
         const product = await this.findOne(id, tenantId);
         const afterTotal = product.total + delta;
 
         if (afterTotal < 0) {
-            throw new BadRequestException('Total stock cannot be negative');
+            throw new BadRequestException({ code: 'STOCK_CANNOT_BE_NEGATIVE', message: 'Total stock cannot be negative' });
         }
 
         const updated = await this.prisma.product.update({
@@ -205,52 +342,60 @@ export class ProductService {
             beforeTotal: product.total,
             afterTotal: updated.total,
             delta,
-            actorUserId,
+            actorUserId: actorEmail,
             note,
             tenantId,
         });
 
-        return updated;
+        return { ...updated, available: Math.max(0, updated.total) };
     }
 
-    async remove(id: string, actorUserId: string, tenantId: string) {
-        const product = await this.findOne(id, tenantId);
+    // ----------------------------------------------------------------
+    // IMPORT FROM WB (legacy)
+    // ----------------------------------------------------------------
 
-        await this.prisma.product.update({
-            where: { id },
-            data: { deletedAt: new Date() },
-        });
-
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_DELETED,
-            productId: product.id,
-            productSku: product.sku,
-            actorUserId,
-            tenantId,
-        });
-
-        return { message: 'Product deleted successfully' };
-    }
-
-    async importFromWb(items: Array<{ sku: string; name: string; wbBarcode?: string }>, actorUserId: string, tenantId: string) {
+    async importFromWb(
+        items: Array<{ sku: string; name: string; wbBarcode?: string }>,
+        actorEmail: string,
+        tenantId: string,
+        userId?: string,
+    ) {
         let created = 0;
         let updatedCount = 0;
+        let skipped = 0;
 
         for (const item of items) {
             if (!item.sku) continue;
 
             const existing = await this.prisma.product.findFirst({
-                where: { sku: item.sku, tenantId }
+                where: { sku: item.sku, tenantId },
             });
 
             if (existing) {
+                // Source-of-change policy: sync-layer не должен перезаписывать
+                // товары, которые управляются вручную (MANUAL) или через structured
+                // import (IMPORT). Обновляем только SYNC-управляемые продукты.
+                if (existing.sourceOfTruth !== ProductSourceOfTruth.SYNC) {
+                    this.logger.warn(JSON.stringify({
+                        event: 'sync_source_conflict_skipped',
+                        sku: item.sku,
+                        existingSourceOfTruth: existing.sourceOfTruth,
+                        tenantId,
+                    }));
+                    skipped++;
+                    continue;
+                }
+
                 await this.prisma.product.update({
                     where: { id: existing.id },
                     data: {
                         name: item.name || existing.name,
                         wbBarcode: item.wbBarcode || existing.wbBarcode,
-                        deletedAt: null // Always restore on import if found
-                    }
+                        deletedAt: null,
+                        status: ProductStatus.ACTIVE,
+                        sourceOfTruth: ProductSourceOfTruth.SYNC,
+                        updatedBy: userId ?? null,
+                    },
                 });
                 updatedCount++;
             } else {
@@ -258,16 +403,36 @@ export class ProductService {
                     data: {
                         sku: item.sku,
                         name: item.name || item.sku,
-                        wbBarcode: item.wbBarcode || null,
+                        wbBarcode: item.wbBarcode ?? null,
                         total: 0,
                         reserved: 0,
-                        tenantId: tenantId,
-                    }
+                        tenantId,
+                        status: ProductStatus.ACTIVE,
+                        sourceOfTruth: ProductSourceOfTruth.SYNC,
+                        createdBy: userId ?? null,
+                        updatedBy: userId ?? null,
+                    },
                 });
                 created++;
             }
         }
 
-        return { success: true, created, updated: updatedCount };
+        return { success: true, created, updated: updatedCount, skipped };
+    }
+
+    // ----------------------------------------------------------------
+    // PRIVATE
+    // ----------------------------------------------------------------
+
+    private _triggerOnboardingAddProducts(tenantId: string): void {
+        this.onboardingService
+            .markStepDone('TENANT_ACTIVATION', tenantId, 'add_products', 'domain_event')
+            .catch((err: unknown) =>
+                this.logger.warn(JSON.stringify({
+                    event: 'onboarding_step_update_failed',
+                    stepKey: 'add_products',
+                    err: (err as any)?.message,
+                })),
+            );
     }
 }

@@ -1,7 +1,7 @@
 # Аудит и история — Системная аналитика
 
-> Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Статус: [x] В разработке
+> Последнее обновление: 2026-04-28
 > Связанный раздел: `16-audit`
 
 ## 1. Назначение модуля
@@ -170,7 +170,7 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 
 ## 11. Чеклист реализации
 
-- [ ] Таблицы `audit_logs`, `security_events`.
+- [x] Таблицы `audit_logs`, `security_events`. _(TASK_AUDIT_1)_
 - [ ] Унифицированный internal audit writer.
 - [ ] Ролевой доступ к просмотру аудита.
 - [ ] Интеграция с support actions и auth.
@@ -291,10 +291,10 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 
 ## 24. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
+- [x] Текущее и целевое состояние раздела зафиксированы.
 - [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] Async-процессы, observability и тестовая матрица описаны.
-- [ ] Риски, ограничения и rollout-порядок зафиксированы.
+- [x] Async-процессы, observability и тестовая матрица описаны.
+- [x] Риски, ограничения и rollout-порядок зафиксированы.
 
 ## 25. История изменений
 
@@ -303,3 +303,4 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены MVP event catalog, redaction policy, access-state rules и открытые решения по retention/before-after | Codex |
 | 2026-04-18 | Зафиксированы confirmed decisions по scope audit events, before/after policy и retention window | Codex |
+| 2026-04-28 | TASK_AUDIT_1: data model реализован — новые enums, расширена AuditLog, создана SecurityEvent, миграция, TypeScript event catalog, AuditService.writeEvent() | Claude |

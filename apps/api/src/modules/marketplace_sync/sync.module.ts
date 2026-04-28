@@ -2,9 +2,17 @@ import { Module } from '@nestjs/common';
 import { SyncService } from './sync.service';
 import { SyncController } from './sync.controller';
 import { PrismaModule } from '../../prisma/prisma.module';
+import { SyncRunsModule } from '../sync-runs/sync-runs.module';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
-    imports: [PrismaModule],
+    // SyncRunsModule поставляет SyncPreflightService — единый policy guard
+    // для legacy poll loop и manual API (TASK_SYNC_3).
+    // OrdersModule поставляет OrdersIngestionService — dual-write адаптер
+    // в новый orders domain (TASK_ORDERS_2). Legacy `MarketplaceOrder`
+    // продолжает писаться рядом до TASK_ORDERS_5+ (когда читатели
+    // переключатся на доменную модель).
+    imports: [PrismaModule, SyncRunsModule, OrdersModule],
     providers: [SyncService],
     controllers: [SyncController],
     exports: [SyncService],

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, Min } from 'class-validator';
+import { IsString, IsOptional, IsNumber, IsUUID, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class UpdateProductDto {
@@ -12,7 +12,19 @@ export class UpdateProductDto {
 
     @IsString()
     @IsOptional()
+    brand?: string;
+
+    @IsString()
+    @IsOptional()
+    barcode?: string;
+
+    @IsString()
+    @IsOptional()
     wbBarcode?: string;
+
+    @IsUUID()
+    @IsOptional()
+    mainImageFileId?: string;
 
     @IsNumber()
     @IsOptional()

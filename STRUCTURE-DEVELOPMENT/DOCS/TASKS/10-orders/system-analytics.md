@@ -1,7 +1,7 @@
 # Заказы — Системная аналитика
 
 > Статус: [x] На review
-> Последнее обновление: 2026-04-18
+> Последнее обновление: 2026-04-26
 > Связанный раздел: `10-orders`
 
 ## 1. Назначение модуля
@@ -123,8 +123,8 @@ curl -X GET '/api/v1/orders?marketplace=WB&fulfillmentMode=FBS&status=reserved&p
 
 ### Frontend поведение
 
-- Текущее состояние: маршрут `/app/orders` уже существует и закрывает базовый интерфейс просмотра заказов.
-- Целевое состояние: нужны детальная карточка, timeline, фильтры по состояниям и объяснение side effects на остатки.
+- Текущее состояние: маршрут `/app/orders` переписан под доменный `/api/orders` (TASK_ORDERS_6) — список с 5 фильтрами + KPI tiles + drawer с timeline и кнопкой reprocess; legacy `/sync/orders/poll` и axios-вызовы во внешний API из UI удалены.
+- Целевое состояние: нужны детальная карточка, timeline, фильтры по состояниям и объяснение side effects на остатки. _Реализовано в TASK_ORDERS_6._
 - UX-правило: пользователь должен видеть внутренний статус заказа, а не только внешний marketplace status.
 - UI должен явно показывать, влияет ли заказ на stock и применился ли side-effect успешно.
 - В MVP для FBS operational flow достаточно статусов `RESERVED / CANCELLED / FULFILLED`; промежуточные `PACKED / SHIPPED` не выводятся как отдельные внутренние статусы.
@@ -192,11 +192,11 @@ curl -X GET '/api/v1/orders?marketplace=WB&fulfillmentMode=FBS&status=reserved&p
 
 ## 11. Чеклист реализации
 
-- [ ] Таблицы orders/items/events.
-- [ ] Idempotent ingestion use-case.
-- [ ] Маппинг external->internal статусов.
-- [ ] Связка с inventory service.
-- [ ] API list/details/timeline.
+- [x] Таблицы orders/items/events. _(TASK_ORDERS_1 — миграция `20260426130000_orders_data_model`)_
+- [x] Idempotent ingestion use-case. _(TASK_ORDERS_2 — `OrdersIngestionService` + dual-write из `sync.service`)_
+- [x] Маппинг external->internal статусов. _(TASK_ORDERS_3 — `OrderStatusMapperService` + state machine guard в ingestion)_
+- [x] Связка с inventory service. _(TASK_ORDERS_4 — `OrderInventoryEffectsService`: reserve/release/deduct/logReturn по FBS transitions, FBO display-only, scope guard §14)_
+- [x] API list/details/timeline. _(TASK_ORDERS_5 — `OrdersController` + `OrdersReadService` + safe reprocess Owner/Admin)_
 
 ## 12. Критерии готовности (DoD)
 
@@ -317,3 +317,10 @@ curl -X GET '/api/v1/orders?marketplace=WB&fulfillmentMode=FBS&status=reserved&p
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены tenant/account guards, provenance order events, warehouse scope и открытые решения по critical statuses/returns policy | Codex |
 | 2026-04-18 | Подтверждены MVP-critical FBS статусы и disabled auto-restock по return events | Codex |
+| 2026-04-26 | TASK_ORDERS_1: data model `Order/OrderItem/OrderEvent` + 5 enum-ов, DB-level idempotency через `UNIQUE(tenantId, marketplaceAccountId, externalEventId)`, provenance через `marketplaceAccountId`/`syncRunId`. Legacy `MarketplaceOrder` сохранён для обратной совместимости sync.service. | Anvar |
+| 2026-04-26 | TASK_ORDERS_2: `OrdersIngestionService` (idempotent ingestion + duplicate/out-of-order detection + preflight policy guard через `SyncPreflightService`). Dual-write встроен в `processWbOrders/processOzonOrders`. Прямой polling из orders API запрещён структурно — модуль не имеет controller'а. | Anvar |
+| 2026-04-26 | TASK_ORDERS_3: `OrderStatusMapperService` с WB/Ozon dictionaries и state machine guard. Терминальные статусы защищены от silent overwrite, INTERMEDIATE (PACKED/SHIPPED/unknown) не меняют lifecycle. Семантические OrderEvent (RESERVED/RESERVE_RELEASED/DEDUCTED) пишутся при transition — источник для inventory side-effects в TASK_ORDERS_4. | Anvar |
+| 2026-04-26 | TASK_ORDERS_4: `OrderInventoryEffectsService` с маппингом FBS transitions → `inventory.reserve/release/deduct/logReturn`, стабильный `sourceEventId=order:<id>:<effect>`. Scope guard §14 (UNRESOLVED_SCOPE → FAILED без silent reserve). FBO/return policy: display-only + audit без auto-restock. Inventory call вынесен ЗА транзакцию ingestion'а. | Anvar |
+| 2026-04-26 | TASK_ORDERS_5: REST API `/api/v1/orders` (list/detail/timeline + reprocess). `OrdersReadService` с фильтрами (marketplace/fulfillmentMode/internalStatus/stockEffectStatus). `OrdersReprocessService` с role gating Owner/Admin, preflight policy guard, idempotent re-apply через тот же sourceEventId. Никаких внешних API-вызовов из orders REST-слоя. | Anvar |
+| 2026-04-26 | TASK_ORDERS_6: фронтенд `/app/orders` переписан под доменный `/api/orders`. Фильтры по 4 осям, KPI tiles, drawer с stock-effect объяснениями + items + timeline по 9 типам OrderEvent + кнопка reprocess. Paused integration banner для TRIAL_EXPIRED/SUSPENDED/CLOSED. Удалены legacy `/sync/orders/poll` и прямой fetch деталей с маркетплейсов из UI. | Anvar |
+| 2026-04-26 | TASK_ORDERS_7: 4 unit-spec'а (status-mapper / ingestion / inventory-effects / metrics) — 48 проходящих тестов, покрывают всю §16 матрицу. `OrdersMetricsRegistry` с 8 метриками §19 (ingested/duplicate/out_of_order/status_mapping_failures/unmatched_sku_orders/side_effect_failures/blocked_by_tenant/processing_latency_ms p50/p95). Metrics инструментированы в `OrdersIngestionService.ingest()` через observeAndReturn-обёртку. | Anvar |

@@ -3,6 +3,8 @@ import { ConflictException, ForbiddenException, NotFoundException, Logger } from
 import { TenantService } from './tenant.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccessStatePolicy } from './access-state.policy';
+import { OnboardingService } from '../onboarding/onboarding.service';
+import { ReferralAttributionService } from '../referrals/referral-attribution.service';
 
 // ─── Prisma mock factory ──────────────────────────────────────────────────────
 
@@ -98,6 +100,24 @@ describe('TenantService', () => {
                 TenantService,
                 AccessStatePolicy,
                 { provide: PrismaService, useValue: prisma },
+                {
+                    provide: OnboardingService,
+                    useValue: {
+                        markStepDone: jest.fn().mockResolvedValue(undefined),
+                        initTenantActivation: jest.fn().mockResolvedValue(undefined),
+                    },
+                },
+                {
+                    // TASK_REFERRALS_1: stub — fire-and-forget, не должен
+                    // ронять tenant.create.
+                    provide: ReferralAttributionService,
+                    useValue: {
+                        lockOnTenantCreation: jest.fn().mockResolvedValue({
+                            locked: false, attributionId: null,
+                            status: 'ATTRIBUTED', rejectionReason: null, skipped: true,
+                        }),
+                    },
+                },
             ],
         }).compile();
 

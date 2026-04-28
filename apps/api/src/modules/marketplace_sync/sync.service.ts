@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ActionType } from '@prisma/client';
+import { ActionType, MarketplaceType, OrderFulfillmentMode } from '@prisma/client';
 import axios, { AxiosError } from 'axios';
+import { SyncPreflightService } from '../sync-runs/sync-preflight.service';
+import { OrdersIngestionService } from '../orders/orders-ingestion.service';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
@@ -11,7 +13,18 @@ export class SyncService implements OnModuleInit {
     private lastPush = new Map<string, { wb?: number, ozon?: number }>();
     private readonly COOLDOWN_MS = 2 * 60_000; // 2 минуты "режима тишины"
 
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+        // TASK_SYNC_3: shared preflight для tenant/account/credentials policy.
+        // Было: inline `_isTenantPaused` без проверки lifecycle/credentials и
+        // без structured-лога. Стало: единый policy guard, общий с manual API.
+        private readonly preflight: SyncPreflightService,
+        // TASK_ORDERS_2: dual-write в новый orders domain. Legacy
+        // `MarketplaceOrder` остаётся (читатели ещё не переключены), но
+        // каждый order event теперь дополнительно проходит идемпотентный
+        // ingestion в `Order/OrderItem/OrderEvent`.
+        private readonly ordersIngestion: OrdersIngestionService,
+    ) { }
 
     async onModuleInit() {
         if (process.env.IS_WORKER !== 'true') {
@@ -43,20 +56,69 @@ export class SyncService implements OnModuleInit {
     }
 
     async syncStore(tenantId: string) {
-        const wbResult: any = await this.pullFromWb(tenantId);
-        if (wbResult.updated > 0) {
-            this.logger.log(`[Store ${tenantId}] WB FBS pull: updated ${wbResult.updated} products`);
+        // TASK_SYNC_3: preflight на уровне tenant'а (без attached account).
+        // Если tenant в TRIAL_EXPIRED/SUSPENDED/CLOSED — все внешние API
+        // calls приостанавливаются.
+        const tenantDecision = await this.preflight.runPreflight(tenantId, null, {
+            operation: 'scheduled_poll',
+            checkConcurrency: false,
+        });
+        if (!tenantDecision.allowed) {
+            return { success: false, paused: true, reason: tenantDecision.reason };
         }
 
-        this.logger.log(`Starting scheduled sync for Store ${tenantId}`);
-        await this.pullFromWb(tenantId);
-        await this.pullFromOzon(tenantId);
-        await this.processWbOrders(tenantId);
-        await this.processOzonOrders(tenantId);
+        // Per-account preflight: проверяем lifecycleStatus/credentialStatus
+        // для каждого active marketplace account. Если хотя бы один аккаунт
+        // прошёл — этот канал работает; остальные тихо пропускаем.
+        const accounts = await this.prisma.marketplaceAccount.findMany({
+            where: { tenantId, lifecycleStatus: 'ACTIVE' },
+            select: { id: true, marketplace: true, credentialStatus: true },
+        });
+
+        const allowedMarketplaces = new Set<string>();
+        for (const acc of accounts) {
+            const decision = await this.preflight.runPreflight(tenantId, acc.id, {
+                operation: 'scheduled_poll',
+                checkConcurrency: false,
+            });
+            if (decision.allowed) {
+                allowedMarketplaces.add(acc.marketplace);
+            }
+        }
+
+        if (allowedMarketplaces.size === 0) {
+            return { success: false, paused: true, reason: 'NO_ELIGIBLE_ACCOUNTS' };
+        }
+
+        this.logger.log(`Starting scheduled sync for Store ${tenantId} (allowed: ${[...allowedMarketplaces].join(',')})`);
+
+        if (allowedMarketplaces.has('WB')) {
+            const wbResult: any = await this.pullFromWb(tenantId);
+            if (wbResult?.updated > 0) {
+                this.logger.log(`[Store ${tenantId}] WB FBS pull: updated ${wbResult.updated} products`);
+            }
+            await this.processWbOrders(tenantId);
+        }
+        if (allowedMarketplaces.has('OZON')) {
+            await this.pullFromOzon(tenantId);
+            await this.processOzonOrders(tenantId);
+        }
         await this.syncProductMetadata(tenantId, false);
     }
 
     async fullSync(tenantId: string) {
+        const decision = await this.preflight.runPreflight(tenantId, null, {
+            operation: 'full_sync',
+            checkConcurrency: false,
+        });
+        if (!decision.allowed) {
+            return {
+                success: false,
+                paused: true,
+                reason: decision.reason,
+                message: 'Marketplace integrations blocked by policy',
+            };
+        }
         this.logger.log(`[Store ${tenantId}] Starting FULL SYNC...`);
         try {
             // 0. Discovery (Import new products first)
@@ -203,6 +265,19 @@ export class SyncService implements OnModuleInit {
 
     // ─── Push one product to marketplaces ──────────────────────────────────────
     async syncProductToMarketplaces(productId: string, tenantId: string) {
+        const decision = await this.preflight.runPreflight(tenantId, null, {
+            operation: 'product_push',
+            checkConcurrency: false,
+        });
+        if (!decision.allowed) {
+            return {
+                success: false,
+                paused: true,
+                reason: decision.reason,
+                message: 'Marketplace push blocked by policy',
+            };
+        }
+
         const settings = await this.getSettings(tenantId);
         if (!settings) return { success: false, error: 'Settings not configured' };
 
@@ -213,8 +288,17 @@ export class SyncService implements OnModuleInit {
             return { success: false, error: 'Product not found or access denied' };
         }
 
-        // available - это то, что мы физически можем продать прямо сейчас
-        const available = Math.max(0, product.total);
+        // available — effective qty в управляемом FBS-контуре. По §15 push
+        // должен использовать только StockBalance (isExternal=false), но в MVP
+        // StockBalance заполняется лениво при первой adjustment'е, поэтому
+        // фоллбек на Product.total - reserved сохраняет совместимость.
+        const balances = await this.prisma.stockBalance.findMany({
+            where: { tenantId, productId: product.id, isExternal: false },
+            select: { available: true },
+        });
+        const available = balances.length > 0
+            ? balances.reduce((s, b) => s + Math.max(0, b.available), 0)
+            : Math.max(0, product.total - product.reserved);
 
         const [wb, ozon] = await Promise.all([
             this.syncToWb(settings, product, available),
@@ -573,6 +657,14 @@ export class SyncService implements OnModuleInit {
         const settings = await this.getSettings(tenantId);
         if (!settings?.wbApiKey) return;
 
+        // TASK_ORDERS_2: account id для provenance в `Order.marketplaceAccountId`.
+        // Если по какой-то причине аккаунт исчез между preflight и сюда — пропускаем
+        // dual-write в orders domain, но legacy `MarketplaceOrder` всё равно работает.
+        const wbAccount = await this.prisma.marketplaceAccount.findFirst({
+            where: { tenantId, marketplace: MarketplaceType.WB, lifecycleStatus: 'ACTIVE' },
+            select: { id: true },
+        });
+
         try {
             const res = await axios.get('https://marketplace-api.wildberries.ru/api/v3/orders/new', {
                 headers: { Authorization: settings.wbApiKey },
@@ -646,7 +738,7 @@ export class SyncService implements OnModuleInit {
                     }
                 });
 
-                // 3. Запоминаем заказ
+                // 3. Запоминаем заказ (legacy)
                 await this.prisma.marketplaceOrder.create({
                     data: {
                         marketplaceOrderId: orderId,
@@ -662,6 +754,39 @@ export class SyncService implements OnModuleInit {
                     }
                 });
 
+                // 3b. TASK_ORDERS_2: dual-write в новый orders domain.
+                // external_event_id для нового заказа стабилен в рамках
+                // /orders/new feed: пока заказ не сменил статус, WB
+                // возвращает тот же id. Используем `wb_<id>@new` как
+                // ключ идемпотентности.
+                if (wbAccount) {
+                    const occurredAt = order.createdAt ? new Date(order.createdAt) : new Date();
+                    const result = await this.ordersIngestion.ingest({
+                        tenantId,
+                        marketplaceAccountId: wbAccount.id,
+                        marketplace: MarketplaceType.WB,
+                        marketplaceOrderId: orderId,
+                        externalEventId: `wb_${orderId}@new`,
+                        externalStatus: 'new',
+                        fulfillmentMode: OrderFulfillmentMode.FBS,
+                        occurredAt,
+                        orderCreatedAt: occurredAt,
+                        items: [{
+                            productId: product.id,
+                            sku: product.sku,
+                            name: product.name,
+                            quantity: qty,
+                            price: order.price ? order.price / 100 : null,
+                        }],
+                        payload: { rawOrderId: orderId },
+                    });
+                    if (result.outcome === 'BLOCKED_BY_POLICY' || result.outcome === 'FAILED') {
+                        this.logger.warn(
+                            `[Store ${tenantId}] [WB Order] orders-domain ingest result=${result.outcome}`,
+                        );
+                    }
+                }
+
                 this.logger.log(`[Store ${tenantId}] [WB Order] Processed #${orderId}, SKU: ${product.sku}, Qty: ${qty}`);
 
                 // 4. Сразу пушим новый остаток
@@ -675,6 +800,12 @@ export class SyncService implements OnModuleInit {
     async processOzonOrders(tenantId: string) {
         const settings = await this.getSettings(tenantId);
         if (!settings?.ozonApiKey || !settings?.ozonClientId) return;
+
+        // TASK_ORDERS_2: account для provenance в orders domain.
+        const ozonAccount = await this.prisma.marketplaceAccount.findFirst({
+            where: { tenantId, marketplace: MarketplaceType.OZON, lifecycleStatus: 'ACTIVE' },
+            select: { id: true },
+        });
 
         try {
             const now = new Date();
@@ -700,6 +831,17 @@ export class SyncService implements OnModuleInit {
             for (const posting of postings) {
                 const postingNumber = posting.posting_number;
 
+                // TASK_ORDERS_2: подготовим input для orders-domain ingestion.
+                // external_event_id привязан к статусу posting'а: для одного
+                // и того же статуса повторная доставка дедуплицируется по
+                // UNIQUE на OrderEvent. Смена статуса даст новый event id.
+                const ingestItems = (posting.products ?? []).map((p: any) => ({
+                    sku: p.offer_id,
+                    name: p.name,
+                    quantity: p.quantity,
+                    price: p.price ? parseFloat(p.price) : null,
+                }));
+
                 const existing = await this.prisma.marketplaceOrder.findFirst({
                     where: { marketplaceOrderId: postingNumber, tenantId }
                 });
@@ -713,6 +855,25 @@ export class SyncService implements OnModuleInit {
                             where: { id: existing.id },
                             data: { status: posting.status }
                         });
+
+                        // TASK_ORDERS_2: dual-write status_changed в orders domain.
+                        // Идемпотентность: external_event_id привязан к новому
+                        // статусу — повторная доставка того же status_change
+                        // отбьётся UNIQUE и станет DUPLICATE_IGNORED.
+                        if (ozonAccount) {
+                            await this.ordersIngestion.ingest({
+                                tenantId,
+                                marketplaceAccountId: ozonAccount.id,
+                                marketplace: MarketplaceType.OZON,
+                                marketplaceOrderId: postingNumber,
+                                externalEventId: `ozon_${postingNumber}@${posting.status}`,
+                                externalStatus: posting.status,
+                                fulfillmentMode: OrderFulfillmentMode.FBS,
+                                occurredAt: posting.in_process_at ? new Date(posting.in_process_at) : new Date(),
+                                items: ingestItems,
+                                payload: { rawStatus: posting.status, posting_number: postingNumber },
+                            });
+                        }
 
                         if (newStatus === 'cancelled' && oldStatus !== 'cancelled') {
                             for (const item of posting.products) {
@@ -785,7 +946,7 @@ export class SyncService implements OnModuleInit {
                     this.logger.log(`[Store ${tenantId}] [Ozon Order] Processed #${postingNumber}, ${product.sku}, -${qty}`);
                 }
 
-                // Запоминаем отправление
+                // Запоминаем отправление (legacy)
                 await this.prisma.marketplaceOrder.create({
                     data: {
                         marketplaceOrderId: postingNumber,
@@ -801,6 +962,36 @@ export class SyncService implements OnModuleInit {
                         tenantId: tenantId
                     }
                 });
+
+                // TASK_ORDERS_2: dual-write новой инкарнации заказа в orders domain.
+                // Сматчиваем productId на каталог тут же, чтобы matchStatus
+                // выставился MATCHED для тех строк, где SKU нашёлся.
+                if (ozonAccount) {
+                    const matchedItems = await Promise.all(
+                        ingestItems.map(async (it: any) => {
+                            const p = it.sku
+                                ? await this.prisma.product.findFirst({
+                                      where: { tenantId, sku: it.sku },
+                                      select: { id: true },
+                                  })
+                                : null;
+                            return { ...it, productId: p?.id ?? null };
+                        }),
+                    );
+                    await this.ordersIngestion.ingest({
+                        tenantId,
+                        marketplaceAccountId: ozonAccount.id,
+                        marketplace: MarketplaceType.OZON,
+                        marketplaceOrderId: postingNumber,
+                        externalEventId: `ozon_${postingNumber}@${posting.status}`,
+                        externalStatus: posting.status,
+                        fulfillmentMode: OrderFulfillmentMode.FBS,
+                        occurredAt: posting.in_process_at ? new Date(posting.in_process_at) : new Date(),
+                        orderCreatedAt: posting.in_process_at ? new Date(posting.in_process_at) : null,
+                        items: matchedItems,
+                        payload: { rawStatus: posting.status, posting_number: postingNumber },
+                    });
+                }
 
                 // Пушим обновления
                 for (const item of posting.products) {

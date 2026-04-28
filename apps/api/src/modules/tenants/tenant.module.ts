@@ -6,9 +6,10 @@ import { RequireActiveTenantGuard } from './guards/require-active-tenant.guard';
 import { TenantWriteGuard } from './guards/tenant-write.guard';
 import { AccessStatePolicy } from './access-state.policy';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { ReferralModule } from '../referrals/referral.module';
 
 @Module({
-    imports: [OnboardingModule],
+    imports: [OnboardingModule, ReferralModule],
     providers: [TenantService, AccessStatePolicy, ActiveTenantGuard, RequireActiveTenantGuard, TenantWriteGuard],
     controllers: [TenantController],
     exports: [TenantService, AccessStatePolicy, ActiveTenantGuard, RequireActiveTenantGuard, TenantWriteGuard],

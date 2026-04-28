@@ -171,10 +171,17 @@ curl -X GET '/api/v1/analytics/abc?from=2026-03-01&to=2026-03-31&groupBy=revenue
 
 ## 11. Чеклист реализации
 
-- [ ] Daily aggregation pipeline.
-- [ ] API dashboard/abc/top/drill-down/export.
-- [ ] Rule-based recommendation engine.
-- [ ] Тесты консистентности агрегатов.
+- [x] Data model: `AnalyticsMaterializedDaily`, `AnalyticsAbcSnapshot`, `AnalyticsRecommendation` + 4 enum + миграция (TASK_ANALYTICS_1).
+- [x] Константы версий и rule-keys: `ANALYTICS_FORMULA_VERSION`, `ANALYTICS_RULE_KEYS`, `ANALYTICS_REASON_CODES`, `ABC_GROUP_THRESHOLDS` (TASK_ANALYTICS_1).
+- [x] Daily aggregation pipeline (`AnalyticsAggregatorService`, upsert по `(tenantId, date)`, sourceFreshness, STALE marker) — TASK_ANALYTICS_2.
+- [x] API dashboard/revenue-dynamics/top/drill-down (`AnalyticsReadService`, 4 эндпоинта + `POST /analytics/daily/rebuild`) — TASK_ANALYTICS_2.
+- [x] API ABC: `GET /analytics/abc` + `POST /analytics/abc/rebuild` (deterministic ranking, formula versioning, A=80/B=15/C=5 по `revenue_net`) — TASK_ANALYTICS_3.
+- [x] API recommendations/status/export: `GET /analytics/recommendations` (read-only ACTIVE), `POST /analytics/recommendations/refresh`, `GET /analytics/status`, `GET /analytics/export?target=daily|abc&format=csv|json` — TASK_ANALYTICS_4.
+- [x] Rule-based recommendation engine: `AnalyticsRecommendationsService` (LOW_STOCK_HIGH_DEMAND, LOW_RATING, STALE_ANALYTICS_SOURCE) с idempotent upsert и engine-driven DISMISSED — TASK_ANALYTICS_4.
+- [x] `AnalyticsPolicyService`: централизованный tenant-state guard для rebuild (daily / abc / recommendations) + `evaluateStaleness` (4 классификации FRESH/STALE/INCOMPLETE/BOTH) + `ANALYTICS_SOURCE_OF_TRUTH` контракт + `ANALYTICS_FORBIDS_INTEGRATION_REFRESH` flag; verdict прокинут в `getDashboard.freshness` и `getStatus.daily.freshness` — TASK_ANALYTICS_5.
+- [x] Frontend `Analytics.tsx`: единый UX (period picker, freshness badge с 4 классификациями, KPI grid §13, revenue dynamics WB/Ozon, ABC pie + groups, top SKU table, read-only recommendations с RULE_LABEL+REASON_EXPLAIN, drill-down drawer, paused-banner с заблокированными rebuild кнопками, CSV export daily/abc); legacy on-the-fly endpoints больше не вызываются — TASK_ANALYTICS_6.
+- [x] Observability + QA: `AnalyticsMetricsRegistry` (10 метрик §19), инструментация всех pipeline'ов (aggregator/abc/recommendations/read/export), endpoint `/analytics/metrics/snapshot` (Owner/Admin), regression matrix `analytics-regression.spec.ts` × 10 (KPI contract, ABC tie-breaker, policy-block × 3, recs без user workflow, export failures, stale views) — TASK_ANALYTICS_7.
+- [x] Тесты консистентности агрегатов (read + aggregator, 18 тестов) — TASK_ANALYTICS_2.
 
 ## 12. Критерии готовности (DoD)
 
@@ -297,3 +304,10 @@ curl -X GET '/api/v1/analytics/abc?from=2026-03-01&to=2026-03-31&groupBy=revenue
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены freshness/tenant-state guards, formula versioning и открытые решения по MVP KPI и recommendation workflow | Codex |
 | 2026-04-18 | Подтверждены KPI первого dashboard и read-only rule-based recommendations для MVP | Codex |
+| 2026-04-28 | TASK_ANALYTICS_1: заложен read-model слой — `AnalyticsMaterializedDaily`, `AnalyticsAbcSnapshot`, `AnalyticsRecommendation` + 4 enum + миграция; вынесены константы `ANALYTICS_FORMULA_VERSION` и rule/reason codes; legacy `analytics.service.ts` не тронут | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_2: добавлены `AnalyticsAggregatorService` (daily upsert, sourceFreshness, STALE marker) + `AnalyticsReadService` (4 эндпоинта: dashboard / revenue-dynamics / top / drill-down) + `POST /analytics/daily/rebuild` (Owner/Admin); первый dashboard ограничен MVP §13 KPI; 18 unit-тестов; legacy `/analytics/recommendations|geo|revenue-dynamics/legacy` сохранены | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_3: ABC engine — pure-function `AnalyticsAbcCalculatorService` (deterministic sort с tie-breaker `sku asc`, A=80/B=15/C=5, первый SKU всегда A) + orchestrator `AnalyticsAbcService` (loader + idempotent upsert, INCOMPLETE/STALE/READY, возвраты с минусом, SKU без active product пропускаются) + `GET /analytics/abc` + `POST /analytics/abc/rebuild`; 16 unit-тестов | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_4: rule engine `AnalyticsRecommendationsService` (LOW_STOCK_HIGH_DEMAND HIGH/MEDIUM, LOW_RATING, STALE_ANALYTICS_SOURCE) с idempotent upsert и engine-driven DISMISSED + `AnalyticsStatusService` (одним вызовом freshness/daily/abc/recommendations) + `AnalyticsExportService` (CSV/JSON по daily и abc); endpoints recommendations / recommendations/refresh / status / export; legacy on-the-fly recs перенесён под `/recommendations/legacy`; 17 unit-тестов | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_5: `AnalyticsPolicyService` — единый guard tenant state (TRIAL_EXPIRED/SUSPENDED/CLOSED → 403 ANALYTICS_REBUILD_BLOCKED_BY_TENANT_STATE) для daily/abc/recommendations rebuild; static `isLastEventStale` использует `ANALYTICS_STALE_SOURCE_WINDOW_HOURS=48` единым окном; `evaluateStaleness` отдаёт 4 классификации, прокинуто в dashboard.freshness и status.daily.freshness; load-bearing constants `ANALYTICS_SOURCE_OF_TRUTH` + `ANALYTICS_FORBIDS_INTEGRATION_REFRESH` с regression spec; 23 unit-теста policy + старые специ обновлены на DI policy | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_6: полная переработка `Analytics.tsx` под новые витрины — period picker, SnapshotMetaCard с 4-цветным freshness бейджем, KpiGrid строго §13 (без gross), revenue dynamics WB/Ozon, ABC pie + group breakdown с rebuild placeholder'ом, Top SKU таблица, read-only `RecommendationsCard` без dismiss/applied кнопок, drill-down drawer (KPI + recent orders), paused banner с заблокированными rebuild/refresh, CSV export через `window.open`; legacy `/analytics/recommendations|geo|revenue-dynamics/legacy` больше не вызываются из UI; tsc clean | Anvar |
+| 2026-04-28 | TASK_ANALYTICS_7: `AnalyticsMetricsRegistry` (10 метрик §19) + инструментация aggregator/abc/recommendations/read/export (latency p50/p95, REBUILD_BLOCKED_BY_TENANT по target, RECOMMENDATIONS_GENERATED per ruleKey, STALE_VIEWS, EXPORT_SUCCESS/FAILURES); endpoint `/analytics/metrics/snapshot` (Owner/Admin); 2 новых spec — `analytics.metrics.spec.ts` (6) + `analytics-regression.spec.ts` × 10 (полная §16 матрица); 92/92 тестов в 10 suite | Anvar |
