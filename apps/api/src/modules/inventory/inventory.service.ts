@@ -11,15 +11,17 @@ import { AuditService } from '../audit/audit.service';
 import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
 import { InventoryEvents } from './inventory.events';
 import {
-    ActionType,
     AccessState,
     StockMovementType,
     StockMovementSource,
     InventoryFulfillmentMode,
     InventoryEffectType,
     InventoryEffectStatus,
+    MarketplaceType,
+    Role,
     Prisma,
 } from '@prisma/client';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
 const PAUSED_STATES: ReadonlySet<AccessState> = new Set([
     AccessState.TRIAL_EXPIRED,
@@ -373,16 +375,25 @@ export class InventoryService {
             return { movement, productSku: product.sku, onHandBefore, onHandAfter, reservedBefore };
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.STOCK_ADJUSTED,
-            productId: dto.productId,
-            productSku: result.productSku,
-            beforeTotal: result.onHandBefore,
-            afterTotal: result.onHandAfter,
-            delta: result.movement.delta,
-            actorUserId: actorEmail,
-            note: `${dto.reasonCode}${dto.comment ? `: ${dto.comment}` : ''}`,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.STOCK_MANUALLY_ADJUSTED,
+            entityType: 'PRODUCT',
+            entityId: dto.productId,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            before: { onHand: result.onHandBefore },
+            after:  { onHand: result.onHandAfter },
+            changedFields: ['onHand'],
+            metadata: {
+                sku: result.productSku,
+                delta: result.movement.delta,
+                movementId: result.movement.id,
+                reasonCode: dto.reasonCode,
+                comment: dto.comment ?? null,
+                warehouseId,
+            },
         });
 
         this.logger.log(JSON.stringify({
@@ -553,6 +564,57 @@ export class InventoryService {
         }));
 
         return updated;
+    }
+
+    // ----------------------------------------------------------------
+    // CHANNEL VISIBILITY SETTINGS
+    // ----------------------------------------------------------------
+
+    private _parseVisibility(settings: { channelVisibilitySettings: unknown } | null): MarketplaceType[] {
+        const raw = settings?.channelVisibilitySettings as { visibleMarketplaces?: string[] } | null;
+        if (!raw || !Array.isArray(raw.visibleMarketplaces) || raw.visibleMarketplaces.length === 0) {
+            return Object.values(MarketplaceType);
+        }
+        return raw.visibleMarketplaces as MarketplaceType[];
+    }
+
+    async getChannelVisibility(tenantId: string) {
+        const settings = await this._getSettings(tenantId);
+        return { visibleMarketplaces: this._parseVisibility(settings) };
+    }
+
+    async updateChannelVisibility(tenantId: string, actorUserId: string, visibleMarketplaces: MarketplaceType[]) {
+        await this._assertManualWriteAllowed(tenantId);
+
+        const membership = await this.prisma.membership.findFirst({
+            where: { tenantId, userId: actorUserId, status: 'ACTIVE' },
+            select: { role: true },
+        });
+        if (!membership) {
+            throw new ForbiddenException({ code: 'TENANT_ACCESS_DENIED' });
+        }
+        if (membership.role !== Role.OWNER && membership.role !== Role.ADMIN) {
+            throw new ForbiddenException({ code: 'ROLE_FORBIDDEN' });
+        }
+
+        if (!visibleMarketplaces.length) {
+            throw new BadRequestException({ code: 'VISIBLE_MARKETPLACES_CANNOT_BE_EMPTY' });
+        }
+
+        await this.prisma.inventorySettings.upsert({
+            where: { tenantId },
+            update: { channelVisibilitySettings: { visibleMarketplaces } },
+            create: { tenantId, channelVisibilitySettings: { visibleMarketplaces } },
+        });
+
+        this.logger.log(JSON.stringify({
+            event: 'channel_visibility_updated',
+            tenantId,
+            actorUserId,
+            visibleMarketplaces,
+        }));
+
+        return { visibleMarketplaces };
     }
 
     // ----------------------------------------------------------------

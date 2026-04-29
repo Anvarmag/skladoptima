@@ -61,6 +61,12 @@ enum MarketplaceType {
   OZON
 }
 
+enum StockLockType {
+  ZERO
+  FIXED
+  PAUSED
+}
+
 enum ActionType {
   PRODUCT_CREATED
   PRODUCT_UPDATED
@@ -150,6 +156,45 @@ enum AuthProvider {
   GOOGLE
   YANDEX
   SMS
+}
+
+// ─── Admin / Support control plane (см. 19-admin §3, §15) ────────────────────
+// Изолированный internal control plane для support-контура. Не пересекается
+// с tenant-facing Role/UserStatus/AuthSessionStatus — отдельные enum'ы во
+// избежание скрытого расширения tenant-RBAC support-полномочиями.
+enum SupportUserRole {
+  SUPPORT_ADMIN
+  SUPPORT_READONLY
+}
+
+enum SupportSessionStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+  EXPIRED
+  COMPROMISED
+}
+
+enum SupportSecurityEventType {
+  admin_login_success
+  admin_login_failed
+  admin_session_revoked
+  admin_password_changed
+  admin_rbac_denied
+}
+
+enum SupportActionType {
+  EXTEND_TRIAL
+  SET_ACCESS_STATE
+  RESTORE_TENANT
+  TRIGGER_PASSWORD_RESET
+  ADD_INTERNAL_NOTE
+}
+
+enum SupportActionResultStatus {
+  success
+  failed
+  blocked
 }
 
 enum OnboardingScope {
@@ -559,6 +604,80 @@ enum ReferralAuditEventType {
   FRAUD_RECHECK_COMPLETED
 }
 
+// ─── Files / S3 enums (TASK_FILES_1) ────────────────────────────────────────
+
+enum FileEntityType {
+  product_main_image
+}
+
+// Object lifecycle: uploading → active → replaced/deleted → cleanup_pending → (purged from storage)
+//                   uploading → orphaned → cleanup_pending → (purged from storage)
+enum FileStatus {
+  uploading
+  active
+  replaced
+  deleted
+  orphaned
+  cleanup_pending
+  cleanup_failed
+}
+
+enum FileStorageProvider {
+  s3_compatible
+}
+
+// Расширяемый enum; в MVP только private (signed URLs), без публичного CDN.
+enum FileVisibility {
+  private
+}
+
+// ─── Worker / Background Jobs enums (TASK_WORKER_1) ─────────────────────────
+
+// Жизненный цикл job: queued → in_progress → retrying → success | failed | blocked | dead_lettered | cancelled
+enum WorkerJobStatus {
+  queued
+  in_progress
+  retrying
+  success
+  failed
+  blocked
+  dead_lettered
+  cancelled
+}
+
+// Трёхуровневое разделение очередей (§14 system-analytics).
+enum WorkerJobPriority {
+  critical
+  default
+  bulk
+}
+
+// Актор, создавший job (§8 worker_jobs).
+enum WorkerActorType {
+  user
+  system
+  support
+  scheduler
+}
+
+// Реестр классов задач (§13 system-analytics).
+enum WorkerJobType {
+  SYNC
+  NOTIFICATION
+  BILLING_REMINDER
+  FILE_CLEANUP
+  ANALYTICS_REBUILD
+  AUDIT_MAINTENANCE
+}
+
+// Класс итогового сбоя для worker_failed_jobs (§10 system-analytics).
+// Разделяет технические ошибки от отсутствия обработчика.
+enum WorkerFailureClass {
+  TECHNICAL_INFRA          // Retryable error exhausted max_attempts → dead_lettered
+  TECHNICAL_NON_RETRYABLE  // Non-retryable error, immediate failure → failed
+  NO_HANDLER               // No handler registered for job type → failed
+}
+
 // -------------------------------------------------------------------
 // 1. ПОЛЬЗОВАТЕЛИ И AUTH
 // -------------------------------------------------------------------
@@ -609,6 +728,11 @@ model User {
   referralAttributionsAsReferred ReferralAttribution[]        @relation("ReferralReferredUser")
   bonusWallet                    BonusWallet?                 @relation("BonusWalletOwner")
   notificationInboxItems         NotificationInbox[]
+  createdStockChannelLocks       StockChannelLock[]   @relation("StockChannelLockCreatedBy")
+  assignedTasks                  Task[]               @relation("TaskAssignee")
+  createdTasks                   Task[]               @relation("TaskCreatedBy")
+  taskComments                   TaskComment[]        @relation("TaskCommentAuthor")
+  taskEvents                     TaskEvent[]          @relation("TaskEventActor")
 }
 
 // Серверные сессии с refresh token rotation и reuse detection
@@ -668,6 +792,10 @@ model UserPreference {
   lastUsedTenantId String?
   locale           String?
   timezone         String?
+  // MAX chatId для отправки push-нотификаций по задачам (TASK_TASKS_4)
+  maxChatId             String?
+  // Per-user opt-out: {"ASSIGNED":true,"COMMENTED":false,...} — null = все включены
+  taskNotifyPreferences Json?
   updatedAt        DateTime @updatedAt
 }
 
@@ -751,6 +879,11 @@ model Tenant {
   notificationEvents       NotificationEvent[]
   notificationPreferences  NotificationPreferences?
   notificationInboxItems   NotificationInbox[]
+  files                    File[]
+  workerJobs               WorkerJob[]
+  stockChannelLocks        StockChannelLock[]
+  tasks                    Task[]
+  taskEvents               TaskEvent[]
 }
 
 // Настройки компании, вынесены из Tenant для чистоты модели
@@ -1137,6 +1270,7 @@ model Product {
   wbFbo   Int @default(0)
 
   mainImageFileId String?
+  mainImage       File?   @relation("ProductMainImage", fields: [mainImageFileId], references: [id], onDelete: SetNull)
   sourceOfTruth   ProductSourceOfTruth @default(MANUAL)
   status          ProductStatus        @default(ACTIVE)
 
@@ -1152,13 +1286,15 @@ model Product {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  channelMappings ProductChannelMapping[]
-  stockBalances   StockBalance[]
-  stockMovements  StockMovement[]
-  orderItems      OrderItem[]
-  financeProfile  ProductFinanceProfile?
-  financeWarnings FinanceDataWarning[]
+  channelMappings      ProductChannelMapping[]
+  stockBalances        StockBalance[]
+  stockMovements       StockMovement[]
+  orderItems           OrderItem[]
+  financeProfile       ProductFinanceProfile?
+  financeWarnings      FinanceDataWarning[]
   analyticsRecommendations AnalyticsRecommendation[]
+  stockChannelLocks    StockChannelLock[]
+  relatedTasks         Task[]
 
   @@unique([tenantId, sku])
   @@unique([tenantId, wbBarcode])
@@ -1265,8 +1401,9 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  items  OrderItem[]
-  events OrderEvent[]
+  items        OrderItem[]
+  events       OrderEvent[]
+  relatedTasks Task[]
 
   // §8: уникальность в рамках tenant/marketplace/external id. Account
   // НЕ входит в ключ сознательно: один и тот же заказ не может
@@ -1615,11 +1752,39 @@ model InventoryEffectLock {
 
 // Настройки инвентаря на уровне tenant. Пока — только low-stock порог.
 model InventorySettings {
-  tenantId          String   @id
-  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lowStockThreshold Int      @default(5)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  tenantId                  String   @id
+  tenant                    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lowStockThreshold         Int      @default(5)
+  channelVisibilitySettings Json?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+}
+
+// -------------------------------------------------------------------
+// 6b. STOCK CHANNEL LOCKS (TASK_CHANNEL_1)
+// -------------------------------------------------------------------
+
+/// Блокировка отправки остатков на конкретный маркетплейс для конкретного товара.
+/// ZERO — отправляет 0, FIXED — фиксированное значение, PAUSED — пропускает товар.
+/// Upsert-семантика: один товар + один маркетплейс = максимум одна запись.
+model StockChannelLock {
+  id          String          @id @default(uuid())
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  marketplace MarketplaceType
+  lockType    StockLockType
+  fixedValue  Int?
+  note        String?
+  createdBy   String?
+  createdByUser User?         @relation("StockChannelLockCreatedBy", fields: [createdBy], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([tenantId, productId, marketplace])
+  @@index([tenantId, marketplace])
+  @@index([tenantId, productId])
 }
 
 // -------------------------------------------------------------------
@@ -2358,3 +2523,436 @@ model ReferralAuditLog {
   @@index([tenantId])
 }
 
+// -------------------------------------------------------------------
+// FILES / S3 (TASK_FILES_1)
+// -------------------------------------------------------------------
+//
+// Object key strategy: {tenant_id}/products/{file_id}.{ext}
+//   - original filename хранится только как metadata, НИКОГДА не попадает в object key;
+//   - object key не должен содержать SKU, бизнес-названия или пользовательские имена;
+//   - доступ к объектам — только через signed URL с коротким TTL.
+//
+// Lifecycle: uploading → active → replaced/deleted → cleanup_pending → (purged)
+//            uploading → orphaned → cleanup_pending → (purged)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model File {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  entityType FileEntityType
+  entityId   String?
+
+  // S3 object key: строго {tenant_id}/products/{file_id}.{ext}
+  // не содержит оригинального имени файла, SKU или бизнес-секретов
+  objectKey       String              @db.Text
+  bucket          String              @db.VarChar(128)
+  storageProvider FileStorageProvider @default(s3_compatible)
+
+  mimeType         String? @db.VarChar(128)
+  sizeBytes        BigInt?
+  checksumSha256   String? @db.VarChar(64)
+  originalFilename String? @db.Text
+
+  status     FileStatus     @default(uploading)
+  visibility FileVisibility @default(private)
+
+  uploadedBy String?
+  uploadedAt DateTime?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  lifecycleEvents FileLifecycleEvent[]
+  products        Product[]            @relation("ProductMainImage")
+
+  @@index([tenantId, status])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt(sort: Desc)])
+}
+
+model FileLifecycleEvent {
+  id        String   @id @default(uuid())
+  fileId    String
+  file      File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  eventType String   @db.VarChar(64)
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  @@index([fileId, createdAt(sort: Desc)])
+}
+
+// -------------------------------------------------------------------
+// WORKER / BACKGROUND JOBS (TASK_WORKER_1)
+// -------------------------------------------------------------------
+//
+// Три таблицы:
+//   worker_jobs          — основная запись job и её lifecycle
+//   worker_failed_jobs   — snapshot ошибки при каждом final-failed переходе
+//   worker_schedules     — реестр cron-расписаний
+//
+// Трёхуровневые очереди: critical / default / bulk (§14 system-analytics).
+// tenant_id nullable — поддерживает system/global jobs без tenant scope.
+// idempotency_key + correlation_id обеспечивают dedup и tracing (§15).
+// -------------------------------------------------------------------
+
+/// Основная запись фоновой задачи. Lifecycle: queued → in_progress →
+/// retrying → success | failed | blocked | dead_lettered | cancelled.
+/// Поле `leaseOwner/leaseUntil` реализует distributed lock для одного consumer.
+model WorkerJob {
+  id      String  @id @default(uuid())
+  tenantId String?
+  tenant   Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  jobType   WorkerJobType
+  queueName String            @db.VarChar(32)
+  priority  WorkerJobPriority @default(default)
+
+  idempotencyKey String? @db.VarChar(128)
+  correlationId  String?
+
+  createdByActorType WorkerActorType
+  createdByActorId   String?
+
+  payload Json
+  status  WorkerJobStatus @default(queued)
+
+  attempt     Int @default(0)
+  maxAttempts Int @default(3)
+
+  // Distributed lease lock — worker удерживает запись на время исполнения
+  leaseOwner String?  @db.VarChar(128)
+  leaseUntil DateTime?
+
+  queuedAt      DateTime  @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  nextAttemptAt DateTime?
+
+  lastError     String? @db.Text
+  resultSummary Json?
+
+  failedJobs WorkerFailedJob[]
+
+  // Покрывает consumer polling: WHERE status IN (...) AND queueName = ? ORDER BY nextAttemptAt
+  @@index([status, queueName, nextAttemptAt])
+  // Tenant-scoped monitoring queries
+  @@index([tenantId, status])
+  // Support admin фильтрация по типу задачи
+  @@index([jobType, status])
+  // Dedup check по idempotency_key
+  @@index([idempotencyKey])
+  // Трассировка по correlation_id через модули
+  @@index([correlationId])
+  @@map("worker_jobs")
+}
+
+/// Снапшот ошибки при каждом final-failed переходе (dead_letter / failed).
+/// Immutable insert-only. Не используется для requeue — только для диагностики.
+/// failureClass разделяет технические инфраструктурные ошибки от non-retryable и no-handler (§10).
+model WorkerFailedJob {
+  id              String             @id @default(uuid())
+  jobId           String
+  job             WorkerJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  failureReason   String             @db.Text
+  failureClass    WorkerFailureClass @default(TECHNICAL_INFRA)
+  payloadSnapshot Json
+  createdAt       DateTime           @default(now())
+
+  @@index([jobId])
+  @@index([failureClass])
+  @@map("worker_failed_jobs")
+}
+
+/// Реестр cron-расписаний. Scheduler читает active=true записи и выставляет
+/// nextRunAt. Ручной запуск доступен support/admin через POST /worker/schedules/:name/run.
+model WorkerSchedule {
+  id        String            @id @default(uuid())
+  name      String            @unique @db.VarChar(64)
+  cronExpr  String            @db.VarChar(64)
+  jobType   WorkerJobType
+  queueName String            @db.VarChar(32)
+  priority  WorkerJobPriority @default(default)
+  payload   Json?
+  isActive  Boolean           @default(true)
+  lastRunAt DateTime?
+  nextRunAt DateTime?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([isActive, nextRunAt])
+  @@map("worker_schedules")
+}
+
+// ─── Tasks / CRM-like task tracker (TASK_TASKS_1) ────────────────────────────
+
+enum TaskCategory {
+  MARKETPLACE_CLIENT_ISSUE
+  PRODUCTION_INQUIRY
+  WAREHOUSE
+  FINANCE
+  OTHER
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING
+  DONE
+  ARCHIVED
+}
+
+enum TaskCommentVisibility {
+  INTERNAL
+  CUSTOMER_FACING
+}
+
+enum TaskEventType {
+  CREATED
+  UPDATED
+  ASSIGNED
+  STATUS_CHANGED
+  COMMENTED
+  DUE_CHANGED
+  ARCHIVED
+  DUE_REMINDER_SENT
+  OVERDUE_NOTIFIED
+}
+
+/// Основная сущность задачи. assigneeUserId обязателен — задача без
+/// ответственного теряет смысл (§8 аналитики). Переход из ARCHIVED
+/// терминален — защита от silent-overwrite через application-guard (§13).
+model Task {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  title       String  @db.VarChar(255)
+  description String? @db.Text
+
+  category TaskCategory @default(OTHER)
+  priority TaskPriority @default(NORMAL)
+  status   TaskStatus   @default(OPEN)
+
+  assigneeUserId String
+  assignee       User   @relation("TaskAssignee", fields: [assigneeUserId], references: [id])
+
+  createdByUserId String
+  createdBy       User   @relation("TaskCreatedBy", fields: [createdByUserId], references: [id])
+
+  dueAt             DateTime? @db.Timestamptz(6)
+  // Анти-спам флаги для cron (§9 шаг 4): UPDATE ... WHERE ... IS NULL
+  // гарантирует атомарную check-and-set, повторный cron не шлёт второй пуш.
+  dueReminderSentAt DateTime? @db.Timestamptz(6)
+  overdueNotifiedAt DateTime? @db.Timestamptz(6)
+
+  relatedOrderId String?
+  relatedOrder   Order?  @relation(fields: [relatedOrderId], references: [id], onDelete: SetNull)
+
+  relatedProductId String?
+  relatedProduct   Product? @relation(fields: [relatedProductId], references: [id], onDelete: SetNull)
+
+  tags String[] @default([])
+
+  completedAt DateTime? @db.Timestamptz(6)
+  archivedAt  DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comments TaskComment[]
+  events   TaskEvent[]
+
+  // Inbox: assignee+status+dueAt (основной фильтр §8)
+  @@index([tenantId, assigneeUserId, status, dueAt])
+  // Kanban / status list
+  @@index([tenantId, status, createdAt])
+  // Inbox: создал я
+  @@index([tenantId, createdByUserId, createdAt])
+  // Связка с заказом
+  @@index([tenantId, relatedOrderId])
+  // Cron partial index — в migration SQL заменить обычный на partial:
+  // CREATE INDEX CONCURRENTLY idx_task_due_active ON tasks(tenant_id, due_at)
+  //   WHERE status NOT IN ('DONE','ARCHIVED');
+  @@index([tenantId, dueAt])
+  @@map("tasks")
+}
+
+/// Комментарий к задаче. Soft delete через deletedAt; полная история
+/// редакций не ведётся в MVP (editedAt фиксирует факт изменения, §14).
+model TaskComment {
+  id     String @id @default(uuid())
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  authorUserId String
+  author       User   @relation("TaskCommentAuthor", fields: [authorUserId], references: [id])
+
+  body       String                @db.Text
+  visibility TaskCommentVisibility @default(INTERNAL)
+
+  editedAt  DateTime? @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([taskId, createdAt])
+  @@map("task_comments")
+}
+
+/// Append-only audit timeline задачи. actorUserId = NULL для системных
+/// событий (cron due_reminder_sent, overdue_notified). Хранится отдельно
+/// от AuditLog из-за высокой частоты записи (§5 аналитики).
+model TaskEvent {
+  id       String @id @default(uuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  actorUserId String?
+  actor       User?   @relation("TaskEventActor", fields: [actorUserId], references: [id])
+
+  eventType TaskEventType
+  payload   Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([tenantId, eventType, createdAt])
+  @@map("task_events")
+}
+
+// -------------------------------------------------------------------
+// 19. ADMIN / SUPPORT CONTROL PLANE (см. 19-admin §3, §8, §15)
+// -------------------------------------------------------------------
+
+/// Internal support operator. Полностью изолирован от tenant-facing User —
+/// у support_user НЕТ memberships, tenant picker и tenant-facing RBAC. Доступ
+/// в admin-panel выдаётся ТОЛЬКО через эту таблицу.
+model SupportUser {
+  id           String          @id @default(uuid())
+  email        String          @unique
+  passwordHash String
+  role         SupportUserRole
+  isActive     Boolean         @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  authSessions   SupportAuthSession[]
+  securityEvents SupportSecurityEvent[]
+  actions        SupportAction[]
+  notes          SupportNote[]
+
+  @@map("support_users")
+}
+
+/// Серверные сессии support-операторов с rotation и reuse detection.
+/// Полностью отдельный контур от tenant `auth_sessions` — общих токенов нет.
+model SupportAuthSession {
+  id               String               @id @default(uuid())
+  supportUserId    String
+  supportUser      SupportUser          @relation(fields: [supportUserId], references: [id], onDelete: Cascade)
+  refreshTokenHash String               @unique
+  status           SupportSessionStatus @default(ACTIVE)
+  ip               String?
+  userAgent        String?
+  lastSeenAt       DateTime?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  revokeReason     String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([supportUserId, status])
+  @@map("support_auth_sessions")
+}
+
+/// Soft-lock по паре (email + IP) для admin login. Аналог LoginAttempt,
+/// но изолирован, чтобы атаки на admin не смешивались с tenant-flow.
+model SupportLoginAttempt {
+  id              String   @id @default(uuid())
+  normalizedEmail String
+  ip              String
+  createdAt       DateTime @default(now())
+
+  @@index([normalizedEmail, ip, createdAt])
+  @@map("support_login_attempts")
+}
+
+/// Отдельный security audit для admin-плоскости. Внутренние события не
+/// должны попадать в tenant-facing AuditLog/SecurityEvent — это разные
+/// зоны видимости (см. 19-admin §15 "internal_only").
+model SupportSecurityEvent {
+  id            String                   @id @default(uuid())
+  supportUserId String?
+  supportUser   SupportUser?             @relation(fields: [supportUserId], references: [id], onDelete: SetNull)
+  eventType     SupportSecurityEventType
+  ip            String?
+  userAgent     String?
+  metadata      Json?
+  createdAt     DateTime                 @default(now())
+
+  @@index([supportUserId, eventType, createdAt])
+  @@index([eventType, createdAt])
+  @@map("support_security_events")
+}
+
+/// Журнал каждой mutating support-операции. Любое действие, выполненное
+/// support-actor через admin-плоскость, фиксируется здесь — даже если
+/// доменный сервис заблокировал его (resultStatus='blocked'). Это даёт
+/// единый воспроизводимый execution path для post-mortem (см. 19-admin §10, §15).
+///
+/// Связь с tenant-facing AuditLog: сам state-change в доменной таблице
+/// пишется через AuditService.writePrivilegedEvent (visibility=internal_only),
+/// а `auditLogId` хранит ссылку на эту запись для cross-навигации.
+model SupportAction {
+  id                 String                    @id @default(uuid())
+  tenantId           String?
+  actorSupportUserId String
+  actorSupportUser   SupportUser               @relation(fields: [actorSupportUserId], references: [id], onDelete: Restrict)
+  actionType         SupportActionType
+  reason             String                    @db.Text
+  payload            Json?
+  resultStatus       SupportActionResultStatus
+  resultDetails      Json?
+  errorCode          String?
+  auditLogId         String?
+  correlationId      String?
+  targetUserId       String?
+  ip                 String?
+  userAgent          String?
+  createdAt          DateTime                  @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([actorSupportUserId, createdAt])
+  @@index([actionType, createdAt])
+  @@map("support_actions")
+}
+
+/// Internal handoff между сменами поддержки. Доступны обеим support-ролям
+/// для чтения (см. §22 «SUPPORT_READONLY может видеть internal notes»),
+/// для записи — только SUPPORT_ADMIN.
+model SupportNote {
+  id                  String      @id @default(uuid())
+  tenantId            String
+  authorSupportUserId String
+  authorSupportUser   SupportUser @relation(fields: [authorSupportUserId], references: [id], onDelete: Restrict)
+  note                String      @db.Text
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  @@index([tenantId, createdAt])
+  @@map("support_notes")
+}

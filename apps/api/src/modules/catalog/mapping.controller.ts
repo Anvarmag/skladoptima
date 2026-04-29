@@ -10,6 +10,7 @@ import {
     Query,
     Req,
     UseGuards,
+    ParseUUIDPipe,
 } from '@nestjs/common';
 import { MappingService } from './mapping.service';
 import { ManualMappingDto } from './dto/manual-mapping.dto';
@@ -85,9 +86,19 @@ export class MappingController {
         return this.mappingService.mergeProducts(dto, req.activeTenantId, req.user.email, req.user?.id);
     }
 
+    // GET /catalog/mappings/product/:productId — все маппинги конкретного товара
+    @Get('product/:productId')
+    getMappingsByProduct(
+        @Param('productId', ParseUUIDPipe) productId: string,
+        @Req() req: any,
+    ) {
+        return this.mappingService.getMappingsByProduct(req.activeTenantId, productId);
+    }
+
     // DELETE /catalog/mappings/:id — удалить маппинг, чтобы можно было перепривязать
     @Delete(':id')
     @UseGuards(TenantWriteGuard)
+    @HttpCode(HttpStatus.NO_CONTENT)
     deleteMapping(@Param('id') id: string, @Req() req: any) {
         return this.mappingService.deleteMapping(id, req.activeTenantId, req.user.email);
     }

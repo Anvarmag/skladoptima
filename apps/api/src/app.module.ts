@@ -26,6 +26,11 @@ import { SyncRunsModule } from './modules/sync-runs/sync-runs.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { ReferralModule } from './modules/referrals/referral.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { FilesModule } from './modules/files/files.module';
+import { WorkerModule } from './modules/worker/worker.module';
+import { StockLocksModule } from './modules/stock-locks/stock-locks.module';
+import { TasksModule } from './modules/tasks/tasks.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 // Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
 // или перенесены в apps/worker.
@@ -53,6 +58,11 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     OrdersModule,
     ReferralModule,
     NotificationsModule,
+    FilesModule,
+    WorkerModule,
+    StockLocksModule,
+    TasksModule,
+    AdminModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',

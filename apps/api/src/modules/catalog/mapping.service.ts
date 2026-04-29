@@ -10,7 +10,8 @@ import { AuditService } from '../audit/audit.service';
 import { ManualMappingDto } from './dto/manual-mapping.dto';
 import { AutoMatchDto } from './dto/auto-match.dto';
 import { MergeProductsDto } from './dto/merge-products.dto';
-import { ActionType, ChannelMarketplace, ProductStatus } from '@prisma/client';
+import { ChannelMarketplace, ProductStatus } from '@prisma/client';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
 @Injectable()
 export class MappingService {
@@ -140,13 +141,20 @@ export class MappingService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.MAPPING_CREATED,
-            productId: product.id,
-            productSku: product.sku,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: `Manual mapping: ${dto.marketplace} → externalProductId=${dto.externalProductId}`,
+            eventType: AUDIT_EVENTS.MARKETPLACE_MAPPING_CREATED,
+            entityType: 'PRODUCT',
+            entityId: product.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            metadata: {
+                marketplace: dto.marketplace,
+                externalProductId: dto.externalProductId,
+                sku: product.sku,
+                isAutoMatched: false,
+            },
         });
 
         return mapping;
@@ -196,23 +204,58 @@ export class MappingService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.MAPPING_CREATED,
-            productId: product.id,
-            productSku: product.sku,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: `Auto-match: ${dto.marketplace} → externalProductId=${dto.externalProductId} by SKU=${dto.externalSku}`,
+            eventType: AUDIT_EVENTS.MARKETPLACE_MAPPING_CREATED,
+            entityType: 'PRODUCT',
+            entityId: product.id,
+            actorType: 'system',
+            source: 'worker',
+            metadata: {
+                marketplace: dto.marketplace,
+                externalProductId: dto.externalProductId,
+                externalSku: dto.externalSku,
+                sku: product.sku,
+                isAutoMatched: true,
+            },
         });
 
         return { matched: true, mapping, alreadyExisted: false };
     }
 
     // ------------------------------------------------------------------
+    // GET MAPPINGS BY PRODUCT — все маппинги конкретного товара
+    // ------------------------------------------------------------------
+
+    async getMappingsByProduct(tenantId: string, productId: string) {
+        const product = await this.prisma.product.findFirst({
+            where: { id: productId, tenantId, deletedAt: null },
+        });
+        if (!product) {
+            throw new NotFoundException({ code: 'PRODUCT_NOT_FOUND' });
+        }
+
+        const mappings = await this.prisma.productChannelMapping.findMany({
+            where: { tenantId, productId },
+            select: {
+                id: true,
+                marketplace: true,
+                externalProductId: true,
+                externalSku: true,
+                isAutoMatched: true,
+                createdAt: true,
+            },
+            orderBy: { createdAt: 'asc' },
+        });
+
+        return { data: mappings };
+    }
+
+    // ------------------------------------------------------------------
     // DELETE MAPPING — удалить маппинг (чтобы можно было перепривязать)
     // ------------------------------------------------------------------
 
-    async deleteMapping(mappingId: string, tenantId: string, actorEmail: string) {
+    async deleteMapping(mappingId: string, tenantId: string, actorEmail: string): Promise<void> {
         const mapping = await this.prisma.productChannelMapping.findUnique({
             where: { id: mappingId },
             include: { product: { select: { sku: true } } },
@@ -224,16 +267,20 @@ export class MappingService {
 
         await this.prisma.productChannelMapping.delete({ where: { id: mappingId } });
 
-        await this.auditService.logAction({
-            actionType: ActionType.MAPPING_DELETED,
-            productId: mapping.productId,
-            productSku: mapping.product?.sku,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: `Mapping removed: ${mapping.marketplace} → externalProductId=${mapping.externalProductId}`,
+            eventType: AUDIT_EVENTS.MARKETPLACE_MAPPING_DELETED,
+            entityType: 'PRODUCT',
+            entityId: mapping.productId,
+            actorType: 'user',
+            source: 'ui',
+            metadata: {
+                mappingId,
+                marketplace: mapping.marketplace,
+                externalProductId: mapping.externalProductId,
+                sku: mapping.product?.sku,
+            },
         });
-
-        return { message: 'Mapping deleted successfully' };
     }
 
     // ------------------------------------------------------------------
@@ -293,13 +340,21 @@ export class MappingService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_MERGED,
-            productId: target.id,
-            productSku: target.sku,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: `Merged from: ${source.id} (sku=${source.sku}); transferred=${transferred}, skipped=${skipped}`,
+            eventType: AUDIT_EVENTS.PRODUCT_DUPLICATE_MERGED,
+            entityType: 'PRODUCT',
+            entityId: target.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            metadata: {
+                sourceProductId: source.id,
+                sourceSku: source.sku,
+                targetSku: target.sku,
+                transferred,
+                skipped,
+            },
         });
 
         this.logger.log(JSON.stringify({

@@ -97,13 +97,13 @@ const MAPPING_WB = {
 describe('MappingService', () => {
     let service: MappingService;
     let prisma: ReturnType<typeof makePrismaMock>;
-    let auditService: jest.Mocked<Pick<AuditService, 'logAction'>>;
+    let auditService: jest.Mocked<Pick<AuditService, 'writeEvent'>>;
     let warnSpy: jest.SpyInstance;
     let logSpy: jest.SpyInstance;
 
     beforeEach(async () => {
         prisma = makePrismaMock();
-        auditService = { logAction: jest.fn().mockResolvedValue({}) };
+        auditService = { writeEvent: jest.fn().mockResolvedValue(undefined) } as any;
 
         const module = await Test.createTestingModule({
             providers: [
@@ -138,8 +138,8 @@ describe('MappingService', () => {
             const result = await service.createManual(dto, TENANT, ACTOR, USER_ID);
 
             expect(result.id).toBe(MAPPING_WB.id);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.MAPPING_CREATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'MARKETPLACE_MAPPING_CREATED' }),
             );
         });
 
@@ -149,7 +149,7 @@ describe('MappingService', () => {
             await expect(service.createManual(dto, TENANT, ACTOR))
                 .rejects.toMatchObject({ response: expect.objectContaining({ code: 'PRODUCT_NOT_FOUND' }) });
 
-            expect(auditService.logAction).not.toHaveBeenCalled();
+            expect(auditService.writeEvent).not.toHaveBeenCalled();
         });
 
         it('throws MAPPING_ALREADY_EXISTS when external product is already mapped', async () => {
@@ -164,7 +164,7 @@ describe('MappingService', () => {
                     }),
                 });
 
-            expect(auditService.logAction).not.toHaveBeenCalled();
+            expect(auditService.writeEvent).not.toHaveBeenCalled();
         });
 
         it('logs mapping_conflict_detected warning on MAPPING_ALREADY_EXISTS', async () => {
@@ -197,8 +197,8 @@ describe('MappingService', () => {
 
             expect(result.matched).toBe(true);
             expect(result.alreadyExisted).toBe(false);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.MAPPING_CREATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'MARKETPLACE_MAPPING_CREATED' }),
             );
         });
 
@@ -213,7 +213,7 @@ describe('MappingService', () => {
             expect(result.matched).toBe(true);
             expect(result.alreadyExisted).toBe(true);
             expect(prisma.productChannelMapping.create).not.toHaveBeenCalled();
-            expect(auditService.logAction).not.toHaveBeenCalled();
+            expect(auditService.writeEvent).not.toHaveBeenCalled();
         });
 
         it('returns matched=false when no internal product found for the SKU', async () => {
@@ -250,8 +250,8 @@ describe('MappingService', () => {
             expect(prisma.productChannelMapping.delete).toHaveBeenCalledWith(
                 expect.objectContaining({ where: { id: MAPPING_WB.id } }),
             );
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.MAPPING_DELETED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'MARKETPLACE_MAPPING_DELETED' }),
             );
         });
 
@@ -291,8 +291,8 @@ describe('MappingService', () => {
             expect(result.targetProductId).toBe(PRODUCT_B.id);
             expect(result.mappingsTransferred).toBe(1);
             expect(result.mappingsSkipped).toBe(0);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_MERGED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_DUPLICATE_MERGED' }),
             );
             expect(prisma.product.update).toHaveBeenCalledWith(
                 expect.objectContaining({ data: expect.objectContaining({ status: ProductStatus.DELETED }) }),
@@ -355,6 +355,48 @@ describe('MappingService', () => {
             expect(logSpy).toHaveBeenCalledWith(
                 expect.stringContaining('"event":"product_merge_completed"'),
             );
+        });
+    });
+
+    // ─── getMappingsByProduct ────────────────────────────────────────────────
+
+    describe('getMappingsByProduct', () => {
+        it('возвращает все маппинги только нужного товара', async () => {
+            prisma.product.findFirst.mockResolvedValue(ACTIVE_PRODUCT);
+            prisma.productChannelMapping.findMany.mockResolvedValue([MAPPING_WB]);
+
+            const result = await service.getMappingsByProduct(TENANT, 'prod-1');
+
+            expect(prisma.productChannelMapping.findMany).toHaveBeenCalledWith(
+                expect.objectContaining({ where: { tenantId: TENANT, productId: 'prod-1' } }),
+            );
+            expect(result.data).toHaveLength(1);
+            expect(result.data[0].id).toBe(MAPPING_WB.id);
+        });
+
+        it('возвращает пустой массив если у товара нет маппингов', async () => {
+            prisma.product.findFirst.mockResolvedValue(ACTIVE_PRODUCT);
+            prisma.productChannelMapping.findMany.mockResolvedValue([]);
+
+            const result = await service.getMappingsByProduct(TENANT, 'prod-1');
+
+            expect(result.data).toHaveLength(0);
+        });
+
+        it('выбрасывает PRODUCT_NOT_FOUND если товар не существует в тенанте', async () => {
+            prisma.product.findFirst.mockResolvedValue(null);
+
+            await expect(service.getMappingsByProduct(TENANT, 'ghost'))
+                .rejects.toMatchObject({ response: expect.objectContaining({ code: 'PRODUCT_NOT_FOUND' }) });
+
+            expect(prisma.productChannelMapping.findMany).not.toHaveBeenCalled();
+        });
+
+        it('изолирует маппинги по tenantId — не возвращает данные чужого тенанта', async () => {
+            prisma.product.findFirst.mockResolvedValue(null); // не найден в другом тенанте
+
+            await expect(service.getMappingsByProduct('other-tenant', 'prod-1'))
+                .rejects.toThrow(NotFoundException);
         });
     });
 

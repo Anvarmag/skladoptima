@@ -14,7 +14,9 @@ export const AUDIT_DOMAINS = {
     SYNC:        'SYNC',
     BILLING:     'BILLING',
     SUPPORT:     'SUPPORT',
-    FINANCE:     'FINANCE',
+    FINANCE:         'FINANCE',
+    FILES:           'FILES',
+    CHANNEL_CONTROLS: 'CHANNEL_CONTROLS',
 } as const;
 
 export type AuditDomain = (typeof AUDIT_DOMAINS)[keyof typeof AUDIT_DOMAINS];
@@ -49,11 +51,17 @@ export const AUDIT_EVENTS = {
     PRODUCT_CREATED:            'PRODUCT_CREATED',
     PRODUCT_UPDATED:            'PRODUCT_UPDATED',
     PRODUCT_ARCHIVED:           'PRODUCT_ARCHIVED',
+    PRODUCT_RESTORED:           'PRODUCT_RESTORED',
     PRODUCT_DUPLICATE_MERGED:   'PRODUCT_DUPLICATE_MERGED',
+    CATALOG_IMPORT_COMMITTED:   'CATALOG_IMPORT_COMMITTED',
+    MARKETPLACE_MAPPING_CREATED: 'MARKETPLACE_MAPPING_CREATED',
+    MARKETPLACE_MAPPING_DELETED: 'MARKETPLACE_MAPPING_DELETED',
 
     // INVENTORY
     STOCK_MANUALLY_ADJUSTED:    'STOCK_MANUALLY_ADJUSTED',
     STOCK_CORRECTION_IMPORTED:  'STOCK_CORRECTION_IMPORTED',
+    STOCK_ORDER_DEDUCTED:       'STOCK_ORDER_DEDUCTED',
+    STOCK_ORDER_RETURNED:       'STOCK_ORDER_RETURNED',
 
     // MARKETPLACE
     MARKETPLACE_ACCOUNT_CONNECTED:          'MARKETPLACE_ACCOUNT_CONNECTED',
@@ -80,6 +88,17 @@ export const AUDIT_EVENTS = {
     SUPPORT_TENANT_DATA_CHANGED:        'SUPPORT_TENANT_DATA_CHANGED',
     SUPPORT_TENANT_RESTORED:            'SUPPORT_TENANT_RESTORED',
     SUPPORT_TENANT_CLOSED:              'SUPPORT_TENANT_CLOSED',
+    SUPPORT_NOTE_ADDED:                 'SUPPORT_NOTE_ADDED',
+
+    // FILES
+    FILE_UPLOADED:        'FILE_UPLOADED',
+    FILE_REPLACED:        'FILE_REPLACED',
+    FILE_DELETED:         'FILE_DELETED',
+    FILE_CLEANUP_PURGED:  'FILE_CLEANUP_PURGED',
+
+    // CHANNEL CONTROLS
+    STOCK_LOCK_CREATED:   'STOCK_LOCK_CREATED',
+    STOCK_LOCK_REMOVED:   'STOCK_LOCK_REMOVED',
 } as const;
 
 export type AuditEventType = (typeof AUDIT_EVENTS)[keyof typeof AUDIT_EVENTS];
@@ -109,10 +128,16 @@ export const EVENT_DOMAIN_MAP: Record<AuditEventType, AuditDomain> = {
     PRODUCT_CREATED:            AUDIT_DOMAINS.CATALOG,
     PRODUCT_UPDATED:            AUDIT_DOMAINS.CATALOG,
     PRODUCT_ARCHIVED:           AUDIT_DOMAINS.CATALOG,
+    PRODUCT_RESTORED:           AUDIT_DOMAINS.CATALOG,
     PRODUCT_DUPLICATE_MERGED:   AUDIT_DOMAINS.CATALOG,
+    CATALOG_IMPORT_COMMITTED:   AUDIT_DOMAINS.CATALOG,
+    MARKETPLACE_MAPPING_CREATED: AUDIT_DOMAINS.MARKETPLACE,
+    MARKETPLACE_MAPPING_DELETED: AUDIT_DOMAINS.MARKETPLACE,
 
     STOCK_MANUALLY_ADJUSTED:    AUDIT_DOMAINS.INVENTORY,
     STOCK_CORRECTION_IMPORTED:  AUDIT_DOMAINS.INVENTORY,
+    STOCK_ORDER_DEDUCTED:       AUDIT_DOMAINS.INVENTORY,
+    STOCK_ORDER_RETURNED:       AUDIT_DOMAINS.INVENTORY,
 
     MARKETPLACE_ACCOUNT_CONNECTED:       AUDIT_DOMAINS.MARKETPLACE,
     MARKETPLACE_CREDENTIALS_UPDATED:     AUDIT_DOMAINS.MARKETPLACE,
@@ -135,6 +160,15 @@ export const EVENT_DOMAIN_MAP: Record<AuditEventType, AuditDomain> = {
     SUPPORT_TENANT_DATA_CHANGED:     AUDIT_DOMAINS.SUPPORT,
     SUPPORT_TENANT_RESTORED:         AUDIT_DOMAINS.SUPPORT,
     SUPPORT_TENANT_CLOSED:           AUDIT_DOMAINS.SUPPORT,
+    SUPPORT_NOTE_ADDED:              AUDIT_DOMAINS.SUPPORT,
+
+    FILE_UPLOADED:       AUDIT_DOMAINS.FILES,
+    FILE_REPLACED:       AUDIT_DOMAINS.FILES,
+    FILE_DELETED:        AUDIT_DOMAINS.FILES,
+    FILE_CLEANUP_PURGED: AUDIT_DOMAINS.FILES,
+
+    STOCK_LOCK_CREATED:  AUDIT_DOMAINS.CHANNEL_CONTROLS,
+    STOCK_LOCK_REMOVED:  AUDIT_DOMAINS.CHANNEL_CONTROLS,
 };
 
 // ─── Write payload type ─────────────────────────────────────────────────────
@@ -184,4 +218,23 @@ export const SENSITIVE_AUDIT_FIELDS = new Set([
     'verificationToken',
     'resetToken',
     'otp',
+    'privateKey',
+    'clientSecret',
+]);
+
+// ─── Tenant-facing retention window ─────────────────────────────────────────
+
+// Tenant-facing audit trail is limited to this window (system-analytics §23).
+// Cold storage and long-term archival are out of MVP scope.
+export const AUDIT_RETENTION_DAYS = 180;
+
+// ─── Internal metadata keys stripped from tenant-facing read model ───────────
+
+// These keys carry support/operator context that must not leak to tenants.
+export const AUDIT_INTERNAL_METADATA_KEYS = new Set([
+    'internalNote',
+    'supportTicketId',
+    'operatorId',
+    'requestOrigin',
+    'debugContext',
 ]);

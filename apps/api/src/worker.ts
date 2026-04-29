@@ -4,11 +4,19 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-    // В отличие от основного main.ts, мы не слушаем HTTP-порт!
-    // Мы создаем только ApplicationContext для инициализации DI, CRON-задач и сервисов.
+    // ApplicationContext only — no HTTP server, no port binding.
+    // WorkerRuntimeService.onApplicationBootstrap() starts the polling loop
+    // when IS_WORKER=true (set above before module initialization).
     const app = await NestFactory.createApplicationContext(AppModule);
-    
-    console.log('🚀 Worker Microservice successfully started (Background Tasks Only)');
+
+    // Register SIGTERM/SIGINT handlers so NestJS can trigger
+    // OnApplicationShutdown hooks (graceful lease release + job recovery).
+    app.enableShutdownHooks();
+
+    console.log(`Worker started (pid=${process.pid})`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+    console.error('Worker bootstrap failed', err);
+    process.exit(1);
+});

@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
-    Plus, Edit2, Archive, ArrowDownUp, Search, Package,
+    Plus, Edit2, Archive, ArrowDownUp, Search,
     RefreshCw, ImageDown, RotateCcw, AlertTriangle, Link2Off,
-    CheckCircle, XCircle, AlertCircle,
+    CheckCircle, XCircle, AlertCircle, Link2, Unlink,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import AccessStateBanner from '../components/AccessStateBanner';
+import ProductMediaWidget from '../components/ProductMediaWidget';
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -23,6 +24,7 @@ interface Product {
     reserved: number;
     available: number;
     photo: string | null;
+    mainImageFileId: string | null;
     ozonFbs: number;
     ozonFbo: number;
     wbFbs: number;
@@ -51,6 +53,21 @@ interface ImportCommitResult {
     updatedCount: number;
     errorCount: number;
 }
+
+interface ChannelMapping {
+    id: string;
+    marketplace: 'WB' | 'OZON';
+    externalProductId: string;
+    externalSku: string | null;
+    isAutoMatched: boolean;
+    createdAt: string;
+}
+
+const MARKETPLACE_LABELS: Record<string, string> = { WB: 'Wildberries', OZON: 'Ozon' };
+const MARKETPLACE_COLORS: Record<string, string> = {
+    WB: 'bg-pink-50 text-pink-700 border-pink-200',
+    OZON: 'bg-blue-50 text-blue-700 border-blue-200',
+};
 
 // ─────────────────────────────── helpers ─────────────────────────────
 
@@ -119,6 +136,16 @@ export default function Products() {
 
     // Unmatched mappings badge
     const [unmatchedCount, setUnmatchedCount] = useState(0);
+
+    // Channel mappings (for edit modal)
+    const [mappings, setMappings] = useState<ChannelMapping[]>([]);
+    const [mappingsLoading, setMappingsLoading] = useState(false);
+    const [addMappingOpen, setAddMappingOpen] = useState(false);
+    const [addMpMarketplace, setAddMpMarketplace] = useState<'WB' | 'OZON'>('WB');
+    const [addMpExtId, setAddMpExtId] = useState('');
+    const [addMpExtSku, setAddMpExtSku] = useState('');
+    const [addMpError, setAddMpError] = useState<string | null>(null);
+    const [addMpSubmitting, setAddMpSubmitting] = useState(false);
 
     // Photos
     const [fetchingPhotos, setFetchingPhotos] = useState(false);
@@ -342,6 +369,14 @@ export default function Products() {
         }
     };
 
+    // ─────────── media updated ───────────
+
+    const handleMediaUpdated = useCallback((productId: string, newFileId: string | null) => {
+        setProducts(prev =>
+            prev.map(p => (p.id === productId ? { ...p, mainImageFileId: newFileId } : p)),
+        );
+    }, []);
+
     // ─────────── import preview/commit ───────────
 
     const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -419,6 +454,61 @@ export default function Products() {
         }
     };
 
+    // ─────────── mapping handlers ───────────
+
+    const loadMappings = useCallback(async (productId: string) => {
+        setMappingsLoading(true);
+        try {
+            const res = await axios.get(`/catalog/mappings/product/${productId}`);
+            setMappings(res.data.data ?? []);
+        } catch {
+            setMappings([]);
+        } finally {
+            setMappingsLoading(false);
+        }
+    }, []);
+
+    const handleDetachMapping = async (mappingId: string) => {
+        if (!window.confirm('Отвязать этот артикул?')) return;
+        setMappings(prev => prev.filter(m => m.id !== mappingId));
+        try {
+            await axios.delete(`/catalog/mappings/${mappingId}`);
+        } catch {
+            if (selectedProduct) loadMappings(selectedProduct.id);
+            alert('Не удалось отвязать артикул');
+        }
+    };
+
+    const handleAddMapping = async () => {
+        if (!selectedProduct || !addMpExtId.trim()) return;
+        setAddMpError(null);
+        setAddMpSubmitting(true);
+        try {
+            const res = await axios.post('/catalog/mappings/manual', {
+                productId: selectedProduct.id,
+                marketplace: addMpMarketplace,
+                externalProductId: addMpExtId.trim(),
+                externalSku: addMpExtSku.trim() || undefined,
+            });
+            setMappings(prev => [...prev, res.data]);
+            setAddMpExtId('');
+            setAddMpExtSku('');
+            setAddMappingOpen(false);
+        } catch (err: any) {
+            const code = err?.response?.data?.code;
+            const existingName = err?.response?.data?.existingProductId
+                ? `(ID: ${err.response.data.existingProductId})`
+                : '';
+            setAddMpError(
+                code === 'MAPPING_ALREADY_EXISTS'
+                    ? `Этот артикул уже связан с другим товаром ${existingName}. Сначала отвяжите его.`
+                    : err?.response?.data?.message ?? 'Не удалось добавить артикул',
+            );
+        } finally {
+            setAddMpSubmitting(false);
+        }
+    };
+
     // ─────────── open modals ───────────
 
     const openCreate = () => {
@@ -436,7 +526,13 @@ export default function Products() {
         setSelectedProduct(p);
         setFormData({ name: p.name, sku: p.sku, wbBarcode: (p as any).wbBarcode || '', initialTotal: '0', file: null });
         setFormError(null);
+        setMappings([]);
+        setAddMappingOpen(false);
+        setAddMpExtId('');
+        setAddMpExtSku('');
+        setAddMpError(null);
         setIsModalOpen(true);
+        loadMappings(p.id);
     };
 
     const openAdjust = (p: Product) => {
@@ -444,12 +540,6 @@ export default function Products() {
         setSelectedProduct(p);
         setAdjustDelta(0);
         setIsAdjustOpen(true);
-    };
-
-    const getImageUrl = (path: string | null) => {
-        if (!path) return '';
-        if (path.startsWith('http')) return path;
-        return path.startsWith('/') ? path : `/${path}`;
     };
 
     // ─────────── render ───────────
@@ -599,13 +689,15 @@ export default function Products() {
                                     {/* Фото */}
                                     <td className="px-2 sm:px-4 py-2 sm:py-3">
                                         <div className="flex-shrink-0 w-14 h-14 sm:w-24 sm:h-24 lg:w-40 lg:h-40">
-                                            {p.photo ? (
-                                                <img className="w-full h-full rounded-lg object-cover shadow-md border border-slate-100" src={getImageUrl(p.photo)} alt={p.name} />
-                                            ) : (
-                                                <div className="w-full h-full rounded-lg bg-slate-100 flex items-center justify-center border border-slate-200">
-                                                    <Package className="h-6 w-6 sm:h-10 sm:w-10 text-slate-400" />
-                                                </div>
-                                            )}
+                                            <ProductMediaWidget
+                                                productId={p.id}
+                                                mainImageFileId={p.mainImageFileId}
+                                                legacyPhotoUrl={p.photo}
+                                                isReadOnly={isReadOnly || statusFilter === 'deleted'}
+                                                onMediaUpdated={(newFileId) =>
+                                                    handleMediaUpdated(p.id, newFileId)
+                                                }
+                                            />
                                         </div>
                                     </td>
 
@@ -789,16 +881,137 @@ export default function Products() {
                                     <input required type="number" min="0" value={formData.initialTotal} onChange={e => setFormData({ ...formData, initialTotal: e.target.value })} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-slate-900 focus:ring-blue-500 focus:border-blue-500 outline-none" />
                                 </div>
                             )}
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Изображение (опционально)</label>
-                                <input type="file" accept="image/*" onChange={e => setFormData({ ...formData, file: e.target.files?.[0] || null })} className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-                                <p className="text-xs text-slate-400 mt-1">JPG, PNG, WebP. Максимум 10 МБ</p>
-                            </div>
+                            {modalMode === 'create' ? (
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-1">Изображение (опционально)</label>
+                                    <input type="file" accept="image/*" onChange={e => setFormData({ ...formData, file: e.target.files?.[0] || null })} className="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                                    <p className="text-xs text-slate-400 mt-1">JPG, PNG, WebP. Максимум 10 МБ</p>
+                                </div>
+                            ) : (
+                                <p className="text-xs text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                                    Для управления фото товара наведите курсор на изображение в таблице.
+                                </p>
+                            )}
 
                             {formError && (
                                 <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                                     <AlertCircle className="h-4 w-4 flex-shrink-0" />
                                     {formError}
+                                </div>
+                            )}
+
+                            {/* ── Связанные артикулы (только в режиме edit) ── */}
+                            {modalMode === 'edit' && (
+                                <div className="border-t border-slate-100 pt-4 mt-2">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <p className="text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                                            <Link2 className="h-4 w-4 text-slate-400" />
+                                            Связанные артикулы
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setAddMappingOpen(v => !v); setAddMpError(null); }}
+                                            className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                        >
+                                            <Plus className="h-3.5 w-3.5" />
+                                            Добавить
+                                        </button>
+                                    </div>
+
+                                    {mappingsLoading && (
+                                        <p className="text-xs text-slate-400 italic">Загрузка...</p>
+                                    )}
+
+                                    {!mappingsLoading && mappings.length === 0 && (
+                                        <p className="text-xs text-slate-400 italic">Нет связанных артикулов</p>
+                                    )}
+
+                                    {mappings.map(m => (
+                                        <div key={m.id} className="flex items-center justify-between py-1.5 border-b border-slate-50 last:border-0">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${MARKETPLACE_COLORS[m.marketplace] ?? 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                    {MARKETPLACE_LABELS[m.marketplace] ?? m.marketplace}
+                                                </span>
+                                                <span className="text-xs font-mono text-slate-700 truncate">{m.externalProductId}</span>
+                                                {m.externalSku && (
+                                                    <span className="text-[10px] text-slate-400 truncate">SKU: {m.externalSku}</span>
+                                                )}
+                                                {m.isAutoMatched && (
+                                                    <span className="text-[9px] px-1 py-0.5 rounded bg-slate-100 text-slate-500">auto</span>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDetachMapping(m.id)}
+                                                className="ml-2 p-1 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded flex-shrink-0"
+                                                title="Отвязать артикул"
+                                            >
+                                                <Unlink className="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                    ))}
+
+                                    {/* Add mapping form */}
+                                    {addMappingOpen && (
+                                        <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="block text-[10px] text-slate-500 mb-0.5">Маркетплейс</label>
+                                                    <select
+                                                        value={addMpMarketplace}
+                                                        onChange={e => setAddMpMarketplace(e.target.value as 'WB' | 'OZON')}
+                                                        className="w-full px-2 py-1 border border-slate-300 rounded text-xs"
+                                                    >
+                                                        <option value="WB">Wildberries</option>
+                                                        <option value="OZON">Ozon</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] text-slate-500 mb-0.5">Артикул МП *</label>
+                                                    <input
+                                                        type="text"
+                                                        value={addMpExtId}
+                                                        onChange={e => setAddMpExtId(e.target.value)}
+                                                        placeholder="externalProductId"
+                                                        className="w-full px-2 py-1 border border-slate-300 rounded text-xs font-mono"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] text-slate-500 mb-0.5">SKU (опционально)</label>
+                                                <input
+                                                    type="text"
+                                                    value={addMpExtSku}
+                                                    onChange={e => setAddMpExtSku(e.target.value)}
+                                                    placeholder="externalSku"
+                                                    className="w-full px-2 py-1 border border-slate-300 rounded text-xs font-mono"
+                                                />
+                                            </div>
+                                            {addMpError && (
+                                                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5 flex items-start gap-1">
+                                                    <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                                                    {addMpError}
+                                                </div>
+                                            )}
+                                            <div className="flex gap-2 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setAddMappingOpen(false); setAddMpError(null); }}
+                                                    className="flex-1 px-2 py-1 text-xs text-slate-600 border border-slate-300 rounded hover:bg-slate-100"
+                                                >
+                                                    Отмена
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleAddMapping}
+                                                    disabled={addMpSubmitting || !addMpExtId.trim()}
+                                                    className="flex-1 px-2 py-1 text-xs text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50"
+                                                >
+                                                    {addMpSubmitting ? 'Добавляем...' : 'Привязать'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

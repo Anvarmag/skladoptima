@@ -8,6 +8,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../auth/email.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { AuditService } from '../audit/audit.service';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 import { Role } from '@prisma/client';
 import * as crypto from 'crypto';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
@@ -23,6 +25,7 @@ export class TeamService {
         private readonly prisma: PrismaService,
         private readonly emailService: EmailService,
         private readonly onboardingService: OnboardingService,
+        private readonly auditService: AuditService,
     ) {}
 
     // ─── Create Invitation ────────────────────────────────────────────────────────
@@ -82,6 +85,17 @@ export class TeamService {
             invitationId: invitation.id,
             email,
             role: dto.role,
+        });
+
+        await this.auditService.writeEvent({
+            tenantId,
+            eventType: AUDIT_EVENTS.INVITE_CREATED,
+            entityType: 'INVITATION',
+            entityId: invitation.id,
+            actorType: 'user',
+            actorId: actorUserId,
+            source: 'ui',
+            metadata: { email, role: dto.role },
         });
 
         // Асинхронная отправка email — не блокируем ответ
@@ -161,6 +175,17 @@ export class TeamService {
         await this.recordTeamEvent(tenantId, actorUserId, 'team_invitation_resent', {
             invitationId,
             email: invitation.email,
+        });
+
+        await this.auditService.writeEvent({
+            tenantId,
+            eventType: AUDIT_EVENTS.INVITE_RESENT,
+            entityType: 'INVITATION',
+            entityId: invitationId,
+            actorType: 'user',
+            actorId: actorUserId,
+            source: 'ui',
+            metadata: { email: invitation.email },
         });
 
         this.emailService.sendInviteEmail(invitation.email, rawToken).catch((err) => {
@@ -299,6 +324,17 @@ export class TeamService {
             email: invitation.email,
         });
 
+        await this.auditService.writeEvent({
+            tenantId,
+            eventType: AUDIT_EVENTS.INVITE_CANCELLED,
+            entityType: 'INVITATION',
+            entityId: invitationId,
+            actorType: 'user',
+            actorId: actorUserId,
+            source: 'ui',
+            metadata: { email: invitation.email },
+        });
+
         return { invitationId, status: 'CANCELLED' as const };
     }
 
@@ -372,6 +408,20 @@ export class TeamService {
             toRole: dto.role,
         });
 
+        await this.auditService.writeEvent({
+            tenantId,
+            eventType: AUDIT_EVENTS.MEMBER_ROLE_CHANGED,
+            entityType: 'MEMBERSHIP',
+            entityId: membershipId,
+            actorType: 'user',
+            actorId: actorUserId,
+            source: 'ui',
+            before: { role: target.role },
+            after: { role: dto.role },
+            changedFields: ['role'],
+            metadata: { targetUserId: target.userId },
+        });
+
         return { membershipId, role: dto.role };
     }
 
@@ -426,6 +476,17 @@ export class TeamService {
             membershipId,
             targetUserId: target.userId,
             targetRole: target.role,
+        });
+
+        await this.auditService.writeEvent({
+            tenantId,
+            eventType: AUDIT_EVENTS.MEMBER_REMOVED,
+            entityType: 'MEMBERSHIP',
+            entityId: membershipId,
+            actorType: 'user',
+            actorId: actorUserId,
+            source: 'ui',
+            metadata: { targetUserId: target.userId, targetRole: target.role },
         });
 
         return { membershipId, status: 'REVOKED' as const };

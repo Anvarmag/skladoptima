@@ -9,13 +9,13 @@ import { AuditService } from '../audit/audit.service';
 import { ImportPreviewDto, ImportRowDto } from './dto/import-preview.dto';
 import { ImportCommitDto } from './dto/import-commit.dto';
 import {
-    ActionType,
     ImportJobStatus,
     ImportJobSource,
     ImportItemAction,
     ProductSourceOfTruth,
     ProductStatus,
 } from '@prisma/client';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
 // Запись в validationErrors с type-дискриминатором.
 // type='error'          → валидационная ошибка → action=MANUAL_REVIEW
@@ -255,11 +255,19 @@ export class ImportService {
         }
 
         // Сводный аудит на весь commit
-        await this.auditService.logAction({
-            actionType: ActionType.IMPORT_COMMITTED,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: `jobId=${job.id}; created=${createdCount}, updated=${updatedCount}, errors=${errorCount}, sourceConflicts=${sourceConflictCount}`,
+            eventType: AUDIT_EVENTS.CATALOG_IMPORT_COMMITTED,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            metadata: {
+                jobId: job.id,
+                created: createdCount,
+                updated: updatedCount,
+                errors: errorCount,
+                sourceConflicts: sourceConflictCount,
+            },
         });
 
         return this._formatJob(completed);
@@ -374,13 +382,18 @@ export class ImportService {
                 },
             });
 
-            await this.auditService.logAction({
-                actionType: ActionType.PRODUCT_UPDATED,
-                productId: existing.id,
-                productSku: existing.sku,
-                actorUserId: actorEmail,
+            await this.auditService.writeEvent({
                 tenantId,
-                note,
+                eventType: AUDIT_EVENTS.PRODUCT_UPDATED,
+                entityType: 'PRODUCT',
+                entityId: existing.id,
+                actorType: 'user',
+                actorId: userId,
+                source: 'api',
+                before: { name: existing.name },
+                after:  { name: row.name },
+                changedFields: ['name'],
+                metadata: { sku: existing.sku, sourceConflict: hasSourceConflict },
             });
 
             return 'updated';
@@ -408,15 +421,15 @@ export class ImportService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_CREATED,
-            productId: created.id,
-            productSku: created.sku,
-            afterTotal: created.total,
-            afterName: created.name,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note: 'Created via import commit',
+            eventType: AUDIT_EVENTS.PRODUCT_CREATED,
+            entityType: 'PRODUCT',
+            entityId: created.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'api',
+            after: { sku: created.sku, name: created.name, total: created.total },
         });
 
         return 'created';
@@ -455,15 +468,16 @@ export class ImportService {
                 },
             });
 
-            await this.auditService.logAction({
-                actionType: ActionType.PRODUCT_CREATED,
-                productId: created.id,
-                productSku: created.sku,
-                afterTotal: created.total,
-                afterName: created.name,
-                actorUserId: actorEmail,
+            await this.auditService.writeEvent({
                 tenantId,
-                note: 'Created via import commit (product deleted between preview and commit)',
+                eventType: AUDIT_EVENTS.PRODUCT_CREATED,
+                entityType: 'PRODUCT',
+                entityId: created.id,
+                actorType: 'user',
+                actorId: userId,
+                source: 'api',
+                after: { sku: created.sku, name: created.name, total: created.total },
+                metadata: { via: 'import_recreate_deleted' },
             });
 
             return 'created';
@@ -485,15 +499,18 @@ export class ImportService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_UPDATED,
-            productId: existing.id,
-            productSku: existing.sku,
-            beforeName: existing.name,
-            afterName: row.name,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
-            note,
+            eventType: AUDIT_EVENTS.PRODUCT_UPDATED,
+            entityType: 'PRODUCT',
+            entityId: existing.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'api',
+            before: { name: existing.name },
+            after:  { name: row.name },
+            changedFields: ['name'],
+            metadata: { sku: existing.sku, sourceConflict: hasSourceConflict },
         });
 
         return 'updated';

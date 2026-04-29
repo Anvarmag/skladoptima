@@ -1,3 +1,5 @@
+import { OnboardingService } from './../onboarding/onboarding.service';
+import { AuditService } from './../audit/audit.service';
 import { Test } from '@nestjs/testing';
 import { ConflictException, ForbiddenException, NotFoundException, Logger } from '@nestjs/common';
 import { TeamService } from './team.service';
@@ -24,7 +26,7 @@ function makePrismaMock() {
             update: jest.fn(),
         },
         teamEvent: { create: jest.fn() },
-        user: { findUnique: jest.fn() },
+        user: { findUnique: jest.fn(), update: jest.fn().mockResolvedValue({}) },
         $transaction: jest.fn().mockImplementation((arg: any) =>
             typeof arg === 'function' ? arg(mock) : Promise.all(arg),
         ),
@@ -81,6 +83,8 @@ describe('TeamService', () => {
                 TeamService,
                 { provide: PrismaService, useValue: prisma },
                 { provide: EmailService, useValue: emailService },
+                { provide: OnboardingService, useValue: { markStepDone: jest.fn().mockResolvedValue(undefined) } },
+                { provide: AuditService, useValue: { writeEvent: jest.fn().mockResolvedValue(undefined) } },
             ],
         }).compile();
 

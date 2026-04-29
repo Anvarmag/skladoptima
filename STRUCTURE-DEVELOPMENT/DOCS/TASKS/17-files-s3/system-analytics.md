@@ -168,11 +168,18 @@ curl -X POST /api/v1/files/upload-url \
 
 ## 11. Чеклист реализации
 
-- [ ] Таблица `files` + lifecycle events.
-- [ ] Pre-signed upload/download flows.
-- [ ] Tenant-aware object key strategy.
-- [ ] Cleanup job replaced/orphaned files.
-- [ ] Аудит upload/replace/delete.
+- [x] Таблица `files` + lifecycle events. _(TASK_FILES_1)_
+- [x] Tenant-aware object key strategy закреплена в schema. _(TASK_FILES_1)_
+- [x] Pre-signed upload flow: POST /api/files/upload-url + POST /api/files/confirm с RBAC, mime/size/checksum validation. _(TASK_FILES_2)_
+- [x] Access URL (presigned GET) + read policy (SUSPENDED/CLOSED blocker, TRIAL_EXPIRED read-allowed, cross-tenant isolation via tenant-scoped DB lookup). _(TASK_FILES_3)_
+- [x] Replace flow: POST /files/:fileId/replace атомарно переключает Product.mainImageFileId, старый файл → replaced. _(TASK_FILES_4)_
+- [x] Delete flow: DELETE /files/:fileId логическое удаление, убирает product reference. _(TASK_FILES_4)_
+- [x] Cleanup job: 3-фазный runCleanup (orphan-marking, retention-pending, S3-purge) + reconcile. Retention = 7 дней. _(TASK_FILES_4)_
+- [x] Access-state guards полнота проверена: TRIAL_EXPIRED→write blocked/read allowed; SUSPENDED/CLOSED→access-url+write blocked. _(TASK_FILES_5)_
+- [x] Catalog linkage: confirmUpload атомарно устанавливает Product.mainImageFileId, вытесняет старый файл→replaced внутри TX. _(TASK_FILES_5)_
+- [x] Аудит: FILES domain, FILE_UPLOADED/FILE_REPLACED/FILE_DELETED/FILE_CLEANUP_PURGED events, coverage contract, AuditService в FilesService. _(TASK_FILES_5)_
+- [x] Frontend media UX: ProductMediaWidget с состояниями upload/confirming/deleting/error, preview через GET /files/:fileId/access-url (signed URL), 3-шаговый upload flow (upload-url→PUT fetch→confirm), CTA скрыты при TRIAL_EXPIRED/SUSPENDED/CLOSED, delete только для files-API объектов, backward compat с legacy photo URL, интегрирован в Products.tsx. _(TASK_FILES_6)_
+- [x] QA spec: files.service.spec.ts 42 теста (all green) — полная тестовая матрица §16 (upload/confirm, format, size, cross-tenant, replace, orphan cleanup, TRIAL_EXPIRED, SUSPENDED/CLOSED, reconciliation). Observability: uploads_failed в requestUploadUrl (format/size) + orphan_files_detected в runCleanup (warn на reconciled>0). _(TASK_FILES_7)_
 
 ## 12. Критерии готовности (DoD)
 
@@ -277,10 +284,10 @@ curl -X POST /api/v1/files/upload-url \
 
 ## 23. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
-- [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] Async-процессы, observability и тестовая матрица описаны.
-- [ ] Риски, ограничения и rollout-порядок зафиксированы.
+- [x] Текущее и целевое состояние раздела зафиксированы.
+- [x] Backend API, frontend поведение и модель данных согласованы между собой.
+- [x] Async-процессы, observability и тестовая матрица описаны.
+- [x] Риски, ограничения и rollout-порядок зафиксированы.
 
 ## 24. История изменений
 
@@ -289,3 +296,10 @@ curl -X POST /api/v1/files/upload-url \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены tenant access-state policy, lifecycle cleanup и открытые решения по access model/media scope/retention | Codex |
 | 2026-04-18 | Зафиксированы confirmed decisions по signed access, single-image MVP scope и retention window | Codex |
+| 2026-04-28 | TASK_FILES_1: 4 enum'а (FileEntityType/Status/StorageProvider/Visibility), модели File и FileLifecycleEvent в schema.prisma, FK Product.mainImageFileId→File.id (SET NULL), миграция 20260428280000_files_data_model, prisma generate | Claude |
+| 2026-04-28 | TASK_FILES_2: установлен @aws-sdk/client-s3+presigner, FilesModule с StorageService+FilesService+FilesController, POST /api/files/upload-url и /confirm с RBAC/mime/size/entity-ownership/checksum валидацией, S3 env vars, observability metrics | Claude |
+| 2026-04-28 | TASK_FILES_3: presignedGetUrl в StorageService, GET /api/files/:fileId/access-url с read RBAC (любой active member), access-state policy (SUSPENDED/CLOSED → 403, TRIAL_EXPIRED → allowed), cross-tenant isolation через tenant-scoped DB lookup + 404 вместо 403, DEFAULT_ACCESS_TTL_SEC=300, FileLifecycleEvent(access_url_issued) | Claude |
+| 2026-04-28 | TASK_FILES_4: deleteObject в StorageService, RETENTION_WINDOW_DAYS=7/ORPHAN_WINDOW_SEC=1800, ReplaceFileDto, replaceFile (атомарный TX: replaced+Product.mainImageFileId switch), deleteFile (logical delete, null product ref), runCleanup 3-phase (orphan mark→retention mark→S3 purge+reconcile), POST/:fileId/replace + DELETE/:fileId + POST/cleanup/reconcile endpoints | Claude |
+| 2026-04-28 | TASK_FILES_5: FILES domain + 4 events в audit-event-catalog, files coverage contract, AuditModule→FilesModule import, catalog linkage в confirmUpload (атомарный TX: Product.mainImageFileId=fileId, old→replaced), assertCanWrite возвращает role, audit calls в confirm/replace/delete (user+api) и runCleanup purge (system+worker, tenantId из записи) | Claude |
+| 2026-04-28 | TASK_FILES_6: ProductMediaWidget (upload/confirming/deleting/error states, signed access preview, 3-step upload via fetch, CTA blocked by tenant state, legacy photo backward compat), интеграция в Products.tsx (mainImageFileId в Product interface, handleMediaUpdated, media-blocked edit modal hint) | Claude |
+| 2026-04-28 | TASK_FILES_7: files.service.spec.ts 42 теста (all green) — полная тестовая матрица §16; observability: uploads_failed в requestUploadUrl (format_not_allowed + file_too_large), orphan_files_detected warn в runCleanup при reconciled>0 | Claude |

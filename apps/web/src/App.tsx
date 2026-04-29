@@ -11,6 +11,7 @@ import MarketplaceAccounts from './pages/MarketplaceAccounts';
 import SyncRuns from './pages/SyncRuns';
 import History from './pages/History';
 import Orders from './pages/Orders';
+import Tasks from './pages/Tasks';
 import Analytics from './pages/Analytics';
 import UnitEconomics from './pages/UnitEconomics';
 import Settings from './pages/Settings';
@@ -21,6 +22,12 @@ import AcceptInvite from './pages/AcceptInvite';
 import OnboardingPage from './pages/OnboardingPage';
 import TenantPicker from './pages/TenantPicker';
 import MainLayout from './layouts/MainLayout';
+import AdminLayout from './layouts/AdminLayout';
+import AdminRoot, { AdminPrivateRoute, AdminPublicOnly } from './layouts/AdminRoot';
+import AdminLogin from './pages/admin/AdminLogin';
+import AdminTenants from './pages/admin/AdminTenants';
+import AdminTenant360 from './pages/admin/AdminTenant360';
+import AdminChangePassword from './pages/admin/AdminChangePassword';
 import { useAuth } from './context/AuthContext';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
@@ -70,6 +77,33 @@ function App() {
             {/* Invite accept — public page, handles auth check internally */}
             <Route path="/invite/:token" element={<AcceptInvite />} />
 
+            {/* Internal admin / support control plane — изолирован от tenant-facing
+                AuthProvider. Свой AdminAuthProvider, свой layout, свой login. */}
+            <Route path="/admin" element={<AdminRoot />}>
+                <Route
+                    path="login"
+                    element={
+                        <AdminPublicOnly>
+                            <AdminLogin />
+                        </AdminPublicOnly>
+                    }
+                />
+                <Route
+                    element={
+                        <AdminPrivateRoute>
+                            <AdminLayout />
+                        </AdminPrivateRoute>
+                    }
+                >
+                    <Route index element={<AdminTenants />} />
+                    <Route path="tenants/:tenantId" element={<AdminTenant360 />} />
+                    <Route path="change-password" element={<AdminChangePassword />} />
+                </Route>
+                {/* Любой неизвестный /admin/* → directory, чтобы catchall ниже
+                    не уводил оператора в tenant-facing /app */}
+                <Route path="*" element={<Navigate to="/admin" replace />} />
+            </Route>
+
             {/* Protected app routes — require auth + active tenant */}
             <Route path="/app" element={
                 <PrivateRoute>
@@ -85,6 +119,7 @@ function App() {
                 <Route path="finance" element={<UnitEconomics />} />
                 <Route path="history" element={<History />} />
                 <Route path="orders" element={<Orders />} />
+                <Route path="tasks" element={<Tasks />} />
                 <Route path="notifications" element={<Notifications />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="team" element={<Team />} />

@@ -220,12 +220,12 @@ curl -X POST '/api/tasks' \
 
 ## 11. Чеклист реализации
 
-- [ ] Таблицы Task / TaskComment / TaskEvent + миграция.
-- [ ] CRUD сервис + state machine + комментарии.
-- [ ] REST API + Inbox-фильтры (`assignee=me`, `createdBy=me`, `overdue=true`, `relatedOrderId=...`).
-- [ ] Push-нотификации в MAX/Telegram + due/overdue cron.
-- [ ] Frontend Inbox + Kanban + drawer + quick-create modal + hotkey + связка из Orders.
-- [ ] QA spec'и + observability метрики.
+- [x] Таблицы Task / TaskComment / TaskEvent + миграция. _(TASK_TASKS_1, 2026-04-29)_
+- [x] CRUD сервис + state machine + комментарии. _(TASK_TASKS_2, 2026-04-29)_
+- [x] REST API + Inbox-фильтры (`assignee=me`, `createdBy=me`, `overdue=true`, `relatedOrderId=...`). _(TASK_TASKS_3, 2026-04-29)_
+- [x] Push-нотификации в MAX/Telegram + due/overdue cron. _(TASK_TASKS_4, 2026-04-29)_
+- [x] Frontend Inbox + Kanban + drawer + quick-create modal + hotkey + связка из Orders. _(TASK_TASKS_5, 2026-04-29)_
+- [x] QA spec'и + observability метрики. _(TASK_TASKS_6, 2026-04-29)_
 
 ## 12. Критерии готовности (DoD)
 
@@ -341,3 +341,9 @@ curl -X POST '/api/tasks' \
 | Дата | Изменение | Автор |
 |------|-----------|-------|
 | 2026-04-28 | Первичная аналитика модуля (CRM-like task tracker без маркетплейс-интеграций, с MAX/Telegram нотификациями) | Anvar |
+| 2026-04-29 | TASK_TASKS_1: Data Model реализован — 5 enum'ов, модели Task/TaskComment/TaskEvent, partial-index для cron, миграция `20260429020000_add_tasks_module` | Claude |
+| 2026-04-29 | TASK_TASKS_2: TasksService реализован — create/update/assign/changeStatus/archive/addComment/deleteComment; state machine guard; атомарные транзакции; prisma generate выполнен | Claude |
+| 2026-04-29 | TASK_TASKS_3: REST API реализован — TasksController (9 endpoints), ListTasksQueryDto (Inbox-фильтры + пагинация), findAll/findOne в сервисе, guards RequireActiveTenant+TenantWrite, role gating archive в сервисе, mapTask→ISO string | Claude |
+| 2026-04-29 | TASK_TASKS_4: Push-нотификации + cron реализованы — TaskNotifierService (ASSIGNED/STATUS_CHANGED/COMMENTED debounce-30s/DUE_REMINDER/OVERDUE), TaskDueReminderService (@Cron 10min, атомарный guard, paused-tenant filter), UserPreference.maxChatId + taskNotifyPreferences, миграция 20260429030000 | Claude |
+| 2026-04-29 | TASK_TASKS_5: Frontend реализован — Tasks.tsx (Inbox 5 табов + counter-badges, Kanban DnD 3+2 колонки, QuickCreateModal Ctrl+I + расширенная форма, TaskDetailDrawer с inline edit/comments/timeline), связка из Orders.tsx (кнопка «Создать задачу» + блок «Связанные задачи»), маршрут /app/tasks, пункт меню в MainLayout | Claude |
+| 2026-04-29 | TASK_TASKS_6: QA + observability реализованы — TasksMetricsRegistry (counters/gauges/histogram, §19 метрики); инструментирование TasksService (tasks_created, tasks_completed + time-to-complete), TaskNotifierService (notifications_sent, send_failures, comment_debounce_collapsed), TaskDueReminderService (due_reminder_sent, overdue_notified, cron_skipped_paused_tenant, gauge tasks_overdue_active); 33 unit-теста по §16 матрице — все passed | Claude |

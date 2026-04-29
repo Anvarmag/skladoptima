@@ -307,7 +307,11 @@ export class TenantService {
 
     // ─── Access State Transition ─────────────────────────────────────────────────
 
-    async transitionAccessState(tenantId: string, dto: TransitionAccessStateDto) {
+    async transitionAccessState(
+        tenantId: string,
+        dto: TransitionAccessStateDto,
+        options: { supportContext?: boolean } = {},
+    ) {
         const tenant = await this.prisma.tenant.findUnique({
             where: { id: tenantId },
             select: { id: true, accessState: true, status: true },
@@ -317,7 +321,11 @@ export class TenantService {
             throw new NotFoundException({ code: 'TENANT_NOT_FOUND' });
         }
 
-        this.policy.assertTransitionAllowed(tenant.accessState, dto.toState);
+        if (options.supportContext) {
+            this.policy.assertSupportTransitionAllowed(tenant.accessState, dto.toState);
+        } else {
+            this.policy.assertTransitionAllowed(tenant.accessState, dto.toState);
+        }
 
         const isClosed = dto.toState === 'CLOSED';
 
@@ -360,6 +368,108 @@ export class TenantService {
             currentState: updated.accessState,
             status: updated.status,
         };
+    }
+
+    // ─── Support-context domain methods (см. 19-admin TASK_ADMIN_3) ─────────────
+    //
+    // Все методы вызываются ТОЛЬКО из SupportActionsService. Они не дают
+    // support-actor'у ничего сверх того, что разрешено access-state policy
+    // через `assertSupportTransitionAllowed` — т.е. конечного narrow-set'а
+    // переходов. Reason/audit/SupportAction-журнал фиксирует SupportActionsService.
+
+    /// Поднимает tenant в TRIAL_ACTIVE из TRIAL_EXPIRED. Идемпотентен: если
+    /// tenant уже в TRIAL_ACTIVE — никаких side-effects, возвращает текущее
+    /// состояние, чтобы UI не показывал ошибку при двойном клике.
+    async extendTrialBySupport(
+        tenantId: string,
+        actor: { supportUserId: string; reasonCode: string },
+    ) {
+        const tenant = await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { id: true, accessState: true, status: true },
+        });
+        if (!tenant) {
+            throw new NotFoundException({ code: 'TENANT_NOT_FOUND' });
+        }
+
+        if (tenant.accessState === 'TRIAL_ACTIVE') {
+            return {
+                tenantId,
+                previousState: tenant.accessState,
+                currentState: tenant.accessState,
+                status: tenant.status,
+                idempotent: true,
+            };
+        }
+
+        // Делегируем единственному mutation-пути — transitionAccessState.
+        const result = await this.transitionAccessState(
+            tenantId,
+            {
+                toState: 'TRIAL_ACTIVE',
+                reasonCode: actor.reasonCode,
+                actorType: 'SUPPORT',
+                actorId: actor.supportUserId,
+            } as TransitionAccessStateDto,
+            { supportContext: true },
+        );
+        return { ...result, idempotent: false };
+    }
+
+    /// Восстанавливает tenant из CLOSED в SUSPENDED, если retention window
+    /// не истёк. Полностью аналогична `restoreTenant`, но не требует ownership
+    /// и проставляет actorType=SUPPORT.
+    async restoreTenantBySupport(
+        tenantId: string,
+        actor: { supportUserId: string; reasonCode: string },
+    ) {
+        const tenant = await this.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            include: { closureJob: { select: { scheduledFor: true, status: true } } },
+        });
+
+        if (!tenant) throw new NotFoundException({ code: 'TENANT_NOT_FOUND' });
+        if (tenant.status !== 'CLOSED') {
+            throw new ConflictException({ code: 'TENANT_NOT_CLOSED' });
+        }
+
+        const retentionExpired =
+            !tenant.closureJob || tenant.closureJob.scheduledFor <= new Date();
+        if (retentionExpired) {
+            throw new ForbiddenException({ code: 'TENANT_RETENTION_WINDOW_EXPIRED' });
+        }
+
+        // Policy-guard на CLOSED→SUSPENDED через support-allowed list.
+        this.policy.assertSupportTransitionAllowed(tenant.accessState, 'SUSPENDED');
+
+        const restoreToState = 'SUSPENDED' as const;
+
+        await this.prisma.$transaction(async (tx) => {
+            await tx.tenant.update({
+                where: { id: tenantId },
+                data: { status: 'ACTIVE', accessState: restoreToState, closedAt: null },
+            });
+
+            await tx.tenantAccessStateEvent.create({
+                data: {
+                    tenantId,
+                    fromState: 'CLOSED',
+                    toState: restoreToState,
+                    reasonCode: actor.reasonCode,
+                    actorType: 'SUPPORT',
+                    actorId: actor.supportUserId,
+                },
+            });
+
+            await tx.tenantClosureJob.update({
+                where: { tenantId },
+                data: { status: 'ARCHIVED', processedAt: new Date() },
+            });
+        });
+
+        this.auditLog('tenant_restored_by_support', { tenantId, supportUserId: actor.supportUserId });
+
+        return { tenantId, status: 'ACTIVE', accessState: restoreToState };
     }
 
     // ─── Access Warnings ──────────────────────────────────────────────────────────

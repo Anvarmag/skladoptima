@@ -162,11 +162,29 @@ curl -X GET '/api/v1/worker/jobs?status=FAILED&jobType=SYNC&page=1&limit=20' \
 
 ## 11. Чеклист реализации
 
-- [ ] Очереди + worker runtime.
-- [ ] Таблицы мониторинга jobs.
-- [ ] Retry/backoff policy.
-- [ ] Scheduled jobs registry.
-- [ ] Алерты по failed/backlog.
+- [x] Таблицы мониторинга jobs (`worker_jobs`, `worker_failed_jobs`, `worker_schedules`) — TASK_WORKER_1.
+- [x] Scheduled jobs registry (`WorkerSchedule` model + `runSchedule`) — TASK_WORKER_1.
+- [x] Очереди + worker runtime (consumer/polling loop critical/default/bulk) — TASK_WORKER_2.
+- [x] Retry/backoff policy (exponential backoff, dead_letter, recovery) — TASK_WORKER_2.
+- [x] Retryable/non-retryable classification (`NonRetryableJobError`, `classifyError?`) — TASK_WORKER_3.
+- [x] `WorkerFailureClass` enum + `failureClass` в failure snapshots — TASK_WORKER_3.
+- [x] `blocked by policy` диагностируется отдельно (`failureClass: DOMAIN_POLICY` в логах) — TASK_WORKER_3.
+- [x] `cancelJob()` + `POST /worker/jobs/:jobId/cancel` — TASK_WORKER_3.
+- [x] `blocked` добавлен в retryable statuses (support replay after policy change) — TASK_WORKER_3.
+- [x] DB-driven scheduler (`WorkerSchedulerService`): polling, missed-run anomaly, cron nextRunAt — TASK_WORKER_4.
+- [x] Seed documented schedules (billing-reminders, analytics-rebuild, file-cleanup, audit-maintenance) — TASK_WORKER_4.
+- [x] `GET /worker/schedules/:name` для диагностики отдельного расписания — TASK_WORKER_4.
+- [x] `JOB_CONTRACTS` реестр (SpecialHandlingClass, ReplayPolicy, defaults, idempotency requirements) — TASK_WORKER_5.
+- [x] `enqueueJob()`: contract defaults, idempotency enforcement, at-most-once dedup — TASK_WORKER_5.
+- [x] `retryJob()`: replay policy guard + audit log для MONEY/STOCK/ACCESS affecting replays — TASK_WORKER_5.
+- [x] Tenant-facing `GET /worker/status` (JWT-auth, product-only labels, no raw internals) — TASK_WORKER_6.
+- [x] `toProductStatus()` mapping: SYNC/NOTIFICATION/FILE_CLEANUP → user-friendly labels — TASK_WORKER_6.
+- [x] Visibility model: AUDIT_MAINTENANCE скрыт от tenant-facing UI — TASK_WORKER_6.
+- [x] Auth split: support/admin = x-internal-secret, tenant = JWT + activeTenantId — TASK_WORKER_6.
+- [x] `WorkerAlertsService`: 5 alert conditions (backlog, failed spike, dead-letter, stuck, missed schedule) — TASK_WORKER_7.
+- [x] `GET /worker/alerts/check` endpoint (support/admin) — TASK_WORKER_7.
+- [x] `worker.service.spec.ts`: 26 тестов (enqueueJob dedup, retryJob policy, cancelJob, getProductStatus tenant isolation) — TASK_WORKER_7.
+- [x] `worker-runtime.service.spec.ts`: 19 тестов (success, blocked, non-retryable, dead-letter, recovery, backoff) — TASK_WORKER_7.
 
 ## 12. Критерии готовности (DoD)
 
@@ -283,10 +301,10 @@ curl -X GET '/api/v1/worker/jobs?status=FAILED&jobType=SYNC&page=1&limit=20' \
 
 ## 24. Чеклист готовности раздела
 
-- [ ] Текущее и целевое состояние раздела зафиксированы.
-- [ ] Backend API, frontend поведение и модель данных согласованы между собой.
-- [ ] Async-процессы, observability и тестовая матрица описаны.
-- [ ] Риски, ограничения и rollout-порядок зафиксированы.
+- [x] Текущее и целевое состояние раздела зафиксированы.
+- [x] Backend API, frontend поведение и модель данных согласованы между собой.
+- [x] Async-процессы, observability и тестовая матрица описаны.
+- [x] Риски, ограничения и rollout-порядок зафиксированы.
 
 ## 25. История изменений
 
@@ -295,3 +313,10 @@ curl -X GET '/api/v1/worker/jobs?status=FAILED&jobType=SYNC&page=1&limit=20' \
 | 2026-04-18 | Документ приведен к единой глубине system analytics | Codex |
 | 2026-04-18 | Добавлены job contracts, policy-blocked semantics, queue tiers и открытые решения по MVP visibility/replay model | Codex |
 | 2026-04-18 | Зафиксированы confirmed decisions по worker visibility, queue tiers и replay policy | Codex |
+| 2026-04-28 | TASK_WORKER_1 выполнена: data model (worker_jobs/failed_jobs/schedules), миграция, WorkerModule (service+controller) | Claude |
+| 2026-04-29 | TASK_WORKER_2 выполнена: WorkerRuntimeService (polling, lease, recovery, graceful shutdown), JobHandlerRegistry, JobBlockedError | Claude |
+| 2026-04-29 | TASK_WORKER_3 выполнена: NonRetryableJobError, WorkerFailureClass enum, failureClass в worker_failed_jobs, cancelJob(), blocked → retryable | Claude |
+| 2026-04-29 | TASK_WORKER_4 выполнена: WorkerSchedulerService (DB-driven cron, missed-run detection, schedule seeds, getSchedule endpoint) | Claude |
+| 2026-04-29 | TASK_WORKER_5 выполнена: JOB_CONTRACTS реестр, SpecialHandlingClass, ReplayPolicy, idempotency enforcement, at-most-once dedup, high-risk replay audit log | Claude |
+| 2026-04-29 | TASK_WORKER_6 выполнена: tenant-facing GET /worker/status (JWT, product labels), toProductStatus() mapping, AUDIT_MAINTENANCE скрыт, auth split зафиксирован | Claude |
+| 2026-04-29 | TASK_WORKER_7 выполнена: 45 тестов (26+19), WorkerAlertsService (5 условий), GET /worker/alerts/check | Claude |

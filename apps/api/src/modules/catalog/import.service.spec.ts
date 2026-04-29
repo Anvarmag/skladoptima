@@ -99,13 +99,13 @@ function makeProductRow(overrides: Partial<{ sku: string; name: string; brand: s
 describe('ImportService', () => {
     let service: ImportService;
     let prisma: ReturnType<typeof makePrismaMock>;
-    let auditService: jest.Mocked<Pick<AuditService, 'logAction'>>;
+    let auditService: jest.Mocked<Pick<AuditService, 'writeEvent'>>;
     let logSpy: jest.SpyInstance;
     let warnSpy: jest.SpyInstance;
 
     beforeEach(async () => {
         prisma = makePrismaMock();
-        auditService = { logAction: jest.fn().mockResolvedValue({}) };
+        auditService = { writeEvent: jest.fn().mockResolvedValue(undefined) } as any;
 
         const module = await Test.createTestingModule({
             providers: [
@@ -308,8 +308,8 @@ describe('ImportService', () => {
 
             expect(result.status).toBe(ImportJobStatus.COMPLETED);
             expect(prisma.product.create).toHaveBeenCalledTimes(1);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_CREATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_CREATED' }),
             );
         });
 
@@ -345,8 +345,8 @@ describe('ImportService', () => {
             const result = await service.commit({ jobId: 'job-1' }, TENANT, ACTOR);
 
             expect(result.status).toBe(ImportJobStatus.COMPLETED);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_UPDATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_UPDATED' }),
             );
         });
 
@@ -383,8 +383,8 @@ describe('ImportService', () => {
 
             await service.commit({ jobId: 'job-1' }, TENANT, ACTOR);
 
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.IMPORT_COMMITTED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'CATALOG_IMPORT_COMMITTED' }),
             );
         });
 

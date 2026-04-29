@@ -7,6 +7,7 @@ import { UserService } from '../users/user.service';
 import { EmailService } from './email.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { ReferralAttributionService } from '../referrals/referral-attribution.service';
+import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
 
 // bcrypt is slow at cost 12 — mock it for unit tests
@@ -95,6 +96,7 @@ describe('AuthService', () => {
     let emailService: jest.Mocked<Pick<EmailService, 'sendVerificationEmail' | 'sendPasswordResetEmail'>>;
     let jwtService: jest.Mocked<Pick<JwtService, 'sign'>>;
     let logSpy: jest.SpyInstance;
+    let auditService: { writeEvent: jest.Mock; writeSecurityEvent: jest.Mock };
 
     beforeEach(async () => {
         prisma = makePrismaMock();
@@ -140,10 +142,18 @@ describe('AuthService', () => {
                         }),
                     },
                 },
+                {
+                    provide: AuditService,
+                    useValue: {
+                        writeEvent: jest.fn().mockResolvedValue(undefined),
+                        writeSecurityEvent: jest.fn().mockResolvedValue(undefined),
+                    },
+                },
             ],
         }).compile();
 
         service = module.get(AuthService);
+        auditService = module.get(AuditService) as any;
         logSpy = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     });
 
@@ -323,8 +333,8 @@ describe('AuthService', () => {
                     response: expect.objectContaining({ code: 'AUTH_ACCOUNT_SOFT_LOCKED' }),
                 });
 
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_login_blocked"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'login_failed', metadata: expect.objectContaining({ reason: 'soft_lock' }) }),
             );
         });
 
@@ -339,8 +349,8 @@ describe('AuthService', () => {
                 });
 
             expect(prisma.loginAttempt.create).toHaveBeenCalled();
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_login_failed"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'login_failed', metadata: expect.objectContaining({ reason: 'invalid_credentials' }) }),
             );
         });
 
@@ -368,8 +378,8 @@ describe('AuthService', () => {
                     }),
                 });
 
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_login_failed"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'login_failed', metadata: expect.objectContaining({ reason: 'email_not_verified' }) }),
             );
         });
 
@@ -408,8 +418,8 @@ describe('AuthService', () => {
             expect(prisma.user.update).toHaveBeenCalledWith(
                 expect.objectContaining({ data: expect.objectContaining({ lastLoginAt: expect.any(Date) }) }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_login_succeeded"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'login_success' }),
             );
         });
     });
@@ -448,8 +458,8 @@ describe('AuthService', () => {
                     data: expect.objectContaining({ status: 'COMPROMISED', revokeReason: 'REFRESH_TOKEN_REUSE' }),
                 }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_refresh_token_reuse_detected"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'session_revoked', metadata: expect.objectContaining({ reason: 'token_reuse' }) }),
             );
         });
 
@@ -494,8 +504,8 @@ describe('AuthService', () => {
                     data: expect.objectContaining({ status: 'REVOKED', revokeReason: 'USER_LOGOUT' }),
                 }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_session_revoked"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'session_revoked' }),
             );
         });
     });
@@ -512,8 +522,8 @@ describe('AuthService', () => {
                     data: expect.objectContaining({ status: 'REVOKED', revokeReason: 'USER_LOGOUT_ALL' }),
                 }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_session_revoked"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'session_revoked', metadata: expect.objectContaining({ reason: 'USER_LOGOUT_ALL' }) }),
             );
         });
     });
@@ -600,8 +610,8 @@ describe('AuthService', () => {
             const result = await service.forgotPassword('user@example.com', '1.2.3.4');
             expect(result).toEqual({ sent: true });
             expect(emailService.sendPasswordResetEmail).toHaveBeenCalled();
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_password_reset_requested"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'password_reset_requested' }),
             );
         });
     });
@@ -624,8 +634,8 @@ describe('AuthService', () => {
                     data: expect.objectContaining({ status: 'REVOKED', revokeReason: 'PASSWORD_RESET' }),
                 }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_password_reset_completed"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'password_changed', metadata: expect.objectContaining({ via: 'password_reset' }) }),
             );
         });
 
@@ -683,8 +693,8 @@ describe('AuthService', () => {
                     data: expect.objectContaining({ status: 'REVOKED', revokeReason: 'PASSWORD_CHANGE' }),
                 }),
             );
-            expect(logSpy).toHaveBeenCalledWith(
-                expect.stringContaining('"event":"auth_password_changed"'),
+            expect(auditService.writeSecurityEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'password_changed', metadata: expect.objectContaining({ via: 'self_service' }) }),
             );
         });
 
@@ -716,6 +726,10 @@ describe('AuthService', () => {
             logSpy.mockImplementation((msg: string) => {
                 try { events.push(JSON.parse(msg).event); } catch { /* not JSON */ }
             });
+            auditService.writeSecurityEvent.mockImplementation((payload: any) => {
+                events.push(payload.eventType);
+                return Promise.resolve();
+            });
             return events;
         };
 
@@ -742,7 +756,7 @@ describe('AuthService', () => {
             prisma.user.update.mockResolvedValue({});
             const events = captureEvents();
             await service.loginUser('user-1', '1.2.3.4');
-            expect(events).toContain('auth_login_succeeded');
+            expect(events).toContain('login_success');
         });
 
         it('covers auth_login_failed (wrong password)', async () => {
@@ -753,7 +767,7 @@ describe('AuthService', () => {
             mockedBcrypt.compare.mockResolvedValue(false as never);
             const events = captureEvents();
             await service.validateUser({ email: 'user@example.com', password: 'wrong' }).catch(() => {});
-            expect(events).toContain('auth_login_failed');
+            expect(events).toContain('login_failed');
         });
 
         it('covers auth_refresh_token_reuse_detected', async () => {
@@ -761,7 +775,7 @@ describe('AuthService', () => {
             prisma.authSession.updateMany.mockResolvedValue({ count: 1 });
             const events = captureEvents();
             await service.refreshSession('reused').catch(() => {});
-            expect(events).toContain('auth_refresh_token_reuse_detected');
+            expect(events).toContain('session_revoked');
         });
 
         it('covers auth_password_reset_requested', async () => {
@@ -772,7 +786,7 @@ describe('AuthService', () => {
             prisma.passwordResetChallenge.create.mockResolvedValue({});
             const events = captureEvents();
             await service.forgotPassword('user@example.com');
-            expect(events).toContain('auth_password_reset_requested');
+            expect(events).toContain('password_reset_requested');
         });
 
         it('covers auth_password_reset_completed', async () => {
@@ -782,7 +796,7 @@ describe('AuthService', () => {
             prisma.authSession.updateMany.mockResolvedValue({ count: 0 });
             const events = captureEvents();
             await service.resetPassword('raw-token', 'NewPass123!');
-            expect(events).toContain('auth_password_reset_completed');
+            expect(events).toContain('password_changed');
         });
 
         it('covers auth_password_changed', async () => {
@@ -794,14 +808,14 @@ describe('AuthService', () => {
                 .mockResolvedValueOnce(false as never);
             const events = captureEvents();
             await service.changePassword('user-1', 'session-1', 'OldPass!', 'NewPass123!');
-            expect(events).toContain('auth_password_changed');
+            expect(events).toContain('password_changed');
         });
 
         it('covers auth_session_revoked (logout-all)', async () => {
             prisma.authSession.updateMany.mockResolvedValue({ count: 3 });
             const events = captureEvents();
             await service.revokeAllSessions('user-1');
-            expect(events).toContain('auth_session_revoked');
+            expect(events).toContain('session_revoked');
         });
     });
 });

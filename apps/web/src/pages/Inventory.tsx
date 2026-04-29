@@ -1,10 +1,24 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
     Boxes, History as HistoryIcon, AlertTriangle, Plus, Settings as SettingsIcon,
     Activity, Search, RefreshCw, Lock, ShieldAlert, Info, X, ChevronRight,
+    Eye, Unlock, Trash2, ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import {
+    fetchLocksForTenant,
+    createLock,
+    removeLock,
+    type StockLock,
+    type LockType,
+    type Marketplace as LockMarketplace,
+} from '../api/stockLocks';
+import {
+    fetchChannelVisibility,
+    updateChannelVisibility,
+    type Marketplace as VisMarketplace,
+} from '../api/channelVisibility';
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -85,6 +99,19 @@ interface EffectLock {
     createdAt: string;
     updatedAt: string;
 }
+
+const ALL_MARKETPLACES: VisMarketplace[] = ['WB', 'OZON'];
+
+const LOCK_TYPE_LABELS: Record<LockType, string> = {
+    ZERO: 'ZERO (отправить 0)',
+    FIXED: 'FIXED (фиксированное)',
+    PAUSED: 'PAUSED (пропустить)',
+};
+
+const MARKETPLACE_LABELS: Record<LockMarketplace, string> = {
+    WB: 'Wildberries',
+    OZON: 'Ozon',
+};
 
 // ─────────────────────────────── helpers ─────────────────────────────
 
@@ -180,6 +207,22 @@ export default function Inventory() {
     const [adjustError, setAdjustError] = useState<string | null>(null);
     const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+    // ─── channel visibility state
+    const [visibleMarketplaces, setVisibleMarketplaces] = useState<VisMarketplace[]>(ALL_MARKETPLACES);
+    const [channelDropdownOpen, setChannelDropdownOpen] = useState(false);
+    const visibilityDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // ─── stock locks state
+    const [locksMap, setLocksMap] = useState<Record<string, StockLock[]>>({});
+    const [lockModalProduct, setLockModalProduct] = useState<StockRow | null>(null);
+    const [lockModalLocks, setLockModalLocks] = useState<StockLock[]>([]);
+    const [lockFormMarketplace, setLockFormMarketplace] = useState<LockMarketplace>('WB');
+    const [lockFormType, setLockFormType] = useState<LockType>('ZERO');
+    const [lockFormFixed, setLockFormFixed] = useState('');
+    const [lockFormNote, setLockFormNote] = useState('');
+    const [lockFormError, setLockFormError] = useState<string | null>(null);
+    const [lockFormSubmitting, setLockFormSubmitting] = useState(false);
+
     // ─── loaders
     const loadStocks = useCallback(async (page = 1, q?: string) => {
         setStocksLoading(true);
@@ -243,6 +286,56 @@ export default function Inventory() {
         }
     }, []);
 
+    const loadChannelVisibility = useCallback(async () => {
+        try {
+            const mp = await fetchChannelVisibility();
+            setVisibleMarketplaces(mp);
+        } catch {
+            // fallback to all marketplaces
+        }
+    }, []);
+
+    const saveChannelVisibility = useCallback((mp: VisMarketplace[]) => {
+        if (visibilityDebounceRef.current) clearTimeout(visibilityDebounceRef.current);
+        visibilityDebounceRef.current = setTimeout(async () => {
+            try {
+                await updateChannelVisibility(mp);
+            } catch {
+                // silent — UI already updated optimistically
+            }
+        }, 500);
+    }, []);
+
+    const toggleMarketplaceVisibility = (mp: VisMarketplace) => {
+        setVisibleMarketplaces(prev => {
+            const next = prev.includes(mp)
+                ? prev.filter(m => m !== mp)
+                : [...prev, mp];
+            if (next.length === 0) return prev; // не допускаем пустого списка
+            saveChannelVisibility(next);
+            return next;
+        });
+    };
+
+    const loadAllLocks = useCallback(async () => {
+        try {
+            const locks = await fetchLocksForTenant();
+            const map: Record<string, StockLock[]> = {};
+            for (const lock of locks) {
+                if (!map[lock.productId]) map[lock.productId] = [];
+                map[lock.productId].push(lock);
+            }
+            setLocksMap(map);
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    useEffect(() => {
+        loadChannelVisibility();
+        loadAllLocks();
+    }, [loadChannelVisibility, loadAllLocks]);
+
     useEffect(() => {
         if (tab === 'balances') loadStocks(1, search);
         if (tab === 'movements') loadMovements();
@@ -254,6 +347,74 @@ export default function Inventory() {
     const onSearchSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         loadStocks(1, search);
+    };
+
+    // ─── lock modal handlers
+    const openLockModal = (row: StockRow) => {
+        setLockModalProduct(row);
+        setLockModalLocks(locksMap[row.productId] ?? []);
+        setLockFormMarketplace('WB');
+        setLockFormType('ZERO');
+        setLockFormFixed('');
+        setLockFormNote('');
+        setLockFormError(null);
+    };
+
+    const handleRemoveLock = async (lockId: string) => {
+        if (!lockModalProduct) return;
+        const prev = lockModalLocks;
+        setLockModalLocks(l => l.filter(x => x.id !== lockId));
+        setLocksMap(m => {
+            const productId = lockModalProduct.productId;
+            const next = { ...m, [productId]: (m[productId] ?? []).filter(x => x.id !== lockId) };
+            return next;
+        });
+        try {
+            await removeLock(lockId);
+        } catch {
+            setLockModalLocks(prev);
+            setLocksMap(m => ({ ...m, [lockModalProduct.productId]: prev }));
+            alert('Не удалось снять блокировку');
+        }
+    };
+
+    const handleCreateLock = async () => {
+        if (!lockModalProduct) return;
+        setLockFormError(null);
+        if (lockFormType === 'FIXED' && (lockFormFixed === '' || parseInt(lockFormFixed, 10) < 0)) {
+            setLockFormError('Для типа FIXED укажите значение ≥ 0');
+            return;
+        }
+        setLockFormSubmitting(true);
+        try {
+            const newLock = await createLock({
+                productId: lockModalProduct.productId,
+                marketplace: lockFormMarketplace,
+                lockType: lockFormType,
+                fixedValue: lockFormType === 'FIXED' ? parseInt(lockFormFixed, 10) : null,
+                note: lockFormNote.trim() || null,
+            });
+            const merged = [
+                ...lockModalLocks.filter(
+                    l => !(l.marketplace === lockFormMarketplace),
+                ),
+                newLock,
+            ];
+            setLockModalLocks(merged);
+            setLocksMap(m => ({ ...m, [lockModalProduct.productId]: merged }));
+            setLockFormFixed('');
+            setLockFormNote('');
+        } catch (err: any) {
+            const code = err?.response?.data?.code;
+            const msg = err?.response?.data?.message;
+            setLockFormError(
+                code === 'PRODUCT_NOT_FOUND' ? 'Товар не найден' :
+                code === 'FORBIDDEN' ? 'Нет доступа' :
+                msg ?? 'Не удалось создать блокировку',
+            );
+        } finally {
+            setLockFormSubmitting(false);
+        }
     };
 
     // ─── threshold update
@@ -391,25 +552,55 @@ export default function Inventory() {
             {/* ─── Balances ─── */}
             {tab === 'balances' && (
                 <section className="space-y-3">
-                    <form onSubmit={onSearchSubmit} className="flex gap-2 items-center">
-                        <div className="relative flex-1 max-w-md">
-                            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Поиск по SKU или названию"
-                                className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-md text-sm"
-                            />
+                    <div className="flex gap-2 items-center flex-wrap">
+                        <form onSubmit={onSearchSubmit} className="flex gap-2 items-center flex-1">
+                            <div className="relative flex-1 max-w-md">
+                                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    placeholder="Поиск по SKU или названию"
+                                    className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-md text-sm"
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => loadStocks(stocksPage, search)}
+                                className="p-2 text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md"
+                                title="Обновить"
+                            >
+                                <RefreshCw className={`h-4 w-4 ${stocksLoading ? 'animate-spin' : ''}`} />
+                            </button>
+                        </form>
+
+                        {/* Channel visibility dropdown */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setChannelDropdownOpen(v => !v)}
+                                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-slate-300 rounded-md bg-white hover:bg-slate-50"
+                            >
+                                <Eye className="h-4 w-4 text-slate-500" />
+                                Каналы
+                                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                            </button>
+                            {channelDropdownOpen && (
+                                <div className="absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-md shadow-lg z-20 p-2 min-w-[160px]">
+                                    <p className="text-[10px] uppercase tracking-wider text-slate-400 px-2 pb-1">Показывать каналы</p>
+                                    {ALL_MARKETPLACES.map(mp => (
+                                        <label key={mp} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer text-sm">
+                                            <input
+                                                type="checkbox"
+                                                checked={visibleMarketplaces.includes(mp)}
+                                                onChange={() => toggleMarketplaceVisibility(mp)}
+                                                className="rounded"
+                                            />
+                                            {MARKETPLACE_LABELS[mp]}
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
                         </div>
-                        <button
-                            type="button"
-                            onClick={() => loadStocks(stocksPage, search)}
-                            className="p-2 text-slate-500 hover:text-slate-900 border border-slate-300 rounded-md"
-                            title="Обновить"
-                        >
-                            <RefreshCw className={`h-4 w-4 ${stocksLoading ? 'animate-spin' : ''}`} />
-                        </button>
-                    </form>
+                    </div>
 
                     <div className="bg-white border border-slate-200 rounded-md overflow-hidden">
                         <table className="w-full text-sm">
@@ -420,17 +611,29 @@ export default function Inventory() {
                                     <th className="px-3 py-2 text-right">reserved</th>
                                     <th className="px-3 py-2 text-right">available</th>
                                     <th className="px-3 py-2 text-left">Склады</th>
+                                    <th className="px-3 py-2 text-left">Блокировки</th>
                                     <th className="px-3 py-2 text-right">Действия</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                                 {stocks.length === 0 && !stocksLoading && (
-                                    <tr><td colSpan={6} className="text-center py-6 text-slate-500">Нет товаров.</td></tr>
+                                    <tr><td colSpan={7} className="text-center py-6 text-slate-500">Нет товаров.</td></tr>
                                 )}
-                                {stocks.map((row) => (
-                                    <tr key={row.productId} className="hover:bg-slate-50">
+                                {stocks.map((row) => {
+                                    const rowLocks = locksMap[row.productId] ?? [];
+                                    const hasLocks = rowLocks.length > 0;
+                                    return (
+                                    <tr key={row.productId} className={`hover:bg-slate-50 ${hasLocks ? 'bg-amber-50/30' : ''}`}>
                                         <td className="px-3 py-2">
-                                            <div className="font-medium text-slate-900">{row.sku}</div>
+                                            <div className="font-medium text-slate-900 flex items-center gap-1.5">
+                                                {hasLocks && (
+                                                    <Lock
+                                                        className="h-3.5 w-3.5 text-amber-500 flex-shrink-0"
+                                                        title={rowLocks.map(l => `${l.marketplace}: ${l.lockType}${l.fixedValue != null ? ` (${l.fixedValue})` : ''}`).join(', ')}
+                                                    />
+                                                )}
+                                                {row.sku}
+                                            </div>
                                             <div className="text-xs text-slate-500 truncate max-w-xs">{row.name}</div>
                                         </td>
                                         <td className="px-3 py-2 text-right font-mono">{row.onHand}</td>
@@ -456,6 +659,28 @@ export default function Inventory() {
                                                 ))}
                                             </div>
                                         </td>
+                                        <td className="px-3 py-2">
+                                            <div className="flex flex-wrap gap-1">
+                                                {rowLocks
+                                                    .filter(l => visibleMarketplaces.includes(l.marketplace as VisMarketplace))
+                                                    .map(l => (
+                                                    <span
+                                                        key={l.id}
+                                                        className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                                                        title={`${l.marketplace}: ${l.lockType}${l.fixedValue != null ? ` = ${l.fixedValue}` : ''}${l.note ? ` — ${l.note}` : ''}`}
+                                                    >
+                                                        {l.marketplace}: {l.lockType}
+                                                    </span>
+                                                ))}
+                                                <button
+                                                    onClick={() => openLockModal(row)}
+                                                    className="text-[10px] px-1.5 py-0.5 rounded border border-dashed border-slate-300 text-slate-500 hover:border-amber-400 hover:text-amber-700"
+                                                    title="Управление блокировками"
+                                                >
+                                                    {hasLocks ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+                                                </button>
+                                            </div>
+                                        </td>
                                         <td className="px-3 py-2 text-right">
                                             <button
                                                 onClick={() => openAdjust(row)}
@@ -472,7 +697,8 @@ export default function Inventory() {
                                             </button>
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -762,6 +988,120 @@ export default function Inventory() {
                         </>
                     )}
                 </section>
+            )}
+
+            {/* ─── Lock management modal ─── */}
+            {lockModalProduct && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-lg">
+                        <div className="px-4 py-3 border-b flex items-center justify-between">
+                            <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                                <Lock className="h-4 w-4 text-amber-500" />
+                                Блокировки: {lockModalProduct.sku}
+                            </h2>
+                            <button onClick={() => setLockModalProduct(null)} className="text-slate-400 hover:text-slate-600">
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            {/* Existing locks */}
+                            <div>
+                                <p className="text-xs font-medium text-slate-600 uppercase tracking-wider mb-2">Активные блокировки</p>
+                                {lockModalLocks.length === 0 ? (
+                                    <p className="text-xs text-slate-400 italic">Нет активных блокировок</p>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        {lockModalLocks.map(l => (
+                                            <div key={l.id} className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded px-3 py-2 text-sm">
+                                                <div>
+                                                    <span className="font-medium text-amber-800">{MARKETPLACE_LABELS[l.marketplace]}</span>
+                                                    <span className="text-amber-700 ml-2">
+                                                        {l.lockType}{l.fixedValue != null ? ` = ${l.fixedValue}` : ''}
+                                                    </span>
+                                                    {l.note && <span className="text-amber-600 ml-2 text-xs">— {l.note}</span>}
+                                                </div>
+                                                <button
+                                                    onClick={() => handleRemoveLock(l.id)}
+                                                    className="ml-2 p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded"
+                                                    title="Снять блокировку"
+                                                >
+                                                    <Trash2 className="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Create lock form */}
+                            {!writeBlocked && (
+                                <div className="border-t pt-4">
+                                    <p className="text-xs font-medium text-slate-600 uppercase tracking-wider mb-3">Добавить блокировку</p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="block text-xs text-slate-600 mb-1">Маркетплейс</label>
+                                            <select
+                                                value={lockFormMarketplace}
+                                                onChange={e => setLockFormMarketplace(e.target.value as LockMarketplace)}
+                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"
+                                            >
+                                                {ALL_MARKETPLACES.map(mp => (
+                                                    <option key={mp} value={mp}>{MARKETPLACE_LABELS[mp]}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-slate-600 mb-1">Тип</label>
+                                            <select
+                                                value={lockFormType}
+                                                onChange={e => setLockFormType(e.target.value as LockType)}
+                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"
+                                            >
+                                                {(Object.keys(LOCK_TYPE_LABELS) as LockType[]).map(t => (
+                                                    <option key={t} value={t}>{LOCK_TYPE_LABELS[t]}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    {lockFormType === 'FIXED' && (
+                                        <div className="mt-2">
+                                            <label className="block text-xs text-slate-600 mb-1">Фиксированное значение (≥ 0)</label>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                value={lockFormFixed}
+                                                onChange={e => setLockFormFixed(e.target.value)}
+                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono"
+                                            />
+                                        </div>
+                                    )}
+                                    <div className="mt-2">
+                                        <label className="block text-xs text-slate-600 mb-1">Заметка (опционально)</label>
+                                        <input
+                                            type="text"
+                                            value={lockFormNote}
+                                            onChange={e => setLockFormNote(e.target.value)}
+                                            placeholder="Например: Распродажа FBO"
+                                            className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"
+                                        />
+                                    </div>
+                                    {lockFormError && (
+                                        <div className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                                            {lockFormError}
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={handleCreateLock}
+                                        disabled={lockFormSubmitting}
+                                        className="mt-3 w-full px-3 py-2 text-sm bg-amber-600 text-white rounded hover:bg-amber-700 disabled:opacity-50"
+                                    >
+                                        {lockFormSubmitting ? 'Создаём...' : 'Добавить блокировку'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             )}
 
             {/* ─── Adjustment dialog ─── */}

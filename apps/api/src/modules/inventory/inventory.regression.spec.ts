@@ -95,7 +95,7 @@ function makePrismaMock() {
 }
 
 function audit(): AuditService {
-    return { logAction: jest.fn().mockResolvedValue({}) } as unknown as AuditService;
+    return { writeEvent: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
 }
 
 async function build(prisma: any) {

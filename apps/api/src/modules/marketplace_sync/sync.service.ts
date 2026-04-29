@@ -1,9 +1,12 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ActionType, MarketplaceType, OrderFulfillmentMode } from '@prisma/client';
+import { MarketplaceType, OrderFulfillmentMode, StockChannelLock, StockLockType } from '@prisma/client';
 import axios, { AxiosError } from 'axios';
 import { SyncPreflightService } from '../sync-runs/sync-preflight.service';
 import { OrdersIngestionService } from '../orders/orders-ingestion.service';
+import { AuditService } from '../audit/audit.service';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
+import { StockLocksService } from '../stock-locks/stock-locks.service';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
@@ -24,7 +27,59 @@ export class SyncService implements OnModuleInit {
         // каждый order event теперь дополнительно проходит идемпотентный
         // ingestion в `Order/OrderItem/OrderEvent`.
         private readonly ordersIngestion: OrdersIngestionService,
+        private readonly auditService: AuditService,
+        // TASK_CHANNEL_3: batch-lookup блокировок перед каждым push batch.
+        private readonly stockLocks: StockLocksService,
     ) { }
+
+    // ─── Lock application helper ───────────────────────────────────────────────
+    // Применяет StockChannelLock к набору push-items:
+    //   ZERO   → qty = 0
+    //   FIXED  → qty = lock.fixedValue
+    //   PAUSED → item исключается из payload
+    // Один вызов findByMarketplace = один SELECT на весь batch (§19 system-analytics).
+    private _applyStockLocks<T extends { id: string; sku: string; amount: number }>(
+        items: T[],
+        lockMap: Map<string, StockChannelLock>,
+        ctx: { tenantId: string; marketplace: string },
+    ): T[] {
+        const result: T[] = [];
+        for (const item of items) {
+            const lock = lockMap.get(item.id);
+            if (!lock) {
+                result.push(item);
+                continue;
+            }
+            if (lock.lockType === StockLockType.PAUSED) {
+                this.logger.log(JSON.stringify({
+                    metric: 'push_stocks_skipped_by_lock',
+                    tenantId: ctx.tenantId,
+                    marketplace: ctx.marketplace,
+                    productId: item.id,
+                    sku: item.sku,
+                    lockType: 'PAUSED',
+                    lockApplied: true,
+                    ts: new Date().toISOString(),
+                }));
+                continue;
+            }
+            const overrideAmount = lock.lockType === StockLockType.ZERO ? 0 : (lock.fixedValue ?? item.amount);
+            this.logger.log(JSON.stringify({
+                metric: 'push_stocks_overridden_by_lock',
+                tenantId: ctx.tenantId,
+                marketplace: ctx.marketplace,
+                productId: item.id,
+                sku: item.sku,
+                originalAmount: item.amount,
+                overrideAmount,
+                lockType: lock.lockType,
+                lockApplied: true,
+                ts: new Date().toISOString(),
+            }));
+            result.push({ ...item, amount: overrideAmount });
+        }
+        return result;
+    }
 
     async onModuleInit() {
         if (process.env.IS_WORKER !== 'true') {
@@ -300,9 +355,34 @@ export class SyncService implements OnModuleInit {
             ? balances.reduce((s, b) => s + Math.max(0, b.available), 0)
             : Math.max(0, product.total - product.reserved);
 
+        // TASK_CHANNEL_3: проверяем блокировки для WB и Ozon независимо.
+        // Два точечных SELECT по уникальному индексу (tenantId, productId, marketplace).
+        const [wbLock, ozonLock] = await Promise.all([
+            this.prisma.stockChannelLock.findUnique({
+                where: { tenantId_productId_marketplace: { tenantId, productId: product.id, marketplace: MarketplaceType.WB } },
+            }),
+            this.prisma.stockChannelLock.findUnique({
+                where: { tenantId_productId_marketplace: { tenantId, productId: product.id, marketplace: MarketplaceType.OZON } },
+            }),
+        ]);
+
+        const _resolveAmount = (lock: StockChannelLock | null, base: number, marketplace: string): number | null => {
+            if (!lock) return base;
+            if (lock.lockType === StockLockType.PAUSED) {
+                this.logger.log(JSON.stringify({ metric: 'push_stocks_skipped_by_lock', tenantId, marketplace, productId: product.id, sku: product.sku, lockType: 'PAUSED', lockApplied: true, ts: new Date().toISOString() }));
+                return null;
+            }
+            const override = lock.lockType === StockLockType.ZERO ? 0 : (lock.fixedValue ?? base);
+            this.logger.log(JSON.stringify({ metric: 'push_stocks_overridden_by_lock', tenantId, marketplace, productId: product.id, sku: product.sku, originalAmount: base, overrideAmount: override, lockType: lock.lockType, lockApplied: true, ts: new Date().toISOString() }));
+            return override;
+        };
+
+        const wbAmount = _resolveAmount(wbLock, available, 'WB');
+        const ozonAmount = _resolveAmount(ozonLock, available, 'OZON');
+
         const [wb, ozon] = await Promise.all([
-            this.syncToWb(settings, product, available),
-            this.syncToOzon(settings, product, available),
+            wbAmount !== null ? this.syncToWb(settings, product, wbAmount) : Promise.resolve({ success: true, skipped: true }),
+            ozonAmount !== null ? this.syncToOzon(settings, product, ozonAmount) : Promise.resolve({ success: true, skipped: true }),
         ]);
 
         return { wb, ozon, amount: available };
@@ -372,10 +452,15 @@ export class SyncService implements OnModuleInit {
                 }
             }
 
-            // Push updates back to WB if we have mismatches
+            // Push updates back to WB if we have mismatches.
+            // TASK_CHANNEL_3: один batch-lookup блокировок на весь reconcile batch.
             if (wbReconcileQueue.length > 0) {
-                await this.syncBatchToWb(settings, wbReconcileQueue);
-                updatedCount += wbReconcileQueue.length;
+                const wbLockMap = await this.stockLocks.findByMarketplace(tenantId, MarketplaceType.WB);
+                const filteredQueue = this._applyStockLocks(wbReconcileQueue, wbLockMap, { tenantId, marketplace: 'WB' });
+                if (filteredQueue.length > 0) {
+                    await this.syncBatchToWb(settings, filteredQueue);
+                }
+                updatedCount += filteredQueue.length;
             }
 
             await this.updateMarketplaceStatus(tenantId, 'WB', null);
@@ -462,6 +547,9 @@ export class SyncService implements OnModuleInit {
 
         if (products.length === 0) return { success: true, updated: 0, total: 0 };
 
+        // TASK_CHANNEL_3: один SELECT на весь sync run — не поштучно.
+        const ozonLockMap = await this.stockLocks.findByMarketplace(tenantId, MarketplaceType.OZON);
+
         let updatedCount = 0;
         const now = Date.now();
         const chunkSize = 100;
@@ -483,8 +571,11 @@ export class SyncService implements OnModuleInit {
             }
 
             if (itemsToPush.length > 0) {
-                await this.syncBatchToOzon(settings, itemsToPush);
-                updatedCount += itemsToPush.length;
+                const filteredItems = this._applyStockLocks(itemsToPush, ozonLockMap, { tenantId, marketplace: 'OZON' });
+                if (filteredItems.length > 0) {
+                    await this.syncBatchToOzon(settings, filteredItems);
+                }
+                updatedCount += filteredItems.length;
             }
         }
 
@@ -557,10 +648,15 @@ export class SyncService implements OnModuleInit {
                 }
             }
 
-            // Push updates back to Ozon if we have mismatches
+            // Push updates back to Ozon if we have mismatches.
+            // TASK_CHANNEL_3: один batch-lookup блокировок на весь reconcile batch.
             if (ozonReconcileQueue.length > 0) {
-                await this.syncBatchToOzon(settings, ozonReconcileQueue);
-                updatedCount += ozonReconcileQueue.length;
+                const ozonLockMap = await this.stockLocks.findByMarketplace(tenantId, MarketplaceType.OZON);
+                const filteredQueue = this._applyStockLocks(ozonReconcileQueue, ozonLockMap, { tenantId, marketplace: 'OZON' });
+                if (filteredQueue.length > 0) {
+                    await this.syncBatchToOzon(settings, filteredQueue);
+                }
+                updatedCount += filteredQueue.length;
             }
 
             await this.updateMarketplaceStatus(tenantId, 'OZON', null);
@@ -724,18 +820,17 @@ export class SyncService implements OnModuleInit {
                 });
 
                 // 2. Логируем в аудит
-                await this.prisma.auditLog.create({
-                    data: {
-                        actionType: 'ORDER_DEDUCTED' as any,
-                        productId: product.id,
-                        productSku: product.sku,
-                        delta: -qty,
-                        actorUserId: 'system-wb',
-                        note: `Заказ WB #${orderId}`,
-                        beforeTotal: product.total,
-                        afterTotal: product.total - qty,
-                        tenantId: tenantId
-                    }
+                await this.auditService.writeEvent({
+                    tenantId,
+                    eventType: AUDIT_EVENTS.STOCK_ORDER_DEDUCTED,
+                    entityType: 'PRODUCT',
+                    entityId: product.id,
+                    actorType: 'marketplace',
+                    source: 'worker',
+                    before: { total: product.total },
+                    after:  { total: product.total - qty },
+                    changedFields: ['total'],
+                    metadata: { marketplace: 'WB', orderId, sku: product.sku, delta: -qty },
                 });
 
                 // 3. Запоминаем заказ (legacy)
@@ -887,18 +982,17 @@ export class SyncService implements OnModuleInit {
                                         data: { total: { increment: qty } }
                                     });
 
-                                    await this.prisma.auditLog.create({
-                                        data: {
-                                            actionType: ActionType.STOCK_ADJUSTED,
-                                            productId: product.id,
-                                            productSku: product.sku,
-                                            delta: qty,
-                                            actorUserId: 'system-ozon',
-                                            note: `Возврат: Отмена Ozon #${postingNumber}`,
-                                            beforeTotal: product.total,
-                                            afterTotal: product.total + qty,
-                                            tenantId: tenantId
-                                        }
+                                    await this.auditService.writeEvent({
+                                        tenantId,
+                                        eventType: AUDIT_EVENTS.STOCK_ORDER_RETURNED,
+                                        entityType: 'PRODUCT',
+                                        entityId: product.id,
+                                        actorType: 'marketplace',
+                                        source: 'worker',
+                                        before: { total: product.total },
+                                        after:  { total: product.total + qty },
+                                        changedFields: ['total'],
+                                        metadata: { marketplace: 'OZON', postingNumber, sku: product.sku, delta: qty },
                                     });
                                     this.logger.log(`[Store ${tenantId}] [Ozon Cancel] Refunded #${postingNumber}, ${product.sku}, +${qty}`);
                                     await this.syncProductToMarketplaces(product.id, tenantId);
@@ -929,18 +1023,17 @@ export class SyncService implements OnModuleInit {
                     });
 
                     // 2. Логируем
-                    await this.prisma.auditLog.create({
-                        data: {
-                            actionType: 'ORDER_DEDUCTED' as any,
-                            productId: product.id,
-                            productSku: product.sku,
-                            delta: -qty,
-                            actorUserId: 'system-ozon',
-                            note: `Заказ Ozon #${postingNumber}`,
-                            beforeTotal: product.total,
-                            afterTotal: product.total - qty,
-                            tenantId: tenantId
-                        }
+                    await this.auditService.writeEvent({
+                        tenantId,
+                        eventType: AUDIT_EVENTS.STOCK_ORDER_DEDUCTED,
+                        entityType: 'PRODUCT',
+                        entityId: product.id,
+                        actorType: 'marketplace',
+                        source: 'worker',
+                        before: { total: product.total },
+                        after:  { total: product.total - qty },
+                        changedFields: ['total'],
+                        metadata: { marketplace: 'OZON', postingNumber, sku: product.sku, delta: -qty },
                     });
 
                     this.logger.log(`[Store ${tenantId}] [Ozon Order] Processed #${postingNumber}, ${product.sku}, -${qty}`);

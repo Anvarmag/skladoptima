@@ -18,6 +18,7 @@ function makePrismaMock() {
         },
         membership: {
             findUnique: jest.fn(),
+            findFirst: jest.fn(),
             findMany: jest.fn(),
         },
         userPreference: {
@@ -212,7 +213,7 @@ describe('TenantService', () => {
 
         it('возвращает current tenant по lastUsedTenantId', async () => {
             prisma.userPreference.findUnique.mockResolvedValue({ lastUsedTenantId: TENANT_ID });
-            prisma.membership.findUnique.mockResolvedValue(ACTIVE_MEMBERSHIP);
+            prisma.membership.findFirst.mockResolvedValue(ACTIVE_MEMBERSHIP);
 
             const result = await service.getCurrentTenant(USER_ID);
 
@@ -222,7 +223,7 @@ describe('TenantService', () => {
 
         it('возвращает null если membership не найден', async () => {
             prisma.userPreference.findUnique.mockResolvedValue({ lastUsedTenantId: TENANT_ID });
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
 
             const result = await service.getCurrentTenant(USER_ID);
             expect(result).toBeNull();
@@ -233,14 +234,14 @@ describe('TenantService', () => {
 
     describe('getTenant', () => {
         it('возвращает tenant при наличии membership', async () => {
-            prisma.membership.findUnique.mockResolvedValue(ACTIVE_MEMBERSHIP);
+            prisma.membership.findFirst.mockResolvedValue(ACTIVE_MEMBERSHIP);
             const result = await service.getTenant(USER_ID, TENANT_ID);
             expect(result.id).toBe(TENANT_ID);
             expect(result.inn).toBe('7701234567');
         });
 
         it('бросает TENANT_NOT_FOUND если нет membership', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.getTenant(USER_ID, TENANT_ID)).rejects.toThrow(NotFoundException);
         });
     });
@@ -249,7 +250,7 @@ describe('TenantService', () => {
 
     describe('switchTenant', () => {
         it('переключает активный tenant и эмитирует audit event', async () => {
-            prisma.membership.findUnique.mockResolvedValue({
+            prisma.membership.findFirst.mockResolvedValue({
                 tenant: { status: 'ACTIVE', accessState: 'TRIAL_ACTIVE' },
             });
             prisma.userPreference.upsert.mockResolvedValue({});
@@ -267,12 +268,12 @@ describe('TenantService', () => {
         });
 
         it('бросает TENANT_ACCESS_DENIED если нет membership', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.switchTenant(USER_ID, TENANT_ID)).rejects.toThrow(ForbiddenException);
         });
 
         it('бросает TENANT_CLOSED при status=CLOSED', async () => {
-            prisma.membership.findUnique.mockResolvedValue({
+            prisma.membership.findFirst.mockResolvedValue({
                 tenant: { status: 'CLOSED', accessState: 'CLOSED' },
             });
             await expect(service.switchTenant(USER_ID, TENANT_ID)).rejects.toMatchObject({
@@ -281,7 +282,7 @@ describe('TenantService', () => {
         });
 
         it('бросает TENANT_CLOSED при accessState=CLOSED (status ещё не обновлён)', async () => {
-            prisma.membership.findUnique.mockResolvedValue({
+            prisma.membership.findFirst.mockResolvedValue({
                 tenant: { status: 'ACTIVE', accessState: 'CLOSED' },
             });
             await expect(service.switchTenant(USER_ID, TENANT_ID)).rejects.toMatchObject({
@@ -294,7 +295,7 @@ describe('TenantService', () => {
 
     describe('getAccessWarnings', () => {
         const mockMembership = (state: string) =>
-            prisma.membership.findUnique.mockResolvedValue({ tenant: { accessState: state } });
+            prisma.membership.findFirst.mockResolvedValue({ tenant: { accessState: state } });
 
         it('TRIAL_EXPIRED: возвращает предупреждение с severity=error', async () => {
             mockMembership('TRIAL_EXPIRED');
@@ -326,7 +327,7 @@ describe('TenantService', () => {
         });
 
         it('бросает TENANT_NOT_FOUND если нет membership', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.getAccessWarnings(USER_ID, TENANT_ID)).rejects.toThrow(NotFoundException);
         });
     });
@@ -517,17 +518,17 @@ describe('TenantService', () => {
 
     describe('data isolation: getTenant и switchTenant блокируют чужой tenant', () => {
         it('getTenant: нет membership → NotFoundException (cross-tenant isolation)', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.getTenant('attacker-user', TENANT_ID)).rejects.toThrow(NotFoundException);
         });
 
         it('switchTenant: нет membership → ForbiddenException (cross-tenant isolation)', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.switchTenant('attacker-user', TENANT_ID)).rejects.toThrow(ForbiddenException);
         });
 
         it('getAccessWarnings: нет membership → NotFoundException (cross-tenant isolation)', async () => {
-            prisma.membership.findUnique.mockResolvedValue(null);
+            prisma.membership.findFirst.mockResolvedValue(null);
             await expect(service.getAccessWarnings('attacker-user', TENANT_ID)).rejects.toThrow(NotFoundException);
         });
     });
@@ -553,7 +554,7 @@ describe('TenantService', () => {
         });
 
         it('tenant_selected_as_active при switchTenant', async () => {
-            prisma.membership.findUnique.mockResolvedValue({ tenant: { status: 'ACTIVE', accessState: 'ACTIVE_PAID' } });
+            prisma.membership.findFirst.mockResolvedValue({ tenant: { status: 'ACTIVE', accessState: 'ACTIVE_PAID' } });
             prisma.userPreference.upsert.mockResolvedValue({});
             const events = captureEvents();
             await service.switchTenant(USER_ID, TENANT_ID);

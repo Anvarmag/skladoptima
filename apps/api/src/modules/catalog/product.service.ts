@@ -10,7 +10,8 @@ import { AuditService } from '../audit/audit.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { ActionType, ProductStatus, ProductSourceOfTruth } from '@prisma/client';
+import { ProductStatus, ProductSourceOfTruth } from '@prisma/client';
+import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
 @Injectable()
 export class ProductService {
@@ -83,15 +84,16 @@ export class ProductService {
                 },
             });
 
-            await this.auditService.logAction({
-                actionType: ActionType.PRODUCT_RESTORED,
-                productId: product.id,
-                productSku: product.sku,
-                afterTotal: product.total,
-                afterName: product.name,
-                actorUserId: actorEmail,
-                note: 'Restored via create with confirmRestoreId',
+            await this.auditService.writeEvent({
                 tenantId,
+                eventType: AUDIT_EVENTS.PRODUCT_RESTORED,
+                entityType: 'PRODUCT',
+                entityId: product.id,
+                actorType: 'user',
+                actorId: userId,
+                source: 'ui',
+                after: { sku: product.sku, name: product.name, total: product.total },
+                metadata: { via: 'create_with_confirmRestoreId' },
             });
 
             this._triggerOnboardingAddProducts(tenantId);
@@ -118,14 +120,15 @@ export class ProductService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_CREATED,
-            productId: product.id,
-            productSku: product.sku,
-            afterTotal: product.total,
-            afterName: product.name,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.PRODUCT_CREATED,
+            entityType: 'PRODUCT',
+            entityId: product.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            after: { sku: product.sku, name: product.name, total: product.total },
         });
 
         this._triggerOnboardingAddProducts(tenantId);
@@ -182,7 +185,22 @@ export class ProductService {
     // ----------------------------------------------------------------
 
     async findOne(id: string, tenantId: string, includeDeleted = false) {
-        const product = await this.prisma.product.findUnique({ where: { id } });
+        const product = await this.prisma.product.findUnique({
+            where: { id },
+            include: {
+                channelMappings: {
+                    select: {
+                        id: true,
+                        marketplace: true,
+                        externalProductId: true,
+                        externalSku: true,
+                        isAutoMatched: true,
+                        createdAt: true,
+                    },
+                    orderBy: { createdAt: 'asc' },
+                },
+            },
+        });
 
         if (!product || product.tenantId !== tenantId) {
             throw new NotFoundException({ code: 'PRODUCT_NOT_FOUND' });
@@ -245,14 +263,17 @@ export class ProductService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_UPDATED,
-            productId: updated.id,
-            productSku: updated.sku,
-            beforeName: product.name,
-            afterName: updated.name,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.PRODUCT_UPDATED,
+            entityType: 'PRODUCT',
+            entityId: updated.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            before: { sku: product.sku, name: product.name },
+            after:  { sku: updated.sku, name: updated.name },
+            changedFields: Object.keys(dto).filter(k => (dto as any)[k] !== undefined),
         });
 
         return { ...updated, available: Math.max(0, updated.total) };
@@ -274,12 +295,16 @@ export class ProductService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_DELETED,
-            productId: product.id,
-            productSku: product.sku,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.PRODUCT_ARCHIVED,
+            entityType: 'PRODUCT',
+            entityId: product.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            before: { sku: product.sku, name: product.name, status: 'ACTIVE' },
+            after:  { status: 'DELETED' },
         });
 
         return { message: 'Product deleted successfully' };
@@ -306,13 +331,16 @@ export class ProductService {
             },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.PRODUCT_RESTORED,
-            productId: restored.id,
-            productSku: restored.sku,
-            afterName: restored.name,
-            actorUserId: actorEmail,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.PRODUCT_RESTORED,
+            entityType: 'PRODUCT',
+            entityId: restored.id,
+            actorType: 'user',
+            actorId: userId,
+            source: 'ui',
+            before: { status: 'DELETED' },
+            after:  { sku: restored.sku, name: restored.name, status: 'ACTIVE' },
         });
 
         return { ...restored, available: Math.max(0, restored.total) };
@@ -335,16 +363,17 @@ export class ProductService {
             data: { total: afterTotal },
         });
 
-        await this.auditService.logAction({
-            actionType: ActionType.STOCK_ADJUSTED,
-            productId: updated.id,
-            productSku: updated.sku,
-            beforeTotal: product.total,
-            afterTotal: updated.total,
-            delta,
-            actorUserId: actorEmail,
-            note,
+        await this.auditService.writeEvent({
             tenantId,
+            eventType: AUDIT_EVENTS.STOCK_MANUALLY_ADJUSTED,
+            entityType: 'PRODUCT',
+            entityId: updated.id,
+            actorType: 'user',
+            source: 'ui',
+            before: { total: product.total },
+            after:  { total: updated.total },
+            changedFields: ['total'],
+            metadata: { delta, note: note ?? null, sku: updated.sku },
         });
 
         return { ...updated, available: Math.max(0, updated.total) };

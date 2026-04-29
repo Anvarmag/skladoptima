@@ -9,12 +9,14 @@ import { CsrfGuard } from './csrf.guard';
 import { UserModule } from '../users/user.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
 import { ReferralModule } from '../referrals/referral.module';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
     imports: [
         UserModule,
         OnboardingModule,
         ReferralModule,
+        AuditModule,
         JwtModule.register({
             secret: process.env.JWT_SECRET || 'super-secret-key-change-me',
             signOptions: { expiresIn: '15m' },

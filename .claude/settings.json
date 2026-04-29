@@ -3,7 +3,15 @@
     "allow": [
       "Bash(xargs cat *)",
       "Bash(xargs grep *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")",
+      "PowerShell(New-Item -ItemType Directory -Path \"c:\\\\Skladoptima\\\\apps\\\\api\\\\prisma\\\\migrations\\\\20260428280000_files_data_model\" -Force)",
+      "PowerShell(New-Item -ItemType Directory -Path \"c:\\\\Skladoptima\\\\apps\\\\api\\\\src\\\\modules\\\\files\\\\dto\" -Force)",
+      "Bash(docker compose *)",
+      "Bash(git stash *)",
+      "Read(//c/c/Skladoptima/apps/api/**)",
+      "Bash(grep -E '\\\\.ts$|^d')"
     ]
   }
 }

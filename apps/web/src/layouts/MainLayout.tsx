@@ -1,6 +1,6 @@
 import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users, Boxes, Building2, Plug, RefreshCw, Gift, Bell } from 'lucide-react';
+import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users, Boxes, Building2, Plug, RefreshCw, Gift, Bell, ClipboardList } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { notificationsApi } from '../api/notifications';
 import AccessStateBanner from '../components/AccessStateBanner';
@@ -148,6 +148,14 @@ export default function MainLayout() {
                                 <>
                                     <ShoppingCart className={iconClass(isActive)} />
                                     Заказы
+                                </>
+                            )}
+                        </NavLink>
+                        <NavLink to="/app/tasks" className={navClass}>
+                            {({ isActive }) => (
+                                <>
+                                    <ClipboardList className={iconClass(isActive)} />
+                                    Задачи
                                 </>
                             )}
                         </NavLink>
@@ -300,6 +308,14 @@ export default function MainLayout() {
                             <>
                                 <ShoppingCart className={mobileIconClass(isActive)} />
                                 <span>Заказы</span>
+                            </>
+                        )}
+                    </NavLink>
+                    <NavLink to="/app/tasks" className={mobileNavClass}>
+                        {({ isActive }) => (
+                            <>
+                                <ClipboardList className={mobileIconClass(isActive)} />
+                                <span>Задачи</span>
                             </>
                         )}
                     </NavLink>

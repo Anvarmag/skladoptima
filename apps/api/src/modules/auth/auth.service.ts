@@ -13,6 +13,7 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { ReferralAttributionService } from '../referrals/referral-attribution.service';
+import { AuditService } from '../audit/audit.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 
@@ -42,6 +43,7 @@ export class AuthService {
         private readonly emailService: EmailService,
         private readonly onboardingService: OnboardingService,
         private readonly referralAttributionService: ReferralAttributionService,
+        private readonly auditService: AuditService,
     ) {}
 
     // ─── Register ────────────────────────────────────────────────────────────────
@@ -272,8 +274,10 @@ export class AuthService {
                 ? Math.max(0, oldest.createdAt.getTime() + SOFT_LOCK_WINDOW_MS - Date.now())
                 : SOFT_LOCK_WINDOW_MS;
 
-            this.auditLog('auth_login_blocked', {
-                normalizedEmail: email, ip: clientIp, failedCount, reason: 'soft_lock',
+            await this.auditService.writeSecurityEvent({
+                eventType: 'login_failed',
+                ip: clientIp,
+                metadata: { normalizedEmail: email, reason: 'soft_lock', failedCount },
             });
             throw new UnauthorizedException({
                 code: 'AUTH_ACCOUNT_SOFT_LOCKED',
@@ -288,16 +292,21 @@ export class AuthService {
 
         if (!user || !passwordOk) {
             await this.prisma.loginAttempt.create({ data: { normalizedEmail: email, ip: clientIp } });
-            this.auditLog('auth_login_failed', {
-                normalizedEmail: email, ip: clientIp, reason: 'invalid_credentials',
+            await this.auditService.writeSecurityEvent({
+                eventType: 'login_failed',
+                ip: clientIp,
+                metadata: { normalizedEmail: email, reason: 'invalid_credentials' },
             });
             throw new UnauthorizedException({ code: 'AUTH_INVALID_CREDENTIALS' });
         }
 
         // ── Проверка статуса (пароль верен) ──────────────────────────────────────
         if (user.status === 'PENDING_VERIFICATION') {
-            this.auditLog('auth_login_failed', {
-                userId: user.id, ip: clientIp, reason: 'email_not_verified',
+            await this.auditService.writeSecurityEvent({
+                eventType: 'login_failed',
+                userId: user.id,
+                ip: clientIp,
+                metadata: { reason: 'email_not_verified' },
             });
             throw new UnauthorizedException({
                 code: 'AUTH_EMAIL_NOT_VERIFIED',
@@ -306,8 +315,11 @@ export class AuthService {
         }
 
         if (user.status === 'LOCKED') {
-            this.auditLog('auth_login_failed', {
-                userId: user.id, ip: clientIp, reason: 'account_locked',
+            await this.auditService.writeSecurityEvent({
+                eventType: 'login_failed',
+                userId: user.id,
+                ip: clientIp,
+                metadata: { reason: 'account_locked' },
             });
             throw new UnauthorizedException({ code: 'AUTH_ACCOUNT_LOCKED' });
         }
@@ -327,7 +339,12 @@ export class AuthService {
             data: { lastLoginAt: new Date() },
         });
 
-        this.auditLog('auth_login_succeeded', { userId, ip, sessionId });
+        await this.auditService.writeSecurityEvent({
+            eventType: 'login_success',
+            userId,
+            ip,
+            metadata: { sessionId },
+        });
 
         return { sessionId, accessToken, rawRefreshToken };
     }
@@ -353,8 +370,11 @@ export class AuthService {
                     where: { userId: session.userId, status: 'ACTIVE' },
                     data: { status: 'COMPROMISED', revokedAt: new Date(), revokeReason: 'REFRESH_TOKEN_REUSE' },
                 });
-                this.auditLog('auth_refresh_token_reuse_detected', {
-                    userId: session.userId, sessionId: session.id, ip,
+                await this.auditService.writeSecurityEvent({
+                    eventType: 'session_revoked',
+                    userId: session.userId,
+                    ip,
+                    metadata: { reason: 'token_reuse', sessionId: session.id },
                 });
             }
             throw new UnauthorizedException({ code: 'AUTH_REFRESH_TOKEN_INVALID' });
@@ -390,8 +410,11 @@ export class AuthService {
             where: { id: sessionId, status: 'ACTIVE' },
             data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'USER_LOGOUT' },
         });
-        this.auditLog('auth_session_revoked', {
-            sessionId, userId: meta?.userId, ip: meta?.ip, reason: 'USER_LOGOUT',
+        await this.auditService.writeSecurityEvent({
+            eventType: 'session_revoked',
+            userId: meta?.userId,
+            ip: meta?.ip,
+            metadata: { sessionId, reason: 'USER_LOGOUT' },
         });
     }
 
@@ -400,7 +423,12 @@ export class AuthService {
             where: { userId, status: 'ACTIVE' },
             data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'USER_LOGOUT_ALL' },
         });
-        this.auditLog('auth_session_revoked', { userId, ip, reason: 'USER_LOGOUT_ALL' });
+        await this.auditService.writeSecurityEvent({
+            eventType: 'session_revoked',
+            userId,
+            ip,
+            metadata: { reason: 'USER_LOGOUT_ALL' },
+        });
     }
 
     // ─── Me / Auth Context ────────────────────────────────────────────────────────
@@ -506,7 +534,11 @@ export class AuthService {
 
         await this.createAndSendResetChallenge(user.id, normalizedEmail);
 
-        this.auditLog('auth_password_reset_requested', { userId: user.id, ip });
+        await this.auditService.writeSecurityEvent({
+            eventType: 'password_reset_requested',
+            userId: user.id,
+            ip,
+        });
 
         return { sent: true };
     }
@@ -547,7 +579,12 @@ export class AuthService {
             }),
         ]);
 
-        this.auditLog('auth_password_reset_completed', { userId: challenge.userId, ip });
+        await this.auditService.writeSecurityEvent({
+            eventType: 'password_changed',
+            userId: challenge.userId,
+            ip,
+            metadata: { via: 'password_reset' },
+        });
 
         return { ok: true };
     }
@@ -585,9 +622,58 @@ export class AuthService {
             }),
         ]);
 
-        this.auditLog('auth_password_changed', { userId, sessionId, ip });
+        await this.auditService.writeSecurityEvent({
+            eventType: 'password_changed',
+            userId,
+            ip,
+            metadata: { via: 'self_service', sessionId },
+        });
 
         return { ok: true };
+    }
+
+    // ─── Support-triggered password reset (см. 19-admin TASK_ADMIN_3) ────────────
+    //
+    // Используется ТОЛЬКО из SupportActionsService через admin-плоскость.
+    // Отличия от self-service `forgotPassword`:
+    //   - принимает userId, а не email — support находит user через tenant 360;
+    //   - НЕ возвращает 200 при отсутствующем user — support должен видеть
+    //     честный 404 (мы не утаиваем factsв admin-плоскости);
+    //   - НЕ применяет cooldown/hourly limit: support по определению редкий
+    //     операторный путь, и rate-limit'ы UX self-service flow здесь только
+    //     мешают повторно отправить ссылку, если первая не дошла;
+    //   - сам endpoint ограничен SUPPORT_ADMIN ролью + reason >= 10 символов
+    //     на уровне SupportActionsService — это и есть guard rate-abuse'а.
+    async triggerPasswordResetBySupport(
+        userId: string,
+        actor: { supportUserId: string; ip: string | null },
+    ): Promise<{ sent: boolean; userId: string }> {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, email: true, status: true },
+        });
+        if (!user || user.status === 'DELETED') {
+            throw new BadRequestException({ code: 'AUTH_USER_NOT_FOUND' });
+        }
+
+        // Отменяем предыдущие PENDING challenge'и того же user — иначе у user'а
+        // будет несколько активных reset-ссылок одновременно (разрушает
+        // инвариант "single live reset token per user").
+        await this.prisma.passwordResetChallenge.updateMany({
+            where: { userId: user.id, status: 'PENDING' },
+            data: { status: 'CANCELLED' },
+        });
+
+        await this.createAndSendResetChallenge(user.id, user.email);
+
+        await this.auditService.writeSecurityEvent({
+            eventType: 'password_reset_requested',
+            userId: user.id,
+            ip: actor.ip ?? undefined,
+            metadata: { triggeredBy: 'support', supportUserId: actor.supportUserId },
+        });
+
+        return { sent: true, userId: user.id };
     }
 
     // ─── Telegram (legacy) ────────────────────────────────────────────────────────

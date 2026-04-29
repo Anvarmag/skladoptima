@@ -171,9 +171,18 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 ## 11. Чеклист реализации
 
 - [x] Таблицы `audit_logs`, `security_events`. _(TASK_AUDIT_1)_
-- [ ] Унифицированный internal audit writer.
-- [ ] Ролевой доступ к просмотру аудита.
-- [ ] Интеграция с support actions и auth.
+- [x] Унифицированный internal audit writer. _(TASK_AUDIT_2)_
+- [x] Ролевой доступ к просмотру аудита. _(TASK_AUDIT_3)_
+- [x] Интеграция с support actions и auth. _(TASK_AUDIT_3)_
+- [x] Read API с RBAC фильтрами, drill-down и coverage-status. _(TASK_AUDIT_4)_
+- [x] История доступна при TRIAL_EXPIRED / SUSPENDED / CLOSED. _(TASK_AUDIT_4)_
+- [x] Before/after и metadata deep sanitization (рекурсивная). _(TASK_AUDIT_5)_
+- [x] Retention window 180 дней в tenant-facing getLogs(). _(TASK_AUDIT_5)_
+- [x] RBAC masking по redactionLevel (strict/partial/none) в read-модели. _(TASK_AUDIT_5)_
+- [x] IP masking в security events для tenant OWNER/ADMIN. _(TASK_AUDIT_5)_
+- [x] Frontend `/app/history` переработан: фильтры по домену/времени/сущности, detail drill-down, before/after diff, security tab, read-only banner. _(TASK_AUDIT_6)_
+- [x] QA coverage: 49 unit-тестов (audit.service.spec.ts + audit-read.guard.spec.ts) — RBAC, retention, redaction, IP masking, security events, coverage status. _(TASK_AUDIT_7)_
+- [x] Structured observability logging: метрики audit_write_success/failure, security_event_logged, audit_query_executed, audit_coverage_checked, audit_read_denied в JSON-формате. _(TASK_AUDIT_7)_
 
 ## 12. Критерии готовности (DoD)
 
@@ -292,7 +301,7 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 ## 24. Чеклист готовности раздела
 
 - [x] Текущее и целевое состояние раздела зафиксированы.
-- [ ] Backend API, frontend поведение и модель данных согласованы между собой.
+- [x] Backend API, frontend поведение и модель данных согласованы между собой. _(TASK_AUDIT_3)_
 - [x] Async-процессы, observability и тестовая матрица описаны.
 - [x] Риски, ограничения и rollout-порядок зафиксированы.
 
@@ -304,3 +313,9 @@ curl -X GET '/api/v1/audit/logs?entityType=PRODUCT&from=2026-04-01&to=2026-04-15
 | 2026-04-18 | Добавлены MVP event catalog, redaction policy, access-state rules и открытые решения по retention/before-after | Codex |
 | 2026-04-18 | Зафиксированы confirmed decisions по scope audit events, before/after policy и retention window | Codex |
 | 2026-04-28 | TASK_AUDIT_1: data model реализован — новые enums, расширена AuditLog, создана SecurityEvent, миграция, TypeScript event catalog, AuditService.writeEvent() | Claude |
+| 2026-04-28 | TASK_AUDIT_2: unified writer внедрён — мигрировано 5 сервисов (product, inventory, mapping, import, sync), auth security events в БД, coverage contracts, internal write endpoint | Claude |
+| 2026-04-28 | TASK_AUDIT_3: RBAC на чтение audit (OWNER/ADMIN guard), security-events endpoint, writePrivilegedEvent, dual-write team events (INVITE/MEMBER) в AuditLog, Prisma client regenerated, JSON type casts | Claude |
+| 2026-04-28 | TASK_AUDIT_4: AuditReadGuard (пропускает CLOSED/SUSPENDED тенантов), GET /logs/:id, GET /coverage-status, расширены фильтры getLogs (entityId/requestId/correlationId/from/to) и getSecurityEvents (userId/from/to) | Claude |
+| 2026-04-28 | TASK_AUDIT_5: рекурсивный sanitize() для before/after/metadata, retention window 180 дней в getLogs(), RBAC masking по redactionLevel (strict/partial/none), IP masking в getSecurityEvents(), константы AUDIT_RETENTION_DAYS и AUDIT_INTERNAL_METADATA_KEYS | Claude |
+| 2026-04-28 | TASK_AUDIT_6: новый api/audit.ts клиент с X-Tenant-Id; History.tsx переписан — табы журнал/security, фильтры домен/время/сущность, detail side-panel с before/after diff, DiffView, трассировка requestId/correlationId, read-only баннер при TRIAL_EXPIRED/SUSPENDED/CLOSED | Claude |
+| 2026-04-28 | TASK_AUDIT_7: 49 unit-тестов (audit.service.spec.ts + audit-read.guard.spec.ts) покрывают RBAC, retention window, redaction levels, IP masking, security events, coverage status, TRIAL_EXPIRED/SUSPENDED compliance; structured observability logging добавлен в AuditService | Claude |

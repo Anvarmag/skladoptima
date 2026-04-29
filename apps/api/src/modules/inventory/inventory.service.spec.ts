@@ -95,7 +95,7 @@ function makePrismaMock() {
 }
 
 function makeAuditMock(): AuditService {
-    return { logAction: jest.fn().mockResolvedValue({}) } as unknown as AuditService;
+    return { writeEvent: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService;
 }
 
 async function build(prisma: any, audit: AuditService) {
@@ -153,8 +153,8 @@ describe('InventoryService — adjustments', () => {
             }),
         );
         expect(prisma.product.update).toHaveBeenCalledWith({ where: { id: PRODUCT_ID }, data: { total: 15 } });
-        expect(audit.logAction).toHaveBeenCalledWith(
-            expect.objectContaining({ actionType: 'STOCK_ADJUSTED', delta: 5, beforeTotal: 10, afterTotal: 15 }),
+        expect(audit.writeEvent).toHaveBeenCalledWith(
+            expect.objectContaining({ eventType: 'STOCK_MANUALLY_ADJUSTED' }),
         );
     });
 
@@ -186,7 +186,7 @@ describe('InventoryService — adjustments', () => {
         ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'NEGATIVE_STOCK_NOT_ALLOWED' }) });
 
         expect(prisma.stockMovement.create).not.toHaveBeenCalled();
-        expect(audit.logAction).not.toHaveBeenCalled();
+        expect(audit.writeEvent).not.toHaveBeenCalled();
     });
 
     it('блокирует, если reserved превысил бы onHand для управляемого склада', async () => {

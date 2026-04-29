@@ -83,12 +83,12 @@ const DELETED_PRODUCT = {
 describe('ProductService', () => {
     let service: ProductService;
     let prisma: ReturnType<typeof makePrismaMock>;
-    let auditService: jest.Mocked<Pick<AuditService, 'logAction'>>;
+    let auditService: jest.Mocked<Pick<AuditService, 'writeEvent'>>;
     let logSpy: jest.SpyInstance;
 
     beforeEach(async () => {
         prisma = makePrismaMock();
-        auditService = { logAction: jest.fn().mockResolvedValue({}) };
+        auditService = { writeEvent: jest.fn().mockResolvedValue(undefined) } as any;
 
         const module = await Test.createTestingModule({
             providers: [
@@ -120,8 +120,8 @@ describe('ProductService', () => {
             const result = await service.create(dto as any, null, ACTOR, TENANT, USER_ID);
 
             expect(result.sku).toBe(dto.sku);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_CREATED, tenantId: TENANT }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_CREATED', tenantId: TENANT }),
             );
         });
 
@@ -131,7 +131,7 @@ describe('ProductService', () => {
             await expect(service.create(dto as any, null, ACTOR, TENANT))
                 .rejects.toMatchObject({ response: expect.objectContaining({ code: 'SKU_ALREADY_EXISTS' }) });
 
-            expect(auditService.logAction).not.toHaveBeenCalled();
+            expect(auditService.writeEvent).not.toHaveBeenCalled();
         });
 
         it('throws SKU_SOFT_DELETED when soft-deleted product exists and no confirmRestoreId provided', async () => {
@@ -174,8 +174,8 @@ describe('ProductService', () => {
             );
 
             expect(result.status).toBe(ProductStatus.ACTIVE);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_RESTORED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_RESTORED' }),
             );
         });
     });
@@ -194,8 +194,8 @@ describe('ProductService', () => {
             const result = await service.update(ACTIVE_PRODUCT.id, { name: 'Updated Name' } as any, null, ACTOR, TENANT, USER_ID);
 
             expect(result.name).toBe('Updated Name');
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_UPDATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_UPDATED' }),
             );
         });
 
@@ -206,7 +206,7 @@ describe('ProductService', () => {
                 service.update(ACTIVE_PRODUCT.id, { sku: 'SKU-OTHER' } as any, null, ACTOR, TENANT),
             ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'SKU_ALREADY_EXISTS' }) });
 
-            expect(auditService.logAction).not.toHaveBeenCalled();
+            expect(auditService.writeEvent).not.toHaveBeenCalled();
         });
 
         it('allows updating with the same SKU (no conflict check)', async () => {
@@ -231,8 +231,8 @@ describe('ProductService', () => {
             expect(prisma.product.update).toHaveBeenCalledWith(
                 expect.objectContaining({ data: expect.objectContaining({ status: ProductStatus.DELETED }) }),
             );
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_DELETED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_ARCHIVED' }),
             );
         });
 
@@ -261,8 +261,8 @@ describe('ProductService', () => {
             const result = await service.restore(DELETED_PRODUCT.id, ACTOR, TENANT, USER_ID);
 
             expect(result.status).toBe(ProductStatus.ACTIVE);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_RESTORED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_RESTORED' }),
             );
         });
 
@@ -398,8 +398,8 @@ describe('ProductService', () => {
             prisma.product.findFirst.mockResolvedValue(null);
             prisma.product.create.mockResolvedValue({ ...ACTIVE_PRODUCT });
             await service.create(dto as any, null, ACTOR, TENANT);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_CREATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_CREATED' }),
             );
         });
 
@@ -407,8 +407,8 @@ describe('ProductService', () => {
             prisma.product.findFirst.mockResolvedValue(DELETED_PRODUCT);
             prisma.product.update.mockResolvedValue({ ...ACTIVE_PRODUCT, deletedAt: null });
             await service.create({ ...dto, confirmRestoreId: DELETED_PRODUCT.id } as any, null, ACTOR, TENANT);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_RESTORED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_RESTORED' }),
             );
         });
 
@@ -416,8 +416,8 @@ describe('ProductService', () => {
             prisma.product.findUnique.mockResolvedValue(ACTIVE_PRODUCT);
             prisma.product.update.mockResolvedValue(ACTIVE_PRODUCT);
             await service.update(ACTIVE_PRODUCT.id, { name: 'Updated' } as any, null, ACTOR, TENANT);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_UPDATED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_UPDATED' }),
             );
         });
 
@@ -425,8 +425,8 @@ describe('ProductService', () => {
             prisma.product.findUnique.mockResolvedValue(ACTIVE_PRODUCT);
             prisma.product.update.mockResolvedValue({ ...ACTIVE_PRODUCT, deletedAt: new Date() });
             await service.remove(ACTIVE_PRODUCT.id, ACTOR, TENANT);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_DELETED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_ARCHIVED' }),
             );
         });
 
@@ -434,8 +434,8 @@ describe('ProductService', () => {
             prisma.product.findUnique.mockResolvedValue(DELETED_PRODUCT);
             prisma.product.update.mockResolvedValue({ ...ACTIVE_PRODUCT, deletedAt: null });
             await service.restore(DELETED_PRODUCT.id, ACTOR, TENANT);
-            expect(auditService.logAction).toHaveBeenCalledWith(
-                expect.objectContaining({ actionType: ActionType.PRODUCT_RESTORED }),
+            expect(auditService.writeEvent).toHaveBeenCalledWith(
+                expect.objectContaining({ eventType: 'PRODUCT_RESTORED' }),
             );
         });
     });

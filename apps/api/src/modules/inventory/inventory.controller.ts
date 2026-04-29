@@ -14,6 +14,7 @@ import {
 import { InventoryService } from './inventory.service';
 import { CreateAdjustmentDto } from './dto/create-adjustment.dto';
 import { UpdateThresholdDto } from './dto/update-threshold.dto';
+import { UpdateChannelVisibilityDto } from './dto/update-channel-visibility.dto';
 import { ReconcileDto } from './dto/reconcile.dto';
 import { RequireActiveTenantGuard } from '../tenants/guards/require-active-tenant.guard';
 import { TenantWriteGuard } from '../tenants/guards/tenant-write.guard';
@@ -108,6 +109,23 @@ export class InventoryController {
             req.activeTenantId,
             dto.lowStockThreshold,
             req.user.email,
+        );
+    }
+
+    // GET /inventory/channel-visibility — настройки видимости каналов тенанта
+    @Get('channel-visibility')
+    getChannelVisibility(@Req() req: any) {
+        return this.inventoryService.getChannelVisibility(req.activeTenantId);
+    }
+
+    // PATCH /inventory/channel-visibility — обновить видимые маркетплейсы (Owner/Admin)
+    @Patch('channel-visibility')
+    @UseGuards(TenantWriteGuard)
+    updateChannelVisibility(@Body() dto: UpdateChannelVisibilityDto, @Req() req: any) {
+        return this.inventoryService.updateChannelVisibility(
+            req.activeTenantId,
+            req.user.id,
+            dto.visibleMarketplaces,
         );
     }
 
