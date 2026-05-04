@@ -381,7 +381,7 @@ export class InventoryService {
             entityType: 'PRODUCT',
             entityId: dto.productId,
             actorType: 'user',
-            actorId: userId,
+            actorId: userId ?? undefined,
             source: 'ui',
             before: { onHand: result.onHandBefore },
             after:  { onHand: result.onHandAfter },

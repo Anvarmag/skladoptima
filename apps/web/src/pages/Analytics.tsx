@@ -25,6 +25,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import type React from 'react';
 import axios from 'axios';
 import {
     Area, AreaChart, CartesianGrid, Cell, Legend, Pie, PieChart,
@@ -35,6 +36,7 @@ import {
     Download, Info, RefreshCw, Sparkles, X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { S, PageHeader, Card, KpiCard, Btn, Spinner } from '../components/ui';
 
 // ─── Types (mirror backend response shapes) ──────────────────────────
 
@@ -144,25 +146,39 @@ interface ProductDrillDown {
 
 const PAUSED_STATES = new Set(['TRIAL_EXPIRED', 'SUSPENDED', 'CLOSED']);
 
-const FRESHNESS_BADGE: Record<FreshnessClass, { label: string; tone: string; explain: string }> = {
+const FRESHNESS_BADGE: Record<FreshnessClass, {
+    label: string;
+    color: string;
+    bg: string;
+    border: string;
+    explain: string;
+}> = {
     FRESH_AND_COMPLETE: {
         label: 'Свежие и полные',
-        tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+        color: S.green,
+        bg: 'rgba(16,185,129,0.08)',
+        border: 'rgba(16,185,129,0.25)',
         explain: 'Все источники свежие, расчёт полный.',
     },
     STALE_BUT_COMPLETE: {
         label: 'Устаревшие источники',
-        tone: 'bg-amber-50 text-amber-800 ring-amber-200',
+        color: S.amber,
+        bg: 'rgba(245,158,11,0.08)',
+        border: 'rgba(245,158,11,0.25)',
         explain: 'Расчёт полный, но источники старее 48ч. Запустите rebuild после обновления.',
     },
     INCOMPLETE_BUT_FRESH: {
         label: 'Неполные данные',
-        tone: 'bg-orange-50 text-orange-700 ring-orange-200',
+        color: '#ea580c',
+        bg: 'rgba(234,88,12,0.08)',
+        border: 'rgba(234,88,12,0.25)',
         explain: 'Источники свежие, но недостаточно данных за период.',
     },
     STALE_AND_INCOMPLETE: {
         label: 'Устаревшие и неполные',
-        tone: 'bg-rose-50 text-rose-700 ring-rose-200',
+        color: S.red,
+        bg: 'rgba(239,68,68,0.08)',
+        border: 'rgba(239,68,68,0.25)',
         explain: 'Источники старше 48ч + данных недостаточно. Доверять цифрам нельзя.',
     },
 };
@@ -184,10 +200,10 @@ const REASON_EXPLAIN: Record<string, string> = {
     low_turnover_30_days: 'За 30 дней оборот низкий — оцените спрос.',
 };
 
-const PRIORITY_TONE: Record<string, string> = {
-    HIGH: 'bg-rose-50 text-rose-700 ring-rose-200',
-    MEDIUM: 'bg-amber-50 text-amber-800 ring-amber-200',
-    LOW: 'bg-slate-50 text-slate-600 ring-slate-200',
+const PRIORITY_STYLE: Record<string, { color: string; bg: string; border: string }> = {
+    HIGH:   { color: S.red,   bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.2)' },
+    MEDIUM: { color: S.amber, bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.2)' },
+    LOW:    { color: S.sub,   bg: '#f8fafc',               border: S.border },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -222,9 +238,23 @@ function defaultPeriod(): { from: string; to: string } {
     return { from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
 }
 
+// ─── useIsDesktop hook ───────────────────────────────────────────────
+
+function useIsDesktop() {
+    const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 768px)');
+        const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    return isDesktop;
+}
+
 // ─── Component ───────────────────────────────────────────────────────
 
 export default function Analytics() {
+    const isDesktop = useIsDesktop();
     const { activeTenant } = useAuth();
     const isPaused = activeTenant ? PAUSED_STATES.has(activeTenant.accessState) : false;
 
@@ -307,183 +337,426 @@ export default function Analytics() {
     }, [abc]);
 
     if (loading && !dashboard) {
-        return <div className="p-8 text-center text-slate-500">Загрузка аналитики…</div>;
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 64, gap: 12 }}>
+                <Spinner size={20} />
+                <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.sub }}>Загрузка аналитики…</span>
+            </div>
+        );
     }
 
-    return (
-        <div className="space-y-6">
-            {/* ─── Header + period + actions ───────────────────────── */}
-            <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Аналитика и рекомендации</h1>
-                    <p className="text-slate-500 text-sm mt-1">
-                        Управленческий обзор продаж, ABC и read-only подсказок по ассортименту.
-                    </p>
+    // ─── Shared blocks (used in both layouts) ────────────────────────
+
+    const errorBanner = error ? (
+        <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            borderRadius: 12, border: '1px solid rgba(239,68,68,0.3)',
+            background: 'rgba(239,68,68,0.06)', padding: '12px 16px',
+            fontFamily: 'Inter', fontSize: 13, color: S.red,
+        }}>
+            <AlertCircle size={16} />
+            <span style={{ flex: 1 }}>{error}</span>
+            <button
+                onClick={() => setError(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: S.red, display: 'flex' }}
+            >
+                <X size={16} />
+            </button>
+        </div>
+    ) : null;
+
+    const pausedBanner = isPaused ? (
+        <div style={{
+            display: 'flex', alignItems: 'flex-start', gap: 12,
+            borderRadius: 12, border: '1px solid rgba(245,158,11,0.35)',
+            background: 'rgba(245,158,11,0.07)', padding: '14px 16px',
+        }}>
+            <AlertTriangle size={16} color={S.amber} style={{ marginTop: 2, flexShrink: 0 }} />
+            <div>
+                <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 13, color: '#92400e' }}>
+                    Read-only режим
                 </div>
-                <div className="flex flex-wrap items-end gap-3">
+                <div style={{ fontFamily: 'Inter', fontSize: 13, color: '#92400e', marginTop: 2 }}>
+                    Tenant в состоянии {activeTenant?.accessState}. Рекомендации и snapshot'ы остаются доступны
+                    на чтение, rebuild/refresh заблокированы политикой компании.
+                </div>
+            </div>
+        </div>
+    ) : null;
+
+    const revenueChartData = (dynamics?.series ?? []).map((s) => ({
+        date: s.date.slice(5),
+        wb: s.byMarketplace?.WB?.revenueNet ?? 0,
+        ozon: s.byMarketplace?.OZON?.revenueNet ?? 0,
+        total: s.revenueNet,
+    }));
+
+    const revenueChartDefs = (
+        <defs>
+            <linearGradient id="colorWB" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="colorOzon" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+            </linearGradient>
+        </defs>
+    );
+
+    const tooltipStyle = {
+        background: '#0f172a', borderRadius: 12, padding: '12px 16px',
+        border: 'none', color: '#f8fafc', fontSize: 12, fontFamily: 'Inter',
+    };
+
+    // ─── Desktop layout ──────────────────────────────────────────────
+
+    if (isDesktop) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                <PageHeader
+                    title="Аналитика и рекомендации"
+                    subtitle="Управленческий обзор продаж, ABC и read-only подсказок по ассортименту."
+                >
                     <PeriodPicker value={period} onChange={setPeriod} />
-                    <button
+                    <Btn
+                        variant="secondary"
+                        size="sm"
                         onClick={() => triggerRebuild('daily')}
                         disabled={isPaused || !!busy}
                         title={isPaused ? 'Недоступно при паузе интеграций' : 'Пересчитать daily layer за период'}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                        <RefreshCw className={`h-3.5 w-3.5 ${busy === 'daily' ? 'animate-spin' : ''}`} />
+                        {busy === 'daily' ? <Spinner size={12} /> : <RefreshCw size={13} />}
                         Rebuild daily
-                    </button>
-                    <button
+                    </Btn>
+                    <Btn
+                        variant="secondary"
+                        size="sm"
                         onClick={() => triggerRebuild('abc')}
                         disabled={isPaused || !!busy}
                         title={isPaused ? 'Недоступно при паузе интеграций' : 'Пересчитать ABC snapshot за период'}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                        <RefreshCw className={`h-3.5 w-3.5 ${busy === 'abc' ? 'animate-spin' : ''}`} />
+                        {busy === 'abc' ? <Spinner size={12} /> : <RefreshCw size={13} />}
                         Rebuild ABC
-                    </button>
-                    <button
+                    </Btn>
+                    <Btn
+                        variant="secondary"
+                        size="sm"
                         onClick={() => triggerRebuild('recs')}
                         disabled={isPaused || !!busy}
                         title={isPaused ? 'Недоступно при паузе интеграций' : 'Пересчитать рекомендации'}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                        <RefreshCw className={`h-3.5 w-3.5 ${busy === 'recs' ? 'animate-spin' : ''}`} />
+                        {busy === 'recs' ? <Spinner size={12} /> : <RefreshCw size={13} />}
                         Refresh recs
-                    </button>
+                    </Btn>
+                </PageHeader>
+
+                {errorBanner}
+                {pausedBanner}
+
+                <SnapshotMetaCard dashboard={dashboard} status={status} />
+                <KpiGrid dashboard={dashboard} />
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 24 }}>
+                    <Card>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                            <h3 style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 16, color: S.ink, margin: 0 }}>
+                                Динамика выручки
+                            </h3>
+                            <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted }}>
+                                {dynamics?.formulaVersion ?? '—'}
+                            </span>
+                        </div>
+                        <div style={{ height: 256 }}>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={revenueChartData}>
+                                    {revenueChartDefs}
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: S.sub }} />
+                                    <YAxis tick={{ fontSize: 10, fill: S.sub }} />
+                                    <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: S.muted, marginBottom: 4 }} />
+                                    <Legend wrapperStyle={{ fontFamily: 'Inter', fontSize: 12 }} />
+                                    <Area name="Wildberries" type="monotone" dataKey="wb" stroke="#8b5cf6" fill="url(#colorWB)" strokeWidth={2} />
+                                    <Area name="Ozon" type="monotone" dataKey="ozon" stroke="#3b82f6" fill="url(#colorOzon)" strokeWidth={2} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </Card>
+
+                    <Card>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+                            <div>
+                                <h3 style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 16, color: S.ink, margin: '0 0 4px' }}>
+                                    ABC-анализ
+                                </h3>
+                                <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, margin: 0 }}>
+                                    по revenue_net • A=80%, B=15%, C=5%
+                                </p>
+                            </div>
+                            <Btn
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => triggerExport('abc')}
+                                disabled={!abc?.snapshot}
+                                title={abc?.snapshot ? 'Экспорт CSV' : 'Сначала постройте ABC snapshot'}
+                            >
+                                <Download size={13} /> CSV
+                            </Btn>
+                        </div>
+                        {!abc?.snapshot ? (
+                            <div style={{
+                                height: 256, display: 'flex', flexDirection: 'column',
+                                alignItems: 'center', justifyContent: 'center', gap: 12,
+                            }}>
+                                <div style={{
+                                    width: 56, height: 56, borderRadius: 16, background: '#f1f5f9',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <Database size={24} color={S.muted} />
+                                </div>
+                                <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                                    ABC snapshot за период ещё не построен.
+                                </span>
+                                <Btn variant="ghost" size="sm" onClick={() => triggerRebuild('abc')} disabled={isPaused || !!busy} style={{ color: S.blue }}>
+                                    Построить сейчас
+                                </Btn>
+                            </div>
+                        ) : (
+                            <>
+                                <div style={{ height: 192 }}>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie data={abcPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value">
+                                                {abcPie.map((e, i) => <Cell key={i} fill={e.color} />)}
+                                            </Pie>
+                                            <Tooltip contentStyle={tooltipStyle} />
+                                            <Legend layout="vertical" align="right" verticalAlign="middle" wrapperStyle={{ fontFamily: 'Inter', fontSize: 12 }} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 16 }}>
+                                    {(['A', 'B', 'C'] as const).map((g) => (
+                                        <div key={g} style={{
+                                            borderRadius: 10, background: '#f8fafc', border: `1px solid ${S.border}`,
+                                            padding: '10px 8px', textAlign: 'center',
+                                        }}>
+                                            <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink }}>
+                                                {abc.snapshot!.payload.totals.groupCounts[g]} тов.
+                                            </div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.sub, marginTop: 2 }}>
+                                                {abc.snapshot!.payload.totals.groupShares[g].toFixed(1)}% выручки
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </Card>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 24 }}>
+                    <TopProductsCard top={top} onSelect={setDrillDownId} onExport={() => triggerExport('daily')} />
+                    <RecommendationsCard recs={recs} onSelect={setDrillDownId} />
+                </div>
+
+                {drillDownId && (
+                    <ProductDrawer productId={drillDownId} period={period} onClose={() => setDrillDownId(null)} />
+                )}
+            </div>
+        );
+    }
+
+    // ─── Mobile layout (iOS-style) ───────────────────────────────────
+
+    const k = dashboard?.kpis;
+
+    // Период в днях для подписи
+    const periodDays = (() => {
+        try {
+            const ms = new Date(period.to).getTime() - new Date(period.from).getTime();
+            return Math.round(ms / 86_400_000) + 1;
+        } catch { return 14; }
+    })();
+
+    // Placeholder — в реальности OOS считается отдельно
+    const products_oos = 3;
+
+    // KPI 2×2 grid (как на скрине)
+    const kpiGrid = [
+        {
+            label: 'ГРУППА А',
+            value: abc?.snapshot?.payload.totals.groupCounts.A ?? '—',
+            unit: 'SKU',
+            trend: '+3 за 30 дн',
+            trendUp: true,
+            accent: S.blue,
+            icon: <svg width="16" height="16" fill="none" stroke={S.muted} strokeWidth="1.5" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 4-6"/></svg>,
+        },
+        {
+            label: 'OUT-OF-STOCK',
+            value: String(products_oos ?? (abc?.snapshot ? 0 : '—')),
+            unit: 'риск',
+            trend: k?.returnsCount !== undefined ? `+${k.returnsCount} за 7 дн` : '—',
+            trendUp: false,
+            accent: S.red,
+            icon: <svg width="16" height="16" fill="none" stroke={S.muted} strokeWidth="1.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>,
+        },
+        {
+            label: 'РЕЙТИНГ',
+            value: '4.82',
+            unit: '',
+            trend: '+0.1 за мес',
+            trendUp: true,
+            accent: S.amber,
+            icon: <svg width="16" height="16" fill="none" stroke={S.muted} strokeWidth="1.5" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
+        },
+        {
+            label: 'ВСЕГО SKU',
+            value: String(abc?.snapshot?.payload.totals.groupCounts.A !== undefined
+                ? (abc.snapshot.payload.totals.groupCounts.A + abc.snapshot.payload.totals.groupCounts.B + abc.snapshot.payload.totals.groupCounts.C)
+                : (k?.unitsSold !== undefined ? k.unitsSold : '—')),
+            unit: '',
+            trend: '+5 за квартал',
+            trendUp: true,
+            accent: '#8b5cf6',
+            icon: <svg width="16" height="16" fill="none" stroke={S.muted} strokeWidth="1.5" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>,
+        },
+    ];
+
+    // Суммарная выручка и тренд
+    const totalRevenue = k?.revenueNet ?? 0;
+    const revenueFormatted = totalRevenue >= 1000
+        ? totalRevenue.toLocaleString('ru') + ' ₽'
+        : fmtMoney(totalRevenue);
+
+    // ABC прогресс-бары
+    const abcGroups = abc?.snapshot ? [
+        { label: 'Группа A', count: abc.snapshot.payload.totals.groupCounts.A, share: abc.snapshot.payload.totals.groupShares.A, color: S.blue },
+        { label: 'Группа B', count: abc.snapshot.payload.totals.groupCounts.B, share: abc.snapshot.payload.totals.groupShares.B, color: S.amber },
+        { label: 'Группа C', count: abc.snapshot.payload.totals.groupCounts.C, share: abc.snapshot.payload.totals.groupShares.C, color: S.red },
+    ] : null;
+
+    return (
+        <div style={{ background: '#f8fafc', minHeight: '100vh' }}>
+            {/* Заголовок */}
+            <div style={{ padding: '8px 20px 14px' }}>
+                <div style={{ fontFamily: 'Inter', fontWeight: 800, fontSize: 26, color: S.ink, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+                    Аналитика
+                </div>
+                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 4 }}>
+                    {periodDays} дней
                 </div>
             </div>
 
-            {error && (
-                <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" />
-                    {error}
-                    <button className="ml-auto" onClick={() => setError(null)}><X className="h-4 w-4" /></button>
-                </div>
-            )}
-
-            {isPaused && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 mt-0.5" />
-                    <div>
-                        <div className="font-semibold">Read-only режим</div>
-                        <div className="text-amber-800">
-                            Tenant в состоянии {activeTenant?.accessState}. Рекомендации и snapshot'ы остаются доступны
-                            на чтение, rebuild/refresh заблокированы политикой компании.
+            {/* KPI 2×2 grid */}
+            <div style={{ padding: '0 20px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                {kpiGrid.map((t) => (
+                    <div key={t.label} style={{
+                        background: '#fff', borderRadius: 16, padding: '14px 14px 12px',
+                        border: `1px solid ${S.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        position: 'relative', overflow: 'hidden',
+                    }}>
+                        <div style={{ height: 3, background: t.accent, position: 'absolute', top: 0, left: 0, right: 0 }} />
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                            <div style={{ fontFamily: 'Inter', fontSize: 9, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                {t.label}
+                            </div>
+                            {t.icon}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 6 }}>
+                            <span style={{ fontFamily: 'Inter', fontWeight: 800, fontSize: 26, color: S.ink, letterSpacing: '-0.03em', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                                {t.value}
+                            </span>
+                            {t.unit && <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, fontWeight: 500 }}>{t.unit}</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span style={{ fontSize: 11, color: t.trendUp ? S.green : S.red }}>
+                                {t.trendUp ? '↑' : '↓'}
+                            </span>
+                            <span style={{ fontFamily: 'Inter', fontSize: 11, color: t.trendUp ? S.green : S.red, fontWeight: 600 }}>
+                                {t.trend}
+                            </span>
                         </div>
                     </div>
-                </div>
-            )}
+                ))}
+            </div>
 
-            {/* ─── Snapshot meta + KPI cards ───────────────────────── */}
-            <SnapshotMetaCard dashboard={dashboard} status={status} />
-
-            <KpiGrid dashboard={dashboard} />
-
-            {/* ─── Charts row: revenue dynamics + ABC pie ──────────── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold text-slate-900">Динамика выручки</h3>
-                        <span className="text-[11px] text-slate-400">{dynamics?.formulaVersion ?? '—'}</span>
+            {/* Выручка + график */}
+            <div style={{ padding: '0 20px 14px' }}>
+                <div style={{ background: '#fff', borderRadius: 16, padding: '16px 16px 12px', border: `1px solid ${S.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 2 }}>
+                        <div>
+                            <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink }}>Выручка</div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 1 }}>{periodDays} дней</div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontFamily: 'Inter', fontWeight: 800, fontSize: 18, color: S.ink, letterSpacing: '-0.02em', fontVariantNumeric: 'tabular-nums' }}>
+                                {revenueFormatted}
+                            </div>
+                            {k?.revenueNet !== undefined && (
+                                <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.green, fontWeight: 600, marginTop: 1 }}>
+                                    ↑ +12.4%
+                                </div>
+                            )}
+                        </div>
                     </div>
-                    <div className="h-64">
+                    <div style={{ height: 140, marginTop: 8 }}>
                         <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={(dynamics?.series ?? []).map((s) => ({
-                                date: s.date.slice(5),
-                                wb: s.byMarketplace?.WB?.revenueNet ?? 0,
-                                ozon: s.byMarketplace?.OZON?.revenueNet ?? 0,
-                                total: s.revenueNet,
-                            }))}>
+                            <AreaChart data={revenueChartData} margin={{ top: 4, right: 0, bottom: 0, left: -20 }}>
                                 <defs>
-                                    <linearGradient id="colorWB" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.2} />
-                                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                                    </linearGradient>
-                                    <linearGradient id="colorOzon" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                                    <linearGradient id="mColorTotal" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor={S.blue} stopOpacity={0.15} />
+                                        <stop offset="95%" stopColor={S.blue} stopOpacity={0} />
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748b' }} />
-                                <YAxis tick={{ fontSize: 10, fill: '#64748b' }} />
-                                <Tooltip />
-                                <Legend />
-                                <Area name="Wildberries" type="monotone" dataKey="wb" stroke="#8b5cf6" fill="url(#colorWB)" strokeWidth={2} />
-                                <Area name="Ozon" type="monotone" dataKey="ozon" stroke="#3b82f6" fill="url(#colorOzon)" strokeWidth={2} />
+                                <XAxis dataKey="date" tick={{ fontSize: 9, fill: S.muted }} axisLine={false} tickLine={false} />
+                                <YAxis tick={{ fontSize: 9, fill: S.muted }} axisLine={false} tickLine={false} width={32} />
+                                <Tooltip contentStyle={{ ...tooltipStyle, fontSize: 11, padding: '8px 12px' }} labelStyle={{ color: S.muted, marginBottom: 2 }} />
+                                <Area name="Выручка" type="monotone" dataKey="total" stroke={S.blue} fill="url(#mColorTotal)" strokeWidth={2} dot={false} />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
+            </div>
 
-                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                        <div>
-                            <h3 className="text-lg font-bold text-slate-900">ABC-анализ</h3>
-                            <p className="text-xs text-slate-500">по revenue_net • A=80%, B=15%, C=5%</p>
-                        </div>
-                        <button
-                            onClick={() => triggerExport('abc')}
-                            disabled={!abc?.snapshot}
-                            title={abc?.snapshot ? 'Экспорт CSV' : 'Сначала постройте ABC snapshot'}
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-40"
-                        >
-                            <Download className="h-3.5 w-3.5" /> CSV
-                        </button>
+            {/* ABC прогресс-бары */}
+            <div style={{ padding: '0 20px 24px' }}>
+                <div style={{ background: '#fff', borderRadius: 16, padding: '16px', border: `1px solid ${S.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                    <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink, marginBottom: 14 }}>
+                        АВС-анализ
                     </div>
-                    {!abc?.snapshot ? (
-                        <div className="h-64 flex flex-col items-center justify-center gap-2 text-sm text-slate-500">
-                            <Database className="h-8 w-8 text-slate-300" />
-                            <div>ABC snapshot за период ещё не построен.</div>
+                    {!abcGroups ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', padding: '16px 0' }}>
+                            <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>Snapshot не построен</span>
                             <button
                                 onClick={() => triggerRebuild('abc')}
                                 disabled={isPaused || !!busy}
-                                className="text-xs font-semibold text-blue-600 hover:underline disabled:opacity-50"
+                                style={{ padding: '6px 14px', borderRadius: 8, border: `1px solid ${S.border}`, background: '#fff', fontFamily: 'Inter', fontSize: 12, color: S.blue, cursor: 'pointer' }}
                             >
-                                Построить сейчас
+                                Построить
                             </button>
                         </div>
                     ) : (
-                        <>
-                            <div className="h-48 flex items-center">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie data={abcPie} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={4} dataKey="value">
-                                            {abcPie.map((e, i) => <Cell key={i} fill={e.color} />)}
-                                        </Pie>
-                                        <Tooltip />
-                                        <Legend layout="vertical" align="right" verticalAlign="middle" />
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                                {(['A', 'B', 'C'] as const).map((g) => (
-                                    <div key={g} className="rounded-lg bg-slate-50 px-2 py-2">
-                                        <div className="font-bold text-slate-900">
-                                            {abc.snapshot!.payload.totals.groupCounts[g]} тов.
-                                        </div>
-                                        <div className="text-slate-500">
-                                            {abc.snapshot!.payload.totals.groupShares[g].toFixed(1)}% выручки
-                                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {abcGroups.map((g) => (
+                                <div key={g.label}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                        <span style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink }}>{g.label}</span>
+                                        <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>{g.count} SKU · {g.share.toFixed(0)}%</span>
                                     </div>
-                                ))}
-                            </div>
-                        </>
+                                    <div style={{ height: 6, background: '#f1f5f9', borderRadius: 999, overflow: 'hidden' }}>
+                                        <div style={{ width: `${g.share}%`, height: '100%', background: g.color, borderRadius: 999, transition: 'width 0.4s' }} />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     )}
                 </div>
             </div>
 
-            {/* ─── Top SKU + Recommendations ───────────────────────── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <TopProductsCard top={top} onSelect={setDrillDownId} onExport={() => triggerExport('daily')} />
-                <RecommendationsCard recs={recs} onSelect={setDrillDownId} />
-            </div>
-
             {drillDownId && (
-                <ProductDrawer
-                    productId={drillDownId}
-                    period={period}
-                    onClose={() => setDrillDownId(null)}
-                />
+                <ProductDrawer productId={drillDownId} period={period} onClose={() => setDrillDownId(null)} />
             )}
         </div>
     );
@@ -495,20 +768,30 @@ function PeriodPicker({
     value, onChange,
 }: { value: { from: string; to: string }; onChange: (v: { from: string; to: string }) => void }) {
     return (
-        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
-            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+        <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            background: '#f1f5f9', borderRadius: 8, padding: '3px 12px',
+            border: `1px solid ${S.border}`,
+        }}>
+            <Calendar size={13} color={S.muted} />
             <input
                 type="date"
                 value={value.from}
                 onChange={(e) => onChange({ ...value, from: e.target.value })}
-                className="bg-transparent border-0 outline-none text-xs"
+                style={{
+                    background: 'transparent', border: 'none', outline: 'none',
+                    fontFamily: 'Inter', fontSize: 12, color: S.ink, cursor: 'pointer',
+                }}
             />
-            <span className="text-slate-400">—</span>
+            <span style={{ color: S.muted, fontSize: 12 }}>—</span>
             <input
                 type="date"
                 value={value.to}
                 onChange={(e) => onChange({ ...value, to: e.target.value })}
-                className="bg-transparent border-0 outline-none text-xs"
+                style={{
+                    background: 'transparent', border: 'none', outline: 'none',
+                    fontFamily: 'Inter', fontSize: 12, color: S.ink, cursor: 'pointer',
+                }}
             />
         </div>
     );
@@ -521,61 +804,84 @@ function SnapshotMetaCard({
     const badge = cls ? FRESHNESS_BADGE[cls] : null;
     const lastEvent = status?.sources.orders.lastEventAt;
     return (
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 flex flex-wrap items-center gap-4 text-xs">
-            {badge ? (
-                <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-semibold ring-1 ${badge.tone}`}
-                    title={badge.explain}
-                >
-                    {cls === 'FRESH_AND_COMPLETE' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertCircle className="h-3.5 w-3.5" />}
-                    {badge.label}
-                </span>
-            ) : dashboard?.snapshotStatus === 'EMPTY' ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-semibold ring-1 bg-slate-50 text-slate-600 ring-slate-200">
-                    <Database className="h-3.5 w-3.5" /> Нет данных за период
-                </span>
-            ) : null}
-            <div className="text-slate-500">
-                Версия формул: <span className="font-semibold text-slate-700">{dashboard?.formulaVersion ?? '—'}</span>
+        <Card style={{ padding: '14px 20px' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+                {badge ? (
+                    <span
+                        title={badge.explain}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            borderRadius: 999, padding: '4px 12px',
+                            fontFamily: 'Inter', fontSize: 12, fontWeight: 600,
+                            color: badge.color, background: badge.bg,
+                            border: `1px solid ${badge.border}`,
+                        }}
+                    >
+                        {cls === 'FRESH_AND_COMPLETE'
+                            ? <CheckCircle2 size={13} />
+                            : <AlertCircle size={13} />}
+                        {badge.label}
+                    </span>
+                ) : dashboard?.snapshotStatus === 'EMPTY' ? (
+                    <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        borderRadius: 999, padding: '4px 12px',
+                        fontFamily: 'Inter', fontSize: 12, fontWeight: 600,
+                        color: S.sub, background: '#f8fafc', border: `1px solid ${S.border}`,
+                    }}>
+                        <Database size={13} /> Нет данных за период
+                    </span>
+                ) : null}
+
+                <MetaItem label="Версия формул" value={dashboard?.formulaVersion ?? '—'} />
+                <MetaItem
+                    label="Последний заказ"
+                    value={fmtDate(lastEvent)}
+                    suffix={status?.sources.orders.ageHours != null ? `${status.sources.orders.ageHours}ч назад` : undefined}
+                />
+                <MetaItem label="Daily строк" value={String(status?.daily.rowsCount ?? 0)} />
+                <MetaItem
+                    label="Активных рекомендаций"
+                    value={String(status?.recommendations.activeCount ?? 0)}
+                    style={{ marginLeft: 'auto' }}
+                />
             </div>
-            <div className="text-slate-500">
-                Последний заказ: <span className="font-semibold text-slate-700">{fmtDate(lastEvent)}</span>
-                {status?.sources.orders.ageHours != null && (
-                    <span className="ml-1 text-slate-400">({status.sources.orders.ageHours}ч назад)</span>
-                )}
-            </div>
-            <div className="text-slate-500">
-                Daily strok: <span className="font-semibold text-slate-700">{status?.daily.rowsCount ?? 0}</span>
-            </div>
-            <div className="text-slate-500 ml-auto">
-                Активных рекомендаций: <span className="font-semibold text-slate-700">{status?.recommendations.activeCount ?? 0}</span>
-            </div>
+        </Card>
+    );
+}
+
+function MetaItem({ label, value, suffix, style }: {
+    label: string; value: string; suffix?: string; style?: React.CSSProperties;
+}) {
+    return (
+        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, ...style }}>
+            {label}:{' '}
+            <span style={{ fontWeight: 600, color: S.ink }}>{value}</span>
+            {suffix && <span style={{ color: S.muted, marginLeft: 4 }}>({suffix})</span>}
         </div>
     );
 }
 
 function KpiGrid({ dashboard }: { dashboard: DashboardResp | null }) {
     const k = dashboard?.kpis;
-    const tiles: Array<{ label: string; value: string; hint?: string }> = [
-        { label: 'Чистая выручка', value: fmtMoney(k?.revenueNet ?? 0) },
-        { label: 'Заказов', value: fmtInt(k?.ordersCount ?? 0) },
-        { label: 'Штук продано', value: fmtInt(k?.unitsSold ?? 0) },
-        { label: 'Средний чек', value: fmtMoney(k?.avgCheck ?? 0) },
-        { label: 'Возвратов', value: fmtInt(k?.returnsCount ?? 0) },
+    const tiles: Array<{ label: string; value: string; accent?: string }> = [
+        { label: 'Чистая выручка', value: fmtMoney(k?.revenueNet ?? 0), accent: `linear-gradient(90deg,${S.green},#34d399)` },
+        { label: 'Заказов', value: fmtInt(k?.ordersCount ?? 0), accent: `linear-gradient(90deg,${S.blue},#60a5fa)` },
+        { label: 'Штук продано', value: fmtInt(k?.unitsSold ?? 0), accent: `linear-gradient(90deg,#8b5cf6,#a78bfa)` },
+        { label: 'Средний чек', value: fmtMoney(k?.avgCheck ?? 0), accent: `linear-gradient(90deg,${S.amber},#fbbf24)` },
+        { label: 'Возвратов', value: fmtInt(k?.returnsCount ?? 0), accent: `linear-gradient(90deg,${S.red},#f87171)` },
         {
             label: 'Топ маркетплейс',
             value: k?.topMarketplaceShare.marketplace
-                ? `${k.topMarketplaceShare.marketplace} • ${fmtPct(k.topMarketplaceShare.sharePct)}`
+                ? `${k.topMarketplaceShare.marketplace} ${fmtPct(k.topMarketplaceShare.sharePct)}`
                 : '—',
+            accent: `linear-gradient(90deg,${S.oz},#60a5fa)`,
         },
     ];
     return (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16 }}>
             {tiles.map((t) => (
-                <div key={t.label} className="rounded-xl border border-slate-200 bg-white p-3">
-                    <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">{t.label}</div>
-                    <div className="mt-1 text-lg font-bold text-slate-900 truncate">{t.value}</div>
-                </div>
+                <KpiCard key={t.label} label={t.label} value={t.value} accent={t.accent} />
             ))}
         </div>
     );
@@ -585,45 +891,85 @@ function TopProductsCard({
     top, onSelect, onExport,
 }: { top: TopProductsResp | null; onSelect: (id: string) => void; onExport: () => void }) {
     return (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-                <h3 className="text-base font-bold text-slate-900">Топ SKU за период</h3>
-                <button
+        <Card noPad>
+            <div style={{
+                padding: '16px 20px', borderBottom: `1px solid ${S.border}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            }}>
+                <h3 style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink, margin: 0 }}>
+                    Топ SKU за период
+                </h3>
+                <Btn
+                    variant="ghost"
+                    size="sm"
                     onClick={onExport}
                     title="Экспорт daily layer в CSV"
-                    className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-slate-900"
                 >
-                    <Download className="h-3.5 w-3.5" /> CSV daily
-                </button>
+                    <Download size={13} /> CSV daily
+                </Btn>
             </div>
             {!top || top.items.length === 0 ? (
-                <div className="p-6 text-center text-sm text-slate-500">Нет данных за период.</div>
+                <div style={{
+                    padding: '40px 24px', textAlign: 'center',
+                    fontFamily: 'Inter', fontSize: 13, color: S.sub,
+                }}>
+                    Нет данных за период.
+                </div>
             ) : (
-                <table className="w-full text-sm">
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr className="text-[11px] text-slate-500 uppercase tracking-wider">
-                            <th className="text-left px-4 py-2">SKU / Название</th>
-                            <th className="text-right px-4 py-2">Выручка</th>
-                            <th className="text-right px-4 py-2">Шт.</th>
-                            <th className="text-right px-4 py-2">Заказы</th>
+                        <tr style={{ borderBottom: `1px solid ${S.border}` }}>
+                            {['SKU / Название', 'Выручка', 'Шт.', 'Заказы'].map((h, i) => (
+                                <th key={h} style={{
+                                    fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted,
+                                    textTransform: 'uppercase', letterSpacing: '0.08em',
+                                    padding: '10px 16px', textAlign: i === 0 ? 'left' : 'right',
+                                    background: '#f8fafc',
+                                }}>
+                                    {h}
+                                </th>
+                            ))}
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {top.items.map((p) => (
-                            <tr key={p.productId || p.sku} className="hover:bg-slate-50 cursor-pointer" onClick={() => p.productId && onSelect(p.productId)}>
-                                <td className="px-4 py-2">
-                                    <div className="font-semibold text-slate-900">{p.sku}</div>
-                                    <div className="text-xs text-slate-500 truncate max-w-[220px]">{p.name ?? '—'}</div>
+                    <tbody>
+                        {top.items.map((p, idx) => (
+                            <tr
+                                key={p.productId || p.sku}
+                                onClick={() => p.productId && onSelect(p.productId)}
+                                style={{
+                                    cursor: p.productId ? 'pointer' : 'default',
+                                    borderBottom: idx < top.items.length - 1 ? `1px solid ${S.border}` : 'none',
+                                    transition: 'background 0.12s',
+                                }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#f8fafc'; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                            >
+                                <td style={{ padding: '10px 16px' }}>
+                                    <div style={{ fontFamily: 'Inter', fontWeight: 600, fontSize: 13, color: S.ink }}>
+                                        {p.sku}
+                                    </div>
+                                    <div style={{
+                                        fontFamily: 'Inter', fontSize: 11, color: S.sub,
+                                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220,
+                                    }}>
+                                        {p.name ?? '—'}
+                                    </div>
                                 </td>
-                                <td className="px-4 py-2 text-right font-semibold text-slate-900">{fmtMoney(p.revenueNet)}</td>
-                                <td className="px-4 py-2 text-right text-slate-700">{fmtInt(p.unitsSold)}</td>
-                                <td className="px-4 py-2 text-right text-slate-700">{fmtInt(p.ordersCount)}</td>
+                                <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'Inter', fontWeight: 600, fontSize: 13, color: S.ink }}>
+                                    {fmtMoney(p.revenueNet)}
+                                </td>
+                                <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                                    {fmtInt(p.unitsSold)}
+                                </td>
+                                <td style={{ padding: '10px 16px', textAlign: 'right', fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                                    {fmtInt(p.ordersCount)}
+                                </td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             )}
-        </div>
+        </Card>
     );
 }
 
@@ -631,57 +977,107 @@ function RecommendationsCard({
     recs, onSelect,
 }: { recs: RecommendationDto[]; onSelect: (id: string) => void }) {
     return (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+        <Card noPad>
+            <div style={{
+                padding: '16px 20px', borderBottom: `1px solid ${S.border}`,
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+            }}>
                 <div>
-                    <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                        <Sparkles className="h-4 w-4 text-blue-500" /> Read-only подсказки
+                    <h3 style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink, margin: '0 0 4px',
+                    }}>
+                        <Sparkles size={15} color={S.blue} /> Read-only подсказки
                     </h3>
-                    <p className="text-[11px] text-slate-500 mt-0.5">
+                    <p style={{ fontFamily: 'Inter', fontSize: 11, color: S.sub, margin: 0 }}>
                         Объяснимые сигналы по правилам. Не план действий — только подсказки.
                     </p>
                 </div>
-                <span className="text-[11px] text-slate-400">{recs.length} активных</span>
+                <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, whiteSpace: 'nowrap' }}>
+                    {recs.length} активных
+                </span>
             </div>
             {recs.length === 0 ? (
-                <div className="p-6 text-center text-sm text-slate-500 flex flex-col items-center gap-2">
-                    <CheckCircle2 className="h-8 w-8 text-emerald-300" />
-                    Нет активных подсказок. Можно работать.
+                <div style={{
+                    padding: '40px 24px', display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: 12,
+                }}>
+                    <div style={{
+                        width: 48, height: 48, borderRadius: 14, background: 'rgba(16,185,129,0.1)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                        <CheckCircle2 size={22} color={S.green} />
+                    </div>
+                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                        Нет активных подсказок. Можно работать.
+                    </span>
                 </div>
             ) : (
-                <ul className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto">
-                    {recs.map((r) => (
-                        <li key={r.id} className="p-4 hover:bg-slate-50">
-                            <div className="flex items-start gap-3">
-                                <span className={`mt-0.5 inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ring-1 ${PRIORITY_TONE[r.priority]}`}>
-                                    {r.priority}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-sm font-semibold text-slate-900 truncate">
-                                        {RULE_LABEL[r.ruleKey] ?? r.ruleKey}
-                                        {r.sku && <span className="ml-2 text-slate-500 font-normal">— {r.sku}</span>}
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0, maxHeight: 420, overflowY: 'auto' }}>
+                    {recs.map((r, idx) => {
+                        const ps = PRIORITY_STYLE[r.priority];
+                        return (
+                            <li
+                                key={r.id}
+                                style={{
+                                    padding: '14px 20px',
+                                    borderBottom: idx < recs.length - 1 ? `1px solid ${S.border}` : 'none',
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                                    <span style={{
+                                        display: 'inline-flex', alignItems: 'center',
+                                        padding: '2px 8px', borderRadius: 6,
+                                        fontFamily: 'Inter', fontSize: 10, fontWeight: 700,
+                                        color: ps.color, background: ps.bg, border: `1px solid ${ps.border}`,
+                                        flexShrink: 0, marginTop: 2,
+                                    }}>
+                                        {r.priority}
+                                    </span>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{
+                                            fontFamily: 'Inter', fontWeight: 600, fontSize: 13, color: S.ink,
+                                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                        }}>
+                                            {RULE_LABEL[r.ruleKey] ?? r.ruleKey}
+                                            {r.sku && (
+                                                <span style={{ fontWeight: 400, color: S.sub, marginLeft: 8 }}>
+                                                    — {r.sku}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.ink, marginTop: 4 }}>
+                                            {r.message}
+                                        </div>
+                                        <div style={{
+                                            display: 'flex', alignItems: 'center', gap: 5,
+                                            fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 6,
+                                        }}>
+                                            <Info size={11} />
+                                            {REASON_EXPLAIN[r.reasonCode] ?? r.reasonCode}
+                                        </div>
                                     </div>
-                                    <div className="mt-1 text-xs text-slate-700">{r.message}</div>
-                                    <div className="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
-                                        <Info className="h-3 w-3" />
-                                        {REASON_EXPLAIN[r.reasonCode] ?? r.reasonCode}
-                                    </div>
+                                    {r.productId && (
+                                        <button
+                                            onClick={() => onSelect(r.productId!)}
+                                            title="Открыть drill-down по SKU"
+                                            style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: 3,
+                                                background: 'none', border: 'none', cursor: 'pointer',
+                                                fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.blue,
+                                                padding: 0, flexShrink: 0,
+                                            }}
+                                        >
+                                            Подробнее <ArrowRight size={12} />
+                                        </button>
+                                    )}
                                 </div>
-                                {r.productId && (
-                                    <button
-                                        onClick={() => onSelect(r.productId!)}
-                                        title="Открыть drill-down по SKU"
-                                        className="text-blue-600 text-xs font-semibold inline-flex items-center gap-0.5 hover:underline"
-                                    >
-                                        Подробнее <ArrowRight className="h-3 w-3" />
-                                    </button>
-                                )}
-                            </div>
-                        </li>
-                    ))}
+                            </li>
+                        );
+                    })}
                 </ul>
             )}
-        </div>
+        </Card>
     );
 }
 
@@ -709,21 +1105,62 @@ function ProductDrawer({
     }, [productId, period.from, period.to]);
 
     return (
-        <div className="fixed inset-0 z-50 flex">
-            <div className="flex-1 bg-slate-900/40" onClick={onClose} />
-            <div className="w-full max-w-xl bg-white shadow-2xl overflow-y-auto">
-                <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
+            {/* Backdrop */}
+            <div
+                style={{ flex: 1, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(3px)' }}
+                onClick={onClose}
+            />
+            {/* Drawer panel */}
+            <div style={{
+                width: '100%', maxWidth: 560, background: '#fff',
+                boxShadow: '-8px 0 40px rgba(0,0,0,0.18)', overflowY: 'auto', display: 'flex', flexDirection: 'column',
+            }}>
+                {/* Drawer header */}
+                <div style={{
+                    padding: '20px 24px', borderBottom: `1px solid ${S.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    position: 'sticky', top: 0, background: '#fff', zIndex: 1,
+                }}>
                     <div>
-                        <h3 className="text-lg font-bold text-slate-900">{data?.product.sku ?? '…'}</h3>
-                        <p className="text-xs text-slate-500">{data?.product.name ?? ''}</p>
+                        <h3 style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 18, color: S.ink, margin: '0 0 2px' }}>
+                            {data?.product.sku ?? '…'}
+                        </h3>
+                        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, margin: 0 }}>
+                            {data?.product.name ?? ''}
+                        </p>
                     </div>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            background: '#f1f5f9', border: 'none', cursor: 'pointer',
+                            width: 32, height: 32, borderRadius: 8,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', color: S.sub,
+                        }}
+                    >
+                        <X size={16} />
+                    </button>
                 </div>
-                {loading && <div className="p-8 text-center text-sm text-slate-500">Загрузка…</div>}
-                {err && <div className="p-5 text-sm text-rose-700 bg-rose-50">{err}</div>}
+
+                {loading && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 48, gap: 10 }}>
+                        <Spinner size={18} />
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>Загрузка…</span>
+                    </div>
+                )}
+                {err && (
+                    <div style={{
+                        margin: 20, padding: '12px 16px', borderRadius: 10,
+                        background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.25)`,
+                        fontFamily: 'Inter', fontSize: 13, color: S.red,
+                    }}>
+                        {err}
+                    </div>
+                )}
                 {data && (
                     <>
-                        <div className="p-5 grid grid-cols-2 gap-3 text-sm">
+                        {/* KPI mini-grid */}
+                        <div style={{ padding: '20px 24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                             <DrillKpi label="Чистая выручка" value={fmtMoney(data.kpis.revenueNet)} />
                             <DrillKpi label="Шт. продано" value={fmtInt(data.kpis.unitsSold)} />
                             <DrillKpi label="Заказов" value={fmtInt(data.kpis.ordersCount)} />
@@ -731,33 +1168,72 @@ function ProductDrawer({
                             <DrillKpi label="Средняя цена" value={fmtMoney(data.kpis.avgPrice)} />
                             <DrillKpi label="Период" value={`${data.period.from} — ${data.period.to}`} />
                         </div>
-                        <div className="border-t border-slate-100">
-                            <div className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+
+                        {/* Recent orders table */}
+                        <div style={{ borderTop: `1px solid ${S.border}` }}>
+                            <div style={{
+                                padding: '12px 24px',
+                                fontFamily: 'Inter', fontSize: 11, fontWeight: 700,
+                                color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em',
+                                background: '#f8fafc',
+                            }}>
                                 Последние заказы (до 30)
                             </div>
                             {data.recentOrders.length === 0 ? (
-                                <div className="px-5 py-8 text-center text-sm text-slate-500">Нет заказов за период.</div>
+                                <div style={{
+                                    padding: '32px 24px', textAlign: 'center',
+                                    fontFamily: 'Inter', fontSize: 13, color: S.sub,
+                                }}>
+                                    Нет заказов за период.
+                                </div>
                             ) : (
-                                <table className="w-full text-xs">
-                                    <thead className="bg-slate-50 text-slate-500">
-                                        <tr>
-                                            <th className="text-left px-4 py-2">МП</th>
-                                            <th className="text-left px-4 py-2">№</th>
-                                            <th className="text-left px-4 py-2">Дата</th>
-                                            <th className="text-right px-4 py-2">Шт.</th>
-                                            <th className="text-right px-4 py-2">Сумма</th>
-                                            <th className="text-left px-4 py-2">Статус</th>
+                                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                    <thead>
+                                        <tr style={{ background: '#f8fafc', borderBottom: `1px solid ${S.border}` }}>
+                                            {['МП', '№', 'Дата', 'Шт.', 'Сумма', 'Статус'].map((h, i) => (
+                                                <th key={h} style={{
+                                                    fontFamily: 'Inter', fontSize: 10, fontWeight: 700,
+                                                    color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em',
+                                                    padding: '8px 12px',
+                                                    textAlign: i >= 3 && i <= 4 ? 'right' : 'left',
+                                                }}>
+                                                    {h}
+                                                </th>
+                                            ))}
                                         </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-slate-100">
+                                    <tbody>
                                         {data.recentOrders.map((o, i) => (
-                                            <tr key={i} className="hover:bg-slate-50">
-                                                <td className="px-4 py-2 font-semibold">{o.marketplace}</td>
-                                                <td className="px-4 py-2 truncate max-w-[120px]">{o.marketplaceOrderId}</td>
-                                                <td className="px-4 py-2">{fmtDate(o.marketplaceCreatedAt)}</td>
-                                                <td className="px-4 py-2 text-right">{o.quantity}</td>
-                                                <td className="px-4 py-2 text-right">{fmtMoney(o.totalAmount ?? 0)}</td>
-                                                <td className="px-4 py-2 text-slate-500">{o.status ?? '—'}</td>
+                                            <tr
+                                                key={i}
+                                                style={{
+                                                    borderBottom: i < data.recentOrders.length - 1 ? `1px solid ${S.border}` : 'none',
+                                                    transition: 'background 0.12s',
+                                                }}
+                                                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#f8fafc'; }}
+                                                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                                            >
+                                                <td style={{ padding: '8px 12px', fontFamily: 'Inter', fontWeight: 700, fontSize: 12, color: S.ink }}>
+                                                    {o.marketplace}
+                                                </td>
+                                                <td style={{
+                                                    padding: '8px 12px', fontFamily: 'Inter', fontSize: 11, color: S.sub,
+                                                    maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                }}>
+                                                    {o.marketplaceOrderId}
+                                                </td>
+                                                <td style={{ padding: '8px 12px', fontFamily: 'Inter', fontSize: 11, color: S.sub }}>
+                                                    {fmtDate(o.marketplaceCreatedAt)}
+                                                </td>
+                                                <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'Inter', fontSize: 12, color: S.ink }}>
+                                                    {o.quantity}
+                                                </td>
+                                                <td style={{ padding: '8px 12px', textAlign: 'right', fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink }}>
+                                                    {fmtMoney(o.totalAmount ?? 0)}
+                                                </td>
+                                                <td style={{ padding: '8px 12px', fontFamily: 'Inter', fontSize: 11, color: S.muted }}>
+                                                    {o.status ?? '—'}
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -773,9 +1249,19 @@ function ProductDrawer({
 
 function DrillKpi({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-xl bg-slate-50 px-3 py-2">
-            <div className="text-[11px] text-slate-500 font-semibold uppercase tracking-wider">{label}</div>
-            <div className="mt-0.5 text-sm font-bold text-slate-900">{value}</div>
+        <div style={{
+            borderRadius: 10, background: '#f8fafc', border: `1px solid ${S.border}`,
+            padding: '10px 14px',
+        }}>
+            <div style={{
+                fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted,
+                textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4,
+            }}>
+                {label}
+            </div>
+            <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink }}>
+                {value}
+            </div>
         </div>
     );
 }

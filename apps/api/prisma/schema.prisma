@@ -884,6 +884,7 @@ model Tenant {
   stockChannelLocks        StockChannelLock[]
   tasks                    Task[]
   taskEvents               TaskEvent[]
+  wbFinanceReports         WbFinanceReport[]
 }
 
 // Настройки компании, вынесены из Tenant для чистоты модели
@@ -1047,12 +1048,13 @@ model MarketplaceAccount {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  warehouses  Warehouse[]
-  credential  MarketplaceCredential?
-  events      MarketplaceAccountEvent[]
-  syncRuns    SyncRun[]
-  orders      Order[]
-  orderEvents OrderEvent[]
+  warehouses       Warehouse[]
+  credential       MarketplaceCredential?
+  events           MarketplaceAccountEvent[]
+  syncRuns         SyncRun[]
+  orders           Order[]
+  orderEvents      OrderEvent[]
+  wbFinanceReports WbFinanceReport[]
 
   @@unique([tenantId, marketplace, label])
   @@index([tenantId, lifecycleStatus])
@@ -1520,6 +1522,38 @@ model MarketplaceReport {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, reportId])
+}
+
+/// Детализированный финансовый отчёт WB (TASK_ANALYTICS_8).
+/// Один ряд = одна строка `/api/v5/supplier/reportDetailByPeriod`.
+/// `realizationId` = `rrd_id` из ответа WB (уникальный row-ID).
+/// Используется finance-snapshot.service для per-SKU marketplaceFees/logistics,
+/// устраняя необходимость вводить `marketplaceFees` вручную через cost profile.
+model WbFinanceReport {
+  id        String @id @default(uuid())
+  tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId String
+  account   MarketplaceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  realizationId BigInt
+  orderId       String?  @db.VarChar(64)
+  sku           String?  @db.VarChar(128)
+
+  commissionRub Float?
+  deliveryRub   Float?
+  storageFee    Float?
+  penalty       Float?
+
+  periodFrom DateTime @db.Date
+  periodTo   DateTime @db.Date
+  rawPayload Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, realizationId])
+  @@index([tenantId, sku])
+  @@index([tenantId, periodFrom, periodTo])
 }
 
 // -------------------------------------------------------------------

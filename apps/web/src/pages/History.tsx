@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { Shield, ChevronRight, X, AlertTriangle, Search, Filter, Clock } from 'lucide-react';
+import { Shield, ChevronRight, X, AlertTriangle, Filter, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { auditApi, AuditLog, SecurityEvent, AuditLogFilters, SecurityEventFilters } from '../api/audit';
+import { auditApi, type AuditLog, type SecurityEvent, type AuditLogFilters, type SecurityEventFilters } from '../api/audit';
+import { S, PageHeader, Badge, TH, FieldLabel, Btn, Input, HiSelect, Pagination, EmptyState, SkuTag, Spinner } from '../components/ui';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -16,19 +17,19 @@ const DOMAIN_LABELS: Record<string, string> = {
     BILLING: 'Биллинг', SUPPORT: 'Поддержка', FINANCE: 'Финансы',
 };
 
-const DOMAIN_COLORS: Record<string, string> = {
-    AUTH:        'bg-rose-100 text-rose-800',
-    SESSION:     'bg-red-100 text-red-800',
-    PASSWORD:    'bg-pink-100 text-pink-800',
-    TEAM:        'bg-violet-100 text-violet-800',
-    TENANT:      'bg-blue-100 text-blue-800',
-    CATALOG:     'bg-cyan-100 text-cyan-800',
-    INVENTORY:   'bg-emerald-100 text-emerald-800',
-    MARKETPLACE: 'bg-orange-100 text-orange-800',
-    SYNC:        'bg-amber-100 text-amber-800',
-    BILLING:     'bg-yellow-100 text-yellow-800',
-    SUPPORT:     'bg-slate-100 text-slate-700',
-    FINANCE:     'bg-teal-100 text-teal-800',
+const DOMAIN_BADGE_COLORS: Record<string, { color: string; bg: string }> = {
+    AUTH:        { color: '#be123c', bg: '#fff1f2' },
+    SESSION:     { color: '#b91c1c', bg: '#fef2f2' },
+    PASSWORD:    { color: '#9d174d', bg: '#fdf2f8' },
+    TEAM:        { color: '#6d28d9', bg: '#f5f3ff' },
+    TENANT:      { color: '#1d4ed8', bg: '#eff6ff' },
+    CATALOG:     { color: '#0e7490', bg: '#ecfeff' },
+    INVENTORY:   { color: '#065f46', bg: '#ecfdf5' },
+    MARKETPLACE: { color: '#c2410c', bg: '#fff7ed' },
+    SYNC:        { color: '#92400e', bg: '#fffbeb' },
+    BILLING:     { color: '#854d0e', bg: '#fefce8' },
+    SUPPORT:     { color: '#475569', bg: '#f1f5f9' },
+    FINANCE:     { color: '#0f766e', bg: '#f0fdfa' },
 };
 
 const EVENT_TYPE_LABELS: Record<string, string> = {
@@ -42,7 +43,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
     PRODUCT_CREATED: 'Товар создан', PRODUCT_UPDATED: 'Товар обновлён',
     PRODUCT_ARCHIVED: 'Товар архивирован', PRODUCT_RESTORED: 'Товар восстановлен',
     PRODUCT_DUPLICATE_MERGED: 'Дубликаты объединены', CATALOG_IMPORT_COMMITTED: 'Импорт применён',
-    MARKETPLACE_MAPPING_CREATED: 'Маппинг добавлен', MARKETPLACE_MAPPING_DELETED: 'Маппинг удалён',
+    MARKETPLACE_MAPPING_CREATED: 'Привязка к МП добавлена', MARKETPLACE_MAPPING_DELETED: 'Привязка к МП удалена',
     STOCK_MANUALLY_ADJUSTED: 'Коррекция остатка', STOCK_CORRECTION_IMPORTED: 'Импорт остатков',
     STOCK_ORDER_DEDUCTED: 'Списание по заказу', STOCK_ORDER_RETURNED: 'Возврат остатка',
     MARKETPLACE_ACCOUNT_CONNECTED: 'Аккаунт подключён', MARKETPLACE_CREDENTIALS_UPDATED: 'Ключи обновлены',
@@ -54,7 +55,6 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
     SUSPENSION_ENTERED: 'Приостановка', GRACE_ENTERED: 'Льготный период',
     SUPPORT_ACCESS_GRANTED: 'Доступ поддержки', SUPPORT_TENANT_DATA_CHANGED: 'Данные изменены поддержкой',
     SUPPORT_TENANT_RESTORED: 'Восстановлено поддержкой', SUPPORT_TENANT_CLOSED: 'Закрыто поддержкой',
-    // Legacy
     PRODUCT_DELETED: 'Удаление товара', STOCK_ADJUSTED: 'Корректировка', ORDER_DEDUCTED: 'Списание заказа',
 };
 
@@ -88,14 +88,18 @@ function getEventLabel(log: AuditLog): string {
     return '—';
 }
 
-function getDomainBadge(domain: string | null): JSX.Element | null {
+function getDomainBadge(domain: string | null): React.ReactElement | null {
     if (!domain) return null;
-    const color = DOMAIN_COLORS[domain] ?? 'bg-slate-100 text-slate-600';
-    return (
-        <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${color}`}>
-            {DOMAIN_LABELS[domain] ?? domain}
-        </span>
-    );
+    const cfg = DOMAIN_BADGE_COLORS[domain] ?? { color: S.sub, bg: '#f1f5f9' };
+    return <Badge label={DOMAIN_LABELS[domain] ?? domain} color={cfg.color} bg={cfg.bg} />;
+}
+
+function secEventBadge(eventType: string): React.ReactElement {
+    const cfg =
+        eventType === 'login_failed'  ? { color: S.red,   bg: 'rgba(239,68,68,0.08)' } :
+        eventType === 'login_success' ? { color: S.green, bg: 'rgba(16,185,129,0.08)' } :
+        { color: S.sub, bg: '#f1f5f9' };
+    return <Badge label={SEC_EVENT_LABELS[eventType] ?? eventType} color={cfg.color} bg={cfg.bg} />;
 }
 
 // ─── Before/After Diff ───────────────────────────────────────────────────────
@@ -105,28 +109,37 @@ function DiffView({ before, after, changedFields }: {
     after:  Record<string, unknown> | null;
     changedFields: string[] | null;
 }) {
-    if (!before && !after) return <p className="text-xs text-slate-400 italic">Нет данных об изменениях</p>;
+    if (!before && !after) return (
+        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>Нет данных об изменениях</p>
+    );
 
     const keys = changedFields?.length
         ? changedFields
         : [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
 
-    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">Изменений не зафиксировано</p>;
+    if (keys.length === 0) return (
+        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>Изменений не зафиксировано</p>
+    );
 
     return (
-        <div className="space-y-1.5">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {keys.map(key => {
                 const bv = before?.[key];
                 const av = after?.[key];
                 const changed = JSON.stringify(bv) !== JSON.stringify(av);
                 return (
-                    <div key={key} className={`rounded-lg p-2 text-xs font-mono ${changed ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
-                        <span className="text-slate-500 font-sans font-medium">{key}: </span>
+                    <div key={key} style={{
+                        borderRadius: 8, padding: '6px 10px', fontSize: 12,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        background: changed ? 'rgba(245,158,11,0.06)' : '#f8fafc',
+                        border: changed ? `1px solid rgba(245,158,11,0.25)` : `1px solid ${S.border}`,
+                    }}>
+                        <span style={{ fontFamily: 'Inter', color: S.sub, fontWeight: 500 }}>{key}: </span>
                         {before && bv !== undefined && (
-                            <span className="line-through text-red-500 mr-1">{JSON.stringify(bv)}</span>
+                            <span style={{ textDecoration: 'line-through', color: S.red, marginRight: 6 }}>{JSON.stringify(bv)}</span>
                         )}
                         {after && av !== undefined && (
-                            <span className="text-emerald-700">{JSON.stringify(av)}</span>
+                            <span style={{ color: S.green }}>{JSON.stringify(av)}</span>
                         )}
                     </div>
                 );
@@ -141,93 +154,103 @@ function DetailPanel({ log, onClose }: { log: AuditLog; onClose: () => void }) {
     const isRedacted = log.redactionLevel === 'strict';
 
     return (
-        <div className="fixed inset-y-0 right-0 z-40 w-full max-w-lg bg-white shadow-2xl border-l border-slate-200 flex flex-col">
+        <div style={{
+            position: 'fixed', insetBlock: 0, right: 0, zIndex: 40,
+            width: '100%', maxWidth: 480,
+            background: '#fff',
+            boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
+            borderLeft: `1px solid ${S.border}`,
+            display: 'flex', flexDirection: 'column',
+        }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
+            <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '14px 20px', borderBottom: `1px solid ${S.border}`, background: S.bg,
+            }}>
                 <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Детали события</p>
-                    <p className="text-sm font-bold text-slate-900 mt-0.5">{getEventLabel(log)}</p>
+                    <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0 }}>Детали события</p>
+                    <p style={{ fontFamily: 'Inter', fontSize: 14, fontWeight: 700, color: S.ink, margin: '2px 0 0' }}>{getEventLabel(log)}</p>
                 </div>
-                <button onClick={onClose} className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors">
-                    <X className="w-4 h-4 text-slate-600" />
+                <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 6, borderRadius: 6, color: S.muted, fontSize: 20, lineHeight: 1, display: 'flex' }}>
+                    <X size={16} />
                 </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
                 {/* Meta */}
                 <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Контекст</h3>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                    <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>Контекст</p>
+                    <dl style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: 8, columnGap: 16, fontSize: 13 }}>
                         {log.eventDomain && (
                             <>
-                                <dt className="text-slate-500">Домен</dt>
-                                <dd>{getDomainBadge(log.eventDomain)}</dd>
+                                <dt style={{ color: S.sub, fontFamily: 'Inter' }}>Домен</dt>
+                                <dd style={{ margin: 0 }}>{getDomainBadge(log.eventDomain)}</dd>
                             </>
                         )}
                         {log.entityType && (
                             <>
-                                <dt className="text-slate-500">Тип сущности</dt>
-                                <dd className="font-mono text-xs text-slate-800">{log.entityType}</dd>
+                                <dt style={{ color: S.sub, fontFamily: 'Inter' }}>Тип сущности</dt>
+                                <dd style={{ margin: 0 }}><SkuTag>{log.entityType}</SkuTag></dd>
                             </>
                         )}
                         {log.entityId && (
                             <>
-                                <dt className="text-slate-500">ID сущности</dt>
-                                <dd className="font-mono text-xs text-slate-600 truncate">{log.entityId}</dd>
+                                <dt style={{ color: S.sub, fontFamily: 'Inter' }}>ID сущности</dt>
+                                <dd style={{ margin: 0 }}><SkuTag>{log.entityId}</SkuTag></dd>
                             </>
                         )}
-                        <dt className="text-slate-500">Исполнитель</dt>
-                        <dd className="text-slate-800">
+                        <dt style={{ color: S.sub, fontFamily: 'Inter' }}>Исполнитель</dt>
+                        <dd style={{ margin: 0, fontFamily: 'Inter', fontSize: 13, color: S.ink }}>
                             {ACTOR_TYPE_LABELS[log.actorType ?? ''] ?? log.actorType ?? '—'}
-                            {log.actorRole && <span className="text-slate-400 ml-1 text-xs">({log.actorRole})</span>}
+                            {log.actorRole && <span style={{ color: S.muted, marginLeft: 4, fontSize: 11 }}>({log.actorRole})</span>}
                         </dd>
                         {log.source && (
                             <>
-                                <dt className="text-slate-500">Источник</dt>
-                                <dd className="text-slate-800">{SOURCE_LABELS[log.source] ?? log.source}</dd>
+                                <dt style={{ color: S.sub, fontFamily: 'Inter' }}>Источник</dt>
+                                <dd style={{ margin: 0, fontFamily: 'Inter', fontSize: 13, color: S.ink }}>{SOURCE_LABELS[log.source] ?? log.source}</dd>
                             </>
                         )}
-                        <dt className="text-slate-500">Время</dt>
-                        <dd className="text-slate-800">{format(new Date(log.createdAt), 'dd MMM yyyy, HH:mm:ss', { locale: ru })}</dd>
+                        <dt style={{ color: S.sub, fontFamily: 'Inter' }}>Время</dt>
+                        <dd style={{ margin: 0, fontFamily: 'Inter', fontSize: 13, color: S.ink }}>{format(new Date(log.createdAt), 'dd MMM yyyy, HH:mm:ss', { locale: ru })}</dd>
                     </dl>
                 </section>
 
                 {/* Correlation */}
                 {(log.requestId || log.correlationId) && (
                     <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Трассировка</h3>
-                        <dl className="space-y-1.5 text-xs font-mono">
+                        <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>Трассировка</p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>
                             {log.requestId && (
                                 <div>
-                                    <span className="text-slate-500 font-sans">requestId: </span>
-                                    <span className="text-slate-700">{log.requestId}</span>
+                                    <span style={{ fontFamily: 'Inter', color: S.sub }}>requestId: </span>
+                                    <span style={{ color: S.ink }}>{log.requestId}</span>
                                 </div>
                             )}
                             {log.correlationId && (
                                 <div>
-                                    <span className="text-slate-500 font-sans">correlationId: </span>
-                                    <span className="text-slate-700">{log.correlationId}</span>
+                                    <span style={{ fontFamily: 'Inter', color: S.sub }}>correlationId: </span>
+                                    <span style={{ color: S.ink }}>{log.correlationId}</span>
                                 </div>
                             )}
-                        </dl>
+                        </div>
                     </section>
                 )}
 
                 {/* Changes */}
                 <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Изменения</h3>
+                    <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>Изменения</p>
                     {isRedacted ? (
-                        <p className="text-xs text-slate-400 italic flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5" /> Детали скрыты политикой редактирования
+                        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Shield size={14} /> Детали скрыты политикой редактирования
                         </p>
                     ) : (
                         <>
                             {log.changedFields && log.changedFields.length > 0 && (
-                                <div className="mb-3">
-                                    <p className="text-xs text-slate-500 mb-1.5">Изменённые поля:</p>
-                                    <div className="flex flex-wrap gap-1.5">
+                                <div style={{ marginBottom: 12 }}>
+                                    <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginBottom: 6 }}>Изменённые поля:</p>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                                         {log.changedFields.map(f => (
-                                            <span key={f} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-mono rounded">{f}</span>
+                                            <SkuTag key={f}>{f}</SkuTag>
                                         ))}
                                     </div>
                                 </div>
@@ -240,13 +263,13 @@ function DetailPanel({ log, onClose }: { log: AuditLog; onClose: () => void }) {
                 {/* Legacy changes for old records */}
                 {!log.eventType && log.actionType && (
                     <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Изменения (устаревший формат)</h3>
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                            {log.productSku && (<><dt className="text-slate-500">SKU</dt><dd className="font-medium">{log.productSku}</dd></>)}
-                            {log.beforeTotal != null && (<><dt className="text-slate-500">Было</dt><dd>{log.beforeTotal}</dd></>)}
-                            {log.afterTotal != null && (<><dt className="text-slate-500">Стало</dt><dd className="font-semibold">{log.afterTotal}</dd></>)}
-                            {log.delta != null && (<><dt className="text-slate-500">Δ</dt><dd className={log.delta > 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>{log.delta > 0 ? '+' : ''}{log.delta}</dd></>)}
-                            {log.note && (<><dt className="text-slate-500">Примечание</dt><dd className="text-slate-700">{log.note}</dd></>)}
+                        <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>Изменения (устаревший формат)</p>
+                        <dl style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: 6, columnGap: 16, fontSize: 13 }}>
+                            {log.productSku && (<><dt style={{ color: S.sub, fontFamily: 'Inter' }}>SKU</dt><dd style={{ margin: 0, fontWeight: 600 }}>{log.productSku}</dd></>)}
+                            {log.beforeTotal != null && (<><dt style={{ color: S.sub, fontFamily: 'Inter' }}>Было</dt><dd style={{ margin: 0 }}>{log.beforeTotal}</dd></>)}
+                            {log.afterTotal != null && (<><dt style={{ color: S.sub, fontFamily: 'Inter' }}>Стало</dt><dd style={{ margin: 0, fontWeight: 600 }}>{log.afterTotal}</dd></>)}
+                            {log.delta != null && (<><dt style={{ color: S.sub, fontFamily: 'Inter' }}>Δ</dt><dd style={{ margin: 0, color: log.delta > 0 ? S.green : S.red, fontWeight: 600 }}>{log.delta > 0 ? '+' : ''}{log.delta}</dd></>)}
+                            {log.note && (<><dt style={{ color: S.sub, fontFamily: 'Inter' }}>Примечание</dt><dd style={{ margin: 0, color: S.ink }}>{log.note}</dd></>)}
                         </dl>
                     </section>
                 )}
@@ -254,8 +277,13 @@ function DetailPanel({ log, onClose }: { log: AuditLog; onClose: () => void }) {
                 {/* Metadata */}
                 {log.metadata && Object.keys(log.metadata).length > 0 && (
                     <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Метаданные</h3>
-                        <pre className="text-xs font-mono bg-slate-50 rounded-lg p-3 overflow-x-auto text-slate-700 whitespace-pre-wrap">
+                        <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>Метаданные</p>
+                        <pre style={{
+                            fontSize: 12, fontFamily: "'JetBrains Mono', monospace",
+                            background: S.bg, borderRadius: 8, padding: 12,
+                            overflowX: 'auto', color: S.ink, whiteSpace: 'pre-wrap',
+                            border: `1px solid ${S.border}`, margin: 0,
+                        }}>
                             {JSON.stringify(log.metadata, null, 2)}
                         </pre>
                     </section>
@@ -359,173 +387,179 @@ export default function History() {
 
     // ── Render helpers ────────────────────────────────────────────────────────
 
+    const ROW: React.CSSProperties = {
+        display: 'flex', alignItems: 'center', minHeight: 52,
+        borderBottom: `1px solid ${S.border}`, cursor: 'pointer', transition: 'background 0.1s',
+        padding: '0 4px',
+    };
+
     const renderLogRow = (log: AuditLog) => (
-        <tr
+        <div
             key={log.id}
-            className="hover:bg-blue-50/40 transition-colors cursor-pointer"
+            style={ROW}
             onClick={() => setSelectedLog(log)}
+            onMouseEnter={e => (e.currentTarget.style.background = S.bg)}
+            onMouseLeave={e => (e.currentTarget.style.background = '')}
         >
-            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+            <div style={{ flex: 1.2, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, color: S.sub, whiteSpace: 'nowrap' }}>
                 {format(new Date(log.createdAt), 'dd MMM, HH:mm', { locale: ru })}
-            </td>
-            <td className="px-4 py-3 whitespace-nowrap">
+            </div>
+            <div style={{ flex: 1.5, padding: '0 12px' }}>
                 {getDomainBadge(log.eventDomain)}
-            </td>
-            <td className="px-4 py-3 text-xs font-medium text-slate-800 max-w-[180px] truncate">
+            </div>
+            <div style={{ flex: 2, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, fontWeight: 500, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {getEventLabel(log)}
-            </td>
-            <td className="hidden sm:table-cell px-4 py-3 text-xs text-slate-500 max-w-[120px] truncate">
+            </div>
+            <div style={{ flex: 2, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, color: S.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {log.entityType
-                    ? <span>{log.entityType}{log.entityId && <span className="text-slate-400 ml-1">#{log.entityId.slice(-6)}</span>}</span>
+                    ? <span>{log.entityType}{log.entityId && <span style={{ color: S.muted, marginLeft: 4 }}>#{log.entityId.slice(-6)}</span>}</span>
                     : log.productSku
-                        ? <span className="font-mono">{log.productSku}</span>
-                        : <span className="text-slate-300">—</span>
+                        ? <SkuTag>{log.productSku}</SkuTag>
+                        : <span style={{ color: S.muted }}>—</span>
                 }
-            </td>
-            <td className="hidden md:table-cell px-4 py-3 text-xs text-slate-500">
+            </div>
+            <div style={{ flex: 1.5, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, color: S.sub, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {log.actorType ? (ACTOR_TYPE_LABELS[log.actorType] ?? log.actorType) : (log.actorEmail ?? '—')}
-            </td>
-            <td className="px-4 py-3 text-right">
-                <ChevronRight className="w-3.5 h-3.5 text-slate-300 ml-auto" />
-            </td>
-        </tr>
+            </div>
+            <div style={{ width: 32, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
+                <ChevronRight size={14} color={S.muted} />
+            </div>
+        </div>
     );
 
     const renderSecRow = (ev: SecurityEvent) => (
-        <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
-            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+        <div
+            key={ev.id}
+            style={{ ...ROW, cursor: 'default' }}
+            onMouseEnter={e => (e.currentTarget.style.background = S.bg)}
+            onMouseLeave={e => (e.currentTarget.style.background = '')}
+        >
+            <div style={{ flex: 1.5, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, color: S.sub, whiteSpace: 'nowrap' }}>
                 {format(new Date(ev.createdAt), 'dd MMM, HH:mm', { locale: ru })}
-            </td>
-            <td className="px-4 py-3 whitespace-nowrap">
-                <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                    ev.eventType === 'login_failed' ? 'bg-red-100 text-red-700' :
-                    ev.eventType === 'login_success' ? 'bg-emerald-100 text-emerald-700' :
-                    'bg-slate-100 text-slate-600'
-                }`}>
-                    {SEC_EVENT_LABELS[ev.eventType] ?? ev.eventType}
-                </span>
-            </td>
-            <td className="hidden sm:table-cell px-4 py-3 text-xs text-slate-500 font-mono">
+            </div>
+            <div style={{ flex: 2, padding: '0 12px' }}>
+                {secEventBadge(ev.eventType)}
+            </div>
+            <div style={{ flex: 1.5, padding: '0 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.sub }}>
                 {ev.userId ? ev.userId.slice(-8) : '—'}
-            </td>
-            <td className="hidden md:table-cell px-4 py-3 text-xs text-slate-500 font-mono">
+            </div>
+            <div style={{ flex: 1.5, padding: '0 12px', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.sub }}>
                 {ev.ip ?? '—'}
-            </td>
-            <td className="hidden lg:table-cell px-4 py-3 text-xs text-slate-400 max-w-[200px] truncate">
+            </div>
+            <div style={{ flex: 3, padding: '0 12px', fontFamily: 'Inter', fontSize: 12, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {ev.userAgent ?? '—'}
-            </td>
-        </tr>
+            </div>
+        </div>
     );
 
     // ── Layout ────────────────────────────────────────────────────────────────
 
+    const activeFilterCount = [domain, fromDate, toDate, entityType].filter(Boolean).length;
+
     return (
-        <div className="space-y-5 animate-fade-in pb-12">
+        <div style={{ paddingBottom: 48 }}>
             {/* Header */}
-            <div className="flex items-center justify-between">
-                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">История изменений</h1>
-                {tab === 'logs' && logsMeta.retentionDays && (
-                    <span className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400">
-                        <Clock className="w-3.5 h-3.5" /> Хранится {logsMeta.retentionDays} дней
-                    </span>
-                )}
-            </div>
+            <PageHeader
+                title="История изменений"
+                subtitle={tab === 'logs' && logsMeta.retentionDays ? `Хранится ${logsMeta.retentionDays} дней` : undefined}
+            />
 
             {/* Read-only banner */}
             {isReadOnly && READ_ONLY_BANNER[accessState] && (
-                <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <div style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`,
+                    borderRadius: 12, padding: '12px 16px', marginBottom: 20,
+                    fontFamily: 'Inter', fontSize: 13, color: '#92400e',
+                }}>
+                    <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0 }} />
                     <span>{READ_ONLY_BANNER[accessState]}</span>
                 </div>
             )}
 
             {/* Tabs */}
-            <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+            <div style={{ display: 'flex', gap: 4, background: '#f1f5f9', padding: 4, borderRadius: 12, width: 'fit-content', marginBottom: 20 }}>
                 {(['logs', 'security'] as Tab[]).map(t => (
                     <button
                         key={t}
                         onClick={() => setTab(t)}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                            tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                        }`}
+                        style={{
+                            padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                            fontFamily: 'Inter', fontSize: 13, fontWeight: 500, transition: 'all 0.15s',
+                            background: tab === t ? '#fff' : 'transparent',
+                            color: tab === t ? S.ink : S.sub,
+                            boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                            display: 'flex', alignItems: 'center', gap: 6,
+                        }}
                     >
-                        {t === 'logs' ? 'Журнал' : (
-                            <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" />Security</span>
-                        )}
+                        {t === 'logs' ? 'Журнал' : (<><Shield size={14} />Security</>)}
                     </button>
                 ))}
             </div>
 
             {/* Filters for logs tab */}
             {tab === 'logs' && (
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+                <div style={{ background: '#fff', border: `1px solid ${S.border}`, borderRadius: 16, overflow: 'hidden', marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
                     <div
-                        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer' }}
                         onClick={() => setShowFilters(f => !f)}
+                        onMouseEnter={e => (e.currentTarget.style.background = S.bg)}
+                        onMouseLeave={e => (e.currentTarget.style.background = '')}
                     >
-                        <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                            <Filter className="w-4 h-4 text-slate-400" />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter', fontSize: 13, fontWeight: 500, color: S.ink }}>
+                            <Filter size={15} color={S.muted} />
                             Фильтры
-                            {(domain || fromDate || toDate || entityType) && (
-                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-semibold">
-                                    {[domain, fromDate, toDate, entityType].filter(Boolean).length}
-                                </span>
+                            {activeFilterCount > 0 && (
+                                <Badge label={String(activeFilterCount)} color={S.blue} bg='rgba(59,130,246,0.1)' />
                             )}
                         </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${showFilters ? 'rotate-90' : ''}`} />
+                        <ChevronRight size={15} color={S.muted} style={{ transform: showFilters ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
                     </div>
 
                     {showFilters && (
-                        <div className="px-4 pb-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
+                        <div style={{ padding: '16px', borderTop: `1px solid ${S.border}`, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                             <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Домен</label>
-                                <select
+                                <FieldLabel>Домен</FieldLabel>
+                                <HiSelect
                                     value={domain}
-                                    onChange={e => setDomain(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-blue-500 focus:border-blue-500"
-                                >
-                                    <option value="">Все домены</option>
-                                    {DOMAINS.map(d => (
-                                        <option key={d} value={d}>{DOMAIN_LABELS[d] ?? d}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Тип сущности</label>
-                                <input
-                                    type="text"
-                                    placeholder="PRODUCT, USER..."
-                                    value={entityType}
-                                    onChange={e => setEntityType(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
+                                    onChange={setDomain}
+                                    options={[{ value: '', label: 'Все домены' }, ...DOMAINS.map(d => ({ value: d, label: DOMAIN_LABELS[d] ?? d }))]}
+                                    style={{ width: '100%' }}
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">От</label>
-                                <input
+                                <FieldLabel>Тип сущности</FieldLabel>
+                                <Input
+                                    value={entityType}
+                                    onChange={e => setEntityType(e.target.value)}
+                                    placeholder="PRODUCT, USER..."
+                                />
+                            </div>
+                            <div>
+                                <FieldLabel>От</FieldLabel>
+                                <Input
                                     type="date"
                                     value={fromDate}
                                     onChange={e => setFromDate(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
                                 />
                             </div>
                             <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">До</label>
-                                <input
+                                <FieldLabel>До</FieldLabel>
+                                <Input
                                     type="date"
                                     value={toDate}
                                     onChange={e => setToDate(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
                                 />
                             </div>
-                            {(domain || fromDate || toDate || entityType) && (
-                                <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
-                                    <button
+                            {activeFilterCount > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                                    <Btn
+                                        variant="ghost"
+                                        size="sm"
                                         onClick={() => { setDomain(''); setFromDate(''); setToDate(''); setEntityType(''); }}
-                                        className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
                                     >
-                                        <X className="w-3 h-3" /> Сбросить фильтры
-                                    </button>
+                                        <X size={12} /> Сбросить
+                                    </Btn>
                                 </div>
                             )}
                         </div>
@@ -535,71 +569,62 @@ export default function History() {
 
             {/* Security events filter */}
             {tab === 'security' && (
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3">
-                    <div className="flex items-center gap-3">
-                        <Search className="w-4 h-4 text-slate-400 shrink-0" />
-                        <select
+                <div style={{ background: '#fff', border: `1px solid ${S.border}`, borderRadius: 16, padding: '12px 16px', marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <FieldLabel>Тип события</FieldLabel>
+                        <HiSelect
                             value={secEventType}
-                            onChange={e => setSecEventType(e.target.value)}
-                            className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:ring-blue-500 focus:border-blue-500"
-                        >
-                            <option value="">Все события</option>
-                            {Object.entries(SEC_EVENT_LABELS).map(([k, v]) => (
-                                <option key={k} value={k}>{v}</option>
-                            ))}
-                        </select>
+                            onChange={setSecEventType}
+                            options={[{ value: '', label: 'Все события' }, ...Object.entries(SEC_EVENT_LABELS).map(([k, v]) => ({ value: k, label: v }))]}
+                        />
                     </div>
                 </div>
             )}
 
             {/* Table */}
-            <div className="bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                    {tab === 'logs' ? (
-                        <table className="min-w-full divide-y divide-slate-100">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Время</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Домен</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Событие</th>
-                                    <th className="hidden sm:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Сущность</th>
-                                    <th className="hidden md:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Исполнитель</th>
-                                    <th className="px-4 py-3 w-8" />
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {logsLoading ? (
-                                    <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400 text-sm">Загрузка...</td></tr>
-                                ) : logs.length === 0 ? (
-                                    <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400 text-sm">Записей не найдено</td></tr>
-                                ) : (
-                                    logs.map(renderLogRow)
-                                )}
-                            </tbody>
-                        </table>
+            <div style={{ background: '#fff', border: `1px solid ${S.border}`, borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                {/* Table header */}
+                {tab === 'logs' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '12px 4px', background: S.bg, borderBottom: `1px solid ${S.border}` }}>
+                        <TH flex={1.2}>Время</TH>
+                        <TH flex={1.5}>Домен</TH>
+                        <TH flex={2}>Событие</TH>
+                        <TH flex={2}>Сущность</TH>
+                        <TH flex={1.5}>Исполнитель</TH>
+                        <div style={{ width: 32 }} />
+                    </div>
+                ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '12px 4px', background: S.bg, borderBottom: `1px solid ${S.border}` }}>
+                        <TH flex={1.5}>Время</TH>
+                        <TH flex={2}>Событие</TH>
+                        <TH flex={1.5}>Пользователь</TH>
+                        <TH flex={1.5}>IP</TH>
+                        <TH flex={3}>User Agent</TH>
+                    </div>
+                )}
+
+                {/* Table body */}
+                {tab === 'logs' ? (
+                    logsLoading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            <Spinner /> Загрузка...
+                        </div>
+                    ) : logs.length === 0 ? (
+                        <EmptyState icon={Clock} title="Записей не найдено" subtitle="Попробуйте изменить фильтры" />
                     ) : (
-                        <table className="min-w-full divide-y divide-slate-100">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Время</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Событие</th>
-                                    <th className="hidden sm:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Пользователь</th>
-                                    <th className="hidden md:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">IP</th>
-                                    <th className="hidden lg:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">User Agent</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {secLoading ? (
-                                    <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400 text-sm">Загрузка...</td></tr>
-                                ) : secEvents.length === 0 ? (
-                                    <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400 text-sm">Событий не найдено</td></tr>
-                                ) : (
-                                    secEvents.map(renderSecRow)
-                                )}
-                            </tbody>
-                        </table>
-                    )}
-                </div>
+                        logs.map(renderLogRow)
+                    )
+                ) : (
+                    secLoading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            <Spinner /> Загрузка...
+                        </div>
+                    ) : secEvents.length === 0 ? (
+                        <EmptyState icon={Shield} title="Событий не найдено" />
+                    ) : (
+                        secEvents.map(renderSecRow)
+                    )
+                )}
 
                 {/* Pagination */}
                 {(() => {
@@ -607,26 +632,12 @@ export default function History() {
                     const page   = tab === 'logs' ? logsPage : secPage;
                     const setPage = tab === 'logs' ? setLogsPage : setSecPage;
                     return (
-                        <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between">
-                            <button
-                                disabled={page === 1}
-                                onClick={() => setPage(p => p - 1)}
-                                className="px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Назад
-                            </button>
-                            <span className="text-sm text-slate-600">
-                                Стр. <span className="font-semibold">{page}</span> / <span className="font-semibold">{meta.lastPage}</span>
-                                <span className="ml-2 text-slate-400 text-xs">({meta.total} записей)</span>
-                            </span>
-                            <button
-                                disabled={page >= meta.lastPage}
-                                onClick={() => setPage(p => p + 1)}
-                                className="px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Вперёд
-                            </button>
-                        </div>
+                        <Pagination
+                            page={page}
+                            totalPages={meta.lastPage}
+                            onPage={setPage}
+                            total={meta.total}
+                        />
                     );
                 })()}
             </div>
@@ -635,7 +646,7 @@ export default function History() {
             {selectedLog && (
                 <>
                     <div
-                        className="fixed inset-0 z-30 bg-black/20 backdrop-blur-sm"
+                        style={{ position: 'fixed', inset: 0, zIndex: 30, background: 'rgba(15,23,42,0.2)', backdropFilter: 'blur(2px)' }}
                         onClick={() => setSelectedLog(null)}
                     />
                     <DetailPanel log={selectedLog} onClose={() => setSelectedLog(null)} />

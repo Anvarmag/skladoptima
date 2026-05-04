@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, ChevronUp, CheckCircle, Circle, SkipForward, ExternalLink, Trophy } from 'lucide-react';
-import { onboardingApi, OnboardingState, OnboardingStep } from '../api/onboarding';
+import { onboardingApi, type OnboardingState, type OnboardingStep } from '../api/onboarding';
+import { S } from './ui';
 
 const BLOCK_LABELS: Record<string, string> = {
     ROLE_INSUFFICIENT: 'Недостаточно прав для выполнения шагов',
     TRIAL_EXPIRED: 'Пробный период истёк. Оформите подписку.',
     TENANT_SUSPENDED: 'Доступ приостановлен.',
     TENANT_CLOSED: 'Компания закрыта.',
+};
+
+const BOTTOM_FIXED: React.CSSProperties = {
+    position: 'fixed', bottom: 24, right: 24, zIndex: 50,
 };
 
 export default function OnboardingWidget() {
@@ -58,9 +63,9 @@ export default function OnboardingWidget() {
 
     if (showCongrats) {
         return (
-            <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 bg-green-500 text-white rounded-xl shadow-lg px-4 py-3 flex items-center gap-2">
-                <Trophy className="h-4 w-4 flex-shrink-0" />
-                <span className="text-sm font-medium">Настройка завершена!</span>
+            <div style={{ ...BOTTOM_FIXED, background: S.green, color: '#fff', borderRadius: 12, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 10px 30px rgba(0,0,0,0.2)' }}>
+                <Trophy size={15} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600 }}>Настройка завершена!</span>
             </div>
         );
     }
@@ -73,48 +78,61 @@ export default function OnboardingWidget() {
 
     if (!isOpen) {
         return (
-            <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50">
+            <div style={BOTTOM_FIXED}>
                 <button
                     onClick={handleReopen}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2.5 rounded-full shadow-lg transition-colors"
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        background: S.blue, color: '#fff',
+                        fontFamily: 'Inter', fontSize: 12, fontWeight: 600,
+                        padding: '8px 16px', borderRadius: 999, border: 'none',
+                        cursor: 'pointer', boxShadow: '0 4px 16px rgba(59,130,246,0.4)',
+                    }}
                 >
                     <span>Настройка {completed}/{progress.total}</span>
-                    <ChevronUp className="h-4 w-4" />
+                    <ChevronUp size={14} />
                 </button>
             </div>
         );
     }
 
     return (
-        <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 w-80 bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden">
+        <div style={{
+            ...BOTTOM_FIXED, width: 300,
+            background: '#fff', borderRadius: 16,
+            boxShadow: '0 20px 50px rgba(0,0,0,0.18)',
+            border: `1px solid ${S.border}`, overflow: 'hidden',
+        }}>
             {/* Header */}
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100">
-                <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900">Настройка компании</p>
-                    <div className="flex items-center gap-2 mt-1.5">
-                        <div className="flex-1 bg-slate-100 rounded-full h-1.5">
-                            <div
-                                className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-                                style={{ width: `${progressPercent}%` }}
-                            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: `1px solid ${S.border}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink, margin: 0 }}>Настройка компании</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                        <div style={{ flex: 1, background: '#f1f5f9', borderRadius: 999, height: 4 }}>
+                            <div style={{ width: `${progressPercent}%`, height: 4, borderRadius: 999, background: S.blue, transition: 'width 0.3s ease' }} />
                         </div>
-                        <span className="text-xs text-slate-400 flex-shrink-0">{progressPercent}%</span>
+                        <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, flexShrink: 0 }}>{progressPercent}%</span>
                     </div>
                 </div>
-                <button onClick={handleClose} className="p-1 text-slate-400 hover:text-slate-600 transition-colors flex-shrink-0">
-                    <X className="h-4 w-4" />
+                <button
+                    onClick={handleClose}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 4, color: S.muted, display: 'flex', flexShrink: 0 }}
+                >
+                    <X size={14} />
                 </button>
             </div>
 
-            {/* Block reason banner */}
+            {/* Block reason */}
             {state.isBlocked && state.blockReason && (
-                <div className="px-4 py-2 bg-amber-50 border-b border-amber-100">
-                    <p className="text-xs text-amber-700">{BLOCK_LABELS[state.blockReason] ?? 'Действия ограничены'}</p>
+                <div style={{ padding: '8px 14px', background: 'rgba(245,158,11,0.08)', borderBottom: `1px solid rgba(245,158,11,0.2)` }}>
+                    <p style={{ fontFamily: 'Inter', fontSize: 11, color: S.amber, margin: 0 }}>
+                        {BLOCK_LABELS[state.blockReason] ?? 'Действия ограничены'}
+                    </p>
                 </div>
             )}
 
             {/* Steps */}
-            <div className="py-1 max-h-64 overflow-y-auto">
+            <div style={{ padding: '4px 0', maxHeight: 240, overflowY: 'auto' }}>
                 {state.steps.map((step) => (
                     <StepRow key={step.key} step={step} onCtaClick={() => handleCtaClick(step)} />
                 ))}
@@ -122,10 +140,12 @@ export default function OnboardingWidget() {
 
             {/* Footer */}
             {!state.isBlocked && (
-                <div className="px-4 py-2.5 border-t border-slate-100">
+                <div style={{ padding: '8px 14px', borderTop: `1px solid ${S.border}` }}>
                     <button
                         onClick={handleComplete}
-                        className="w-full text-xs text-slate-400 hover:text-slate-600 transition-colors"
+                        style={{ width: '100%', background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'Inter', fontSize: 11, color: S.muted }}
+                        onMouseEnter={e => (e.currentTarget.style.color = S.sub)}
+                        onMouseLeave={e => (e.currentTarget.style.color = S.muted)}
                     >
                         Пропустить настройку
                     </button>
@@ -136,31 +156,44 @@ export default function OnboardingWidget() {
 }
 
 function StepRow({ step, onCtaClick }: { step: OnboardingStep; onCtaClick: () => void }) {
+    const [hovered, setHovered] = useState(false);
     const isDone = step.status === 'DONE';
     const isSkipped = step.status === 'SKIPPED';
     const faded = isDone || isSkipped;
 
     return (
-        <div className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${faded ? '' : 'hover:bg-slate-50'}`}>
-            <div className="flex-shrink-0">
+        <div
+            style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px',
+                background: !faded && hovered ? '#f8fafc' : 'transparent', transition: 'background 0.15s',
+            }}
+            onMouseEnter={() => !faded && setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <div style={{ flexShrink: 0 }}>
                 {isDone ? (
-                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    <CheckCircle size={15} color={S.green} />
                 ) : isSkipped ? (
-                    <SkipForward className="h-4 w-4 text-slate-300" />
+                    <SkipForward size={15} color={S.muted} />
                 ) : (
-                    <Circle className="h-4 w-4 text-slate-300" />
+                    <Circle size={15} color={S.muted} />
                 )}
             </div>
-            <p className={`flex-1 text-sm min-w-0 truncate ${faded ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+            <p style={{
+                flex: 1, fontFamily: 'Inter', fontSize: 12, margin: 0,
+                color: faded ? S.muted : S.ink,
+                textDecoration: faded ? 'line-through' : 'none',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
                 {step.title}
             </p>
             {!faded && !step.isCtaBlocked && step.ctaLink && (
                 <button
                     onClick={onCtaClick}
-                    className="flex-shrink-0 p-1 text-blue-400 hover:text-blue-600 transition-colors"
+                    style={{ flexShrink: 0, background: 'transparent', border: 'none', cursor: 'pointer', padding: 3, color: S.blue, display: 'flex' }}
                     title="Перейти"
                 >
-                    <ExternalLink className="h-3.5 w-3.5" />
+                    <ExternalLink size={12} />
                 </button>
             )}
         </div>

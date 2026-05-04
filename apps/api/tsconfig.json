@@ -1,4 +1,5 @@
 {
+  "exclude": ["node_modules", "dist", "test-*.ts", "test-ozon-fbo.ts", "update-pwd.ts"],
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",

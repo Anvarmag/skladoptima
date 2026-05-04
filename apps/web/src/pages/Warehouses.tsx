@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import {
-    Building2, RefreshCw, Search, Lock, Tag, X, Edit2, Save,
-    AlertCircle, Archive, CheckCircle2, PauseCircle, Boxes, ChevronRight,
-} from 'lucide-react';
+import { Building2, RefreshCw, Search, Lock, Tag, Edit2, Save, AlertCircle, CheckCircle2, PauseCircle, Boxes } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import {
+    S, PageHeader, Card, Badge, Btn, Input, TH, FieldLabel, SkuTag,
+    EmptyState, Spinner, Pagination,
+} from '../components/ui';
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -59,53 +60,57 @@ interface WarehouseStocks {
 
 // ─────────────────────────────── helpers ─────────────────────────────
 
-const STATUS_TONE: Record<WarehouseStatus, string> = {
-    ACTIVE: 'bg-emerald-100 text-emerald-800',
-    INACTIVE: 'bg-amber-100 text-amber-800',
-    ARCHIVED: 'bg-slate-200 text-slate-700',
+const STATUS_BADGE: Record<WarehouseStatus, { color: string; bg: string }> = {
+    ACTIVE:   { color: S.green, bg: 'rgba(16,185,129,0.08)' },
+    INACTIVE: { color: S.amber, bg: 'rgba(245,158,11,0.08)' },
+    ARCHIVED: { color: S.muted, bg: '#f1f5f9' },
 };
 
 const STATUS_LABEL: Record<WarehouseStatus, string> = {
-    ACTIVE: 'Активен',
-    INACTIVE: 'Не активен',
-    ARCHIVED: 'Архивный',
+    ACTIVE: 'Активен', INACTIVE: 'Не активен', ARCHIVED: 'Архивный',
 };
 
-const TYPE_TONE: Record<WarehouseType, string> = {
-    FBS: 'bg-blue-100 text-blue-800',
-    FBO: 'bg-violet-100 text-violet-800',
+const TYPE_BADGE: Record<WarehouseType, { color: string; bg: string }> = {
+    FBS: { color: S.blue,    bg: 'rgba(59,130,246,0.08)' },
+    FBO: { color: '#7c3aed', bg: 'rgba(124,58,237,0.08)' },
 };
 
-const SOURCE_TONE: Record<SourceMarketplace, string> = {
-    WB: 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200',
-    OZON: 'bg-sky-50 text-sky-700 border border-sky-200',
-    YANDEX_MARKET: 'bg-amber-50 text-amber-700 border border-amber-200',
+const SOURCE_BADGE: Record<SourceMarketplace, { color: string; bg: string }> = {
+    WB:            { color: S.wb,    bg: 'rgba(203,17,171,0.06)' },
+    OZON:          { color: S.oz,    bg: 'rgba(0,91,255,0.06)' },
+    YANDEX_MARKET: { color: '#cc5500', bg: 'rgba(255,102,0,0.06)' },
 };
 
 const SOURCE_LABEL: Record<SourceMarketplace, string> = {
-    WB: 'Wildberries',
-    OZON: 'Ozon',
-    YANDEX_MARKET: 'Я.Маркет',
+    WB: 'Wildberries', OZON: 'Ozon', YANDEX_MARKET: 'Я.Маркет',
 };
 
 function formatDateTime(iso: string | null): string {
     if (!iso) return '—';
     try {
-        return new Date(iso).toLocaleString('ru-RU', {
-            day: '2-digit', month: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit',
-        });
+        return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch { return iso; }
 }
 
 function ucWriteBlockedHint(state: string | undefined): string {
     if (state === 'TRIAL_EXPIRED') return 'Пробный период истёк. Ручной refresh и редактирование заблокированы.';
-    if (state === 'SUSPENDED') return 'Доступ приостановлен. Запись данных и обращения к маркетплейсу заблокированы.';
-    if (state === 'CLOSED') return 'Компания закрыта. Запись недоступна.';
+    if (state === 'SUSPENDED')     return 'Доступ приостановлен. Запись данных и обращения к маркетплейсу заблокированы.';
+    if (state === 'CLOSED')        return 'Компания закрыта. Запись недоступна.';
     return '';
 }
 
 const LABEL_REGEX = /^[A-Za-z0-9_-]+$/;
+
+// ─── Stat mini-card ───────────────────────────────────────────────────
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
+    return (
+        <div style={{ background: S.bg, border: `1px solid ${S.border}`, borderRadius: 8, padding: '8px 12px' }}>
+            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 4 }}>{label}</div>
+            <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 600, color: tone ?? S.ink }}>{value}</div>
+        </div>
+    );
+}
 
 // ─────────────────────────────── component ───────────────────────────
 
@@ -114,7 +119,6 @@ export default function Warehouses() {
     const writeBlocked = activeTenant ? WRITE_BLOCKED_STATES.includes(activeTenant.accessState) : false;
     const writeBlockedHint = ucWriteBlockedHint(activeTenant?.accessState);
 
-    // ─── list state
     const [items, setItems] = useState<Warehouse[]>([]);
     const [total, setTotal] = useState(0);
     const [page, setPage] = useState(1);
@@ -129,12 +133,10 @@ export default function Warehouses() {
     const [refreshing, setRefreshing] = useState(false);
     const [topMessage, setTopMessage] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
 
-    // ─── detail state
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [stocks, setStocks] = useState<WarehouseStocks | null>(null);
     const [stocksLoading, setStocksLoading] = useState(false);
 
-    // ─── metadata edit state
     const [editingMeta, setEditingMeta] = useState(false);
     const [aliasInput, setAliasInput] = useState('');
     const [labelsInput, setLabelsInput] = useState('');
@@ -148,8 +150,7 @@ export default function Warehouses() {
         try {
             const res = await axios.get('/warehouses', {
                 params: {
-                    page: p,
-                    limit: 50,
+                    page: p, limit: 50,
                     search: search || undefined,
                     marketplaceAccountId: filterAccount || undefined,
                     sourceMarketplace: filterSource || undefined,
@@ -179,10 +180,7 @@ export default function Warehouses() {
 
     useEffect(() => { loadList(1); }, [loadList]);
 
-    const selected = useMemo(
-        () => items.find(i => i.id === selectedId) ?? null,
-        [items, selectedId],
-    );
+    const selected = useMemo(() => items.find(i => i.id === selectedId) ?? null, [items, selectedId]);
 
     useEffect(() => {
         if (selectedId) loadStocks(selectedId);
@@ -202,12 +200,11 @@ export default function Warehouses() {
         try {
             const res = await axios.post('/warehouses/sync');
             const results = (res.data?.results ?? []) as Array<{ created?: number; updated?: number; deactivated?: number; archived?: number; error?: string; paused?: boolean }>;
-            const created = results.reduce((s, r) => s + (r.created ?? 0), 0);
-            const updated = results.reduce((s, r) => s + (r.updated ?? 0), 0);
+            const created     = results.reduce((s, r) => s + (r.created ?? 0), 0);
+            const updated     = results.reduce((s, r) => s + (r.updated ?? 0), 0);
             const deactivated = results.reduce((s, r) => s + (r.deactivated ?? 0), 0);
-            const archived = results.reduce((s, r) => s + (r.archived ?? 0), 0);
-            const errored = results.filter(r => r.error).length;
-
+            const archived    = results.reduce((s, r) => s + (r.archived ?? 0), 0);
+            const errored     = results.filter(r => r.error).length;
             if (res.data?.paused) {
                 setTopMessage({ kind: 'warn', text: 'Синхронизация приостановлена политикой тенанта.' });
             } else {
@@ -220,16 +217,13 @@ export default function Warehouses() {
             if (selectedId) await loadStocks(selectedId);
         } catch (err: any) {
             const code = err?.response?.data?.code;
-            const map: Record<string, string> = {
-                TENANT_WRITE_BLOCKED: writeBlockedHint || 'Запись заблокирована.',
-            };
+            const map: Record<string, string> = { TENANT_WRITE_BLOCKED: writeBlockedHint || 'Запись заблокирована.' };
             setTopMessage({ kind: 'err', text: map[code] ?? err?.message ?? 'Не удалось обновить справочник.' });
         } finally {
             setRefreshing(false);
         }
     };
 
-    // ─── metadata editing
     const beginEdit = () => {
         if (writeBlocked || !selected) return;
         setMetaError(null);
@@ -247,29 +241,16 @@ export default function Warehouses() {
     const saveMeta = async () => {
         if (!selected) return;
         setMetaError(null);
-
-        const labels = labelsInput
-            .split(',')
-            .map(x => x.trim())
-            .filter(x => x.length > 0);
-
-        if (labels.length > 20) {
-            setMetaError('Максимум 20 меток.');
-            return;
-        }
+        const labels = labelsInput.split(',').map(x => x.trim()).filter(x => x.length > 0);
+        if (labels.length > 20) { setMetaError('Максимум 20 меток.'); return; }
         for (const l of labels) {
             if (l.length > 64) { setMetaError(`Метка "${l}" длиннее 64 символов.`); return; }
             if (!LABEL_REGEX.test(l)) { setMetaError(`Метка "${l}" не соответствует формату (A-Z, 0-9, _, -).`); return; }
         }
         if (aliasInput.length > 255) { setMetaError('Псевдоним длиннее 255 символов.'); return; }
-
         setMetaSaving(true);
         try {
-            const res = await axios.patch(`/warehouses/${selected.id}/metadata`, {
-                aliasName: aliasInput.trim() || null,
-                labels,
-            });
-            // обновляем элемент в списке
+            const res = await axios.patch(`/warehouses/${selected.id}/metadata`, { aliasName: aliasInput.trim() || null, labels });
             setItems(prev => prev.map(i => i.id === selected.id ? { ...i, ...res.data } : i));
             setEditingMeta(false);
         } catch (err: any) {
@@ -292,358 +273,283 @@ export default function Warehouses() {
         }
     };
 
+    // ─── top message color map
+    const msgColors = {
+        ok:   { color: S.green, bg: 'rgba(16,185,129,0.06)',  border: 'rgba(16,185,129,0.2)',  Icon: CheckCircle2 },
+        warn: { color: S.amber, bg: 'rgba(245,158,11,0.06)',  border: 'rgba(245,158,11,0.2)',  Icon: PauseCircle },
+        err:  { color: S.red,   bg: 'rgba(239,68,68,0.06)',   border: 'rgba(239,68,68,0.2)',   Icon: AlertCircle },
+    };
+
+    const ROW_STYLE = (active: boolean, hovered: boolean): React.CSSProperties => ({
+        display: 'flex', alignItems: 'center', minHeight: 56,
+        borderBottom: `1px solid ${S.border}`, cursor: 'pointer',
+        background: active ? 'rgba(59,130,246,0.06)' : hovered ? S.bg : '#fff',
+        transition: 'background 0.1s',
+        borderLeft: active ? `3px solid ${S.blue}` : '3px solid transparent',
+    });
+
     // ─── render
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                    <h1 className="text-xl md:text-2xl font-bold text-slate-900 flex items-center">
-                        <Building2 className="h-6 w-6 mr-2 text-blue-600" />
-                        Склады
-                    </h1>
-                    <p className="text-xs md:text-sm text-slate-500 mt-1">
-                        Справочник внешних складов из marketplace API. FBS и FBO визуально разведены, INACTIVE/ARCHIVED видны для истории.
-                    </p>
-                </div>
-                <div className="flex items-center gap-2">
-                    {writeBlocked && (
-                        <span className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800">
-                            <Lock className="h-3.5 w-3.5" />
-                            Только чтение
-                        </span>
-                    )}
-                    <button
-                        onClick={onRefresh}
-                        disabled={writeBlocked || refreshing}
-                        title={writeBlocked ? writeBlockedHint : 'Запустить ручную синхронизацию'}
-                        className={`px-3 py-1.5 text-sm rounded inline-flex items-center gap-1 ${
-                            writeBlocked
-                                ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                                : 'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
-                        }`}
-                    >
-                        {writeBlocked ? <Lock className="h-3.5 w-3.5" /> : <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />}
-                        Обновить из API
-                    </button>
-                </div>
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <PageHeader
+                title="Склады"
+                subtitle="Справочник внешних складов из marketplace API. FBS и FBO визуально разведены, INACTIVE/ARCHIVED видны для истории."
+            >
+                {writeBlocked && (
+                    <Badge label="Только чтение" color={S.amber} bg="rgba(245,158,11,0.08)"
+                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                    />
+                )}
+                <Btn
+                    onClick={onRefresh}
+                    disabled={writeBlocked || refreshing}
+                    variant={writeBlocked ? 'secondary' : 'primary'}
+                    title={writeBlocked ? writeBlockedHint : 'Запустить ручную синхронизацию'}
+                >
+                    {writeBlocked
+                        ? <Lock size={14} />
+                        : <RefreshCw size={14} style={{ animation: refreshing ? 'spin 0.7s linear infinite' : 'none' }} />
+                    }
+                    Обновить из API
+                </Btn>
+            </PageHeader>
 
-            {topMessage && (
-                <div className={`text-sm border rounded-md px-3 py-2 flex items-start gap-2 ${
-                    topMessage.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : topMessage.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800'
-                    : 'bg-red-50 border-red-200 text-red-800'
-                }`}>
-                    {topMessage.kind === 'ok' ? <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        : topMessage.kind === 'warn' ? <PauseCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        : <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />}
-                    <span>{topMessage.text}</span>
-                    <button onClick={() => setTopMessage(null)} className="ml-auto text-current/60 hover:text-current">
-                        <X className="h-3.5 w-3.5" />
-                    </button>
-                </div>
-            )}
+            {/* Top message */}
+            {topMessage && (() => {
+                const c = msgColors[topMessage.kind];
+                const Icon = c.Icon;
+                return (
+                    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 10, padding: '10px 16px', fontFamily: 'Inter', fontSize: 13, color: c.color, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Icon size={15} style={{ flexShrink: 0 }} />
+                        <span style={{ flex: 1 }}>{topMessage.text}</span>
+                        <button onClick={() => setTopMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                );
+            })()}
 
             {/* ─── Filters ─── */}
-            <form
-                onSubmit={(e) => { e.preventDefault(); loadList(1); }}
-                className="bg-white border border-slate-200 rounded-md p-3 flex flex-wrap gap-2 items-end"
-            >
-                <div className="flex-1 min-w-[180px]">
-                    <label className="block text-[11px] text-slate-500 mb-1">Поиск</label>
-                    <div className="relative">
-                        <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                        <input
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="Имя, псевдоним или город"
-                            className="w-full pl-9 pr-3 py-1.5 border border-slate-300 rounded text-sm"
-                        />
+            <Card style={{ padding: '14px 20px' }}>
+                <form onSubmit={e => { e.preventDefault(); loadList(1); }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 }}>
+                        <div style={{ flex: '1 1 180px', minWidth: 180 }}>
+                            <FieldLabel>Поиск</FieldLabel>
+                            <Input
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder="Имя, псевдоним или город"
+                                icon={Search}
+                            />
+                        </div>
+                        <div>
+                            <FieldLabel>Маркетплейс</FieldLabel>
+                            <select
+                                value={filterSource}
+                                onChange={e => setFilterSource(e.target.value as any)}
+                                style={SELECT_STYLE}
+                            >
+                                <option value="">Все</option>
+                                <option value="WB">Wildberries</option>
+                                <option value="OZON">Ozon</option>
+                                <option value="YANDEX_MARKET">Я.Маркет</option>
+                            </select>
+                        </div>
+                        <div>
+                            <FieldLabel>Тип</FieldLabel>
+                            <select
+                                value={filterType}
+                                onChange={e => setFilterType(e.target.value as any)}
+                                style={SELECT_STYLE}
+                            >
+                                <option value="">Все</option>
+                                <option value="FBS">FBS</option>
+                                <option value="FBO">FBO</option>
+                            </select>
+                        </div>
+                        <div>
+                            <FieldLabel>Статус</FieldLabel>
+                            <select
+                                value={filterStatus}
+                                onChange={e => setFilterStatus(e.target.value as any)}
+                                style={SELECT_STYLE}
+                            >
+                                <option value="">Все статусы</option>
+                                <option value="ACTIVE">Активные</option>
+                                <option value="INACTIVE">Не активные</option>
+                                <option value="ARCHIVED">Архивные</option>
+                            </select>
+                        </div>
+                        <div style={{ minWidth: 160 }}>
+                            <FieldLabel>ID аккаунта</FieldLabel>
+                            <Input
+                                value={filterAccount}
+                                onChange={e => setFilterAccount(e.target.value)}
+                                placeholder="опционально"
+                            />
+                        </div>
+                        <Btn type="submit" variant="primary">Применить</Btn>
                     </div>
-                </div>
-                <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">Маркетплейс</label>
-                    <select
-                        value={filterSource}
-                        onChange={(e) => setFilterSource(e.target.value as any)}
-                        className="px-2 py-1.5 border border-slate-300 rounded text-sm"
-                    >
-                        <option value="">Все</option>
-                        <option value="WB">Wildberries</option>
-                        <option value="OZON">Ozon</option>
-                        <option value="YANDEX_MARKET">Я.Маркет</option>
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">Тип</label>
-                    <select
-                        value={filterType}
-                        onChange={(e) => setFilterType(e.target.value as any)}
-                        className="px-2 py-1.5 border border-slate-300 rounded text-sm"
-                    >
-                        <option value="">Все</option>
-                        <option value="FBS">FBS</option>
-                        <option value="FBO">FBO</option>
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">Статус</label>
-                    <select
-                        value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value as any)}
-                        className="px-2 py-1.5 border border-slate-300 rounded text-sm"
-                    >
-                        <option value="">Все статусы</option>
-                        <option value="ACTIVE">Активные</option>
-                        <option value="INACTIVE">Не активные</option>
-                        <option value="ARCHIVED">Архивные</option>
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-[11px] text-slate-500 mb-1">ID аккаунта</label>
-                    <input
-                        value={filterAccount}
-                        onChange={(e) => setFilterAccount(e.target.value)}
-                        placeholder="опционально"
-                        className="px-2 py-1.5 border border-slate-300 rounded text-sm w-44"
-                    />
-                </div>
-                <button
-                    type="submit"
-                    className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                    Применить
-                </button>
-            </form>
+                </form>
+            </Card>
 
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            {/* ─── Main grid ─── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16, alignItems: 'start' }}>
+
                 {/* ─── List ─── */}
-                <div className="lg:col-span-3 bg-white border border-slate-200 rounded-md overflow-hidden">
-                    <table className="w-full text-sm">
-                        <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Склад</th>
-                                <th className="px-3 py-2 text-left">Тип</th>
-                                <th className="px-3 py-2 text-left">Источник</th>
-                                <th className="px-3 py-2 text-left">Статус</th>
-                                <th className="px-3 py-2 text-left">Метки</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {items.length === 0 && !loading && (
-                                <tr><td colSpan={5} className="text-center py-6 text-slate-500">Складов не найдено.</td></tr>
-                            )}
-                            {items.map((w) => {
-                                const active = selectedId === w.id;
-                                return (
-                                    <tr
-                                        key={w.id}
-                                        onClick={() => setSelectedId(w.id)}
-                                        className={`cursor-pointer ${active ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                                    >
-                                        <td className="px-3 py-2">
-                                            <div className="font-medium text-slate-900 truncate max-w-[220px]" title={w.name}>
-                                                {w.aliasName ? `${w.aliasName} (${w.name})` : w.name}
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 truncate max-w-[220px]">
-                                                {w.city ?? '—'} • ID: {w.externalWarehouseId}
-                                            </div>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_TONE[w.warehouseType]}`}>
-                                                {w.warehouseType}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_TONE[w.sourceMarketplace]}`}>
-                                                {SOURCE_LABEL[w.sourceMarketplace]}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_TONE[w.status]}`}>
-                                                {w.status === 'INACTIVE' && <PauseCircle className="inline h-3 w-3 mr-0.5" />}
-                                                {w.status === 'ARCHIVED' && <Archive className="inline h-3 w-3 mr-0.5" />}
-                                                {STATUS_LABEL[w.status]}
-                                            </span>
-                                            {w.deactivationReason && (
-                                                <div className="text-[10px] text-slate-500 mt-0.5 truncate max-w-[140px]" title={w.deactivationReason}>
-                                                    {w.deactivationReason}
-                                                </div>
-                                            )}
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <div className="flex flex-wrap gap-0.5">
-                                                {w.labels.slice(0, 3).map((l) => (
-                                                    <span key={l} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                                                        {l}
-                                                    </span>
-                                                ))}
-                                                {w.labels.length > 3 && (
-                                                    <span className="text-[10px] text-slate-500">+{w.labels.length - 3}</span>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-
-                    <div className="flex items-center justify-between text-xs text-slate-500 px-3 py-2 border-t border-slate-100">
-                        <span>Всего: {total}</span>
-                        <div className="flex gap-2 items-center">
-                            <button
-                                disabled={page <= 1}
-                                onClick={() => loadList(page - 1)}
-                                className="px-2 py-1 border border-slate-300 rounded disabled:opacity-40"
-                            >‹</button>
-                            <span>{page} / {lastPage}</span>
-                            <button
-                                disabled={page >= lastPage}
-                                onClick={() => loadList(page + 1)}
-                                className="px-2 py-1 border border-slate-300 rounded disabled:opacity-40"
-                            >›</button>
-                        </div>
+                <Card noPad>
+                    {/* Table header */}
+                    <div style={{ display: 'flex', alignItems: 'center', padding: '12px 4px', background: S.bg, borderBottom: `1px solid ${S.border}` }}>
+                        <div style={{ width: 3 }} />{/* border offset */}
+                        <TH flex={3}>Склад</TH>
+                        <TH flex={1}>Тип</TH>
+                        <TH flex={1.5}>Источник</TH>
+                        <TH flex={1.5}>Статус</TH>
+                        <TH flex={2}>Метки</TH>
                     </div>
-                </div>
 
-                {/* ─── Detail panel ─── */}
-                <div className="lg:col-span-2 bg-white border border-slate-200 rounded-md p-4 space-y-4">
-                    {!selected && (
-                        <div className="text-sm text-slate-500 text-center py-10 flex flex-col items-center gap-2">
-                            <ChevronRight className="h-5 w-5 text-slate-300" />
-                            Выберите склад слева для подробностей и редактирования.
+                    {loading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            <Spinner /> Загрузка…
                         </div>
+                    ) : items.length === 0 ? (
+                        <EmptyState icon={Building2} title="Складов не найдено" subtitle="Попробуйте изменить фильтры или запустите синхронизацию" />
+                    ) : (
+                        items.map(w => <WarehouseRow key={w.id} w={w} active={selectedId === w.id} onClick={() => setSelectedId(w.id)} ROW_STYLE={ROW_STYLE} />)
                     )}
 
-                    {selected && (
-                        <>
+                    <Pagination
+                        page={page}
+                        totalPages={lastPage}
+                        onPage={p => loadList(p)}
+                        total={total}
+                        shown={items.length}
+                    />
+                </Card>
+
+                {/* ─── Detail panel ─── */}
+                <Card style={{ position: 'sticky', top: 16 }}>
+                    {!selected ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 0', gap: 10 }}>
+                            <Building2 size={32} color={S.muted} style={{ opacity: 0.3 }} />
+                            <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}>Выберите склад слева</span>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                            {/* Header */}
                             <div>
-                                <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                        <h2 className="font-semibold text-slate-900 truncate">{selected.name}</h2>
-                                        <div className="text-xs text-slate-500 mt-0.5">
-                                            {selected.city ?? '—'} • External ID: <span className="font-mono">{selected.externalWarehouseId}</span>
+                                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 15, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {selected.aliasName ? `${selected.aliasName} (${selected.name})` : selected.name}
+                                        </div>
+                                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, marginTop: 2 }}>
+                                            {selected.city ?? '—'} · External ID: <SkuTag>{selected.externalWarehouseId}</SkuTag>
                                         </div>
                                     </div>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_TONE[selected.status]} flex-shrink-0`}>
-                                        {STATUS_LABEL[selected.status]}
-                                    </span>
+                                    <Badge
+                                        label={STATUS_LABEL[selected.status]}
+                                        color={STATUS_BADGE[selected.status].color}
+                                        bg={STATUS_BADGE[selected.status].bg}
+                                        style={{ flexShrink: 0 }}
+                                    />
                                 </div>
 
-                                <div className="flex flex-wrap gap-1 mt-2">
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${TYPE_TONE[selected.warehouseType]}`}>
-                                        {selected.warehouseType}
-                                    </span>
-                                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${SOURCE_TONE[selected.sourceMarketplace]}`}>
-                                        {SOURCE_LABEL[selected.sourceMarketplace]}
-                                    </span>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                                    <Badge label={selected.warehouseType} color={TYPE_BADGE[selected.warehouseType].color} bg={TYPE_BADGE[selected.warehouseType].bg} />
+                                    <Badge label={SOURCE_LABEL[selected.sourceMarketplace]} color={SOURCE_BADGE[selected.sourceMarketplace].color} bg={SOURCE_BADGE[selected.sourceMarketplace].bg} />
                                     {selected.marketplaceAccount && (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">
-                                            Аккаунт: {selected.marketplaceAccount.name}
-                                        </span>
+                                        <Badge label={`Аккаунт: ${selected.marketplaceAccount.name}`} color={S.sub} bg={S.bg} />
                                     )}
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500 mt-3">
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
                                     <div>
-                                        <span className="block text-[10px] uppercase">Первая загрузка</span>
-                                        {formatDateTime(selected.firstSeenAt)}
+                                        <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 3 }}>Первая загрузка</div>
+                                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{formatDateTime(selected.firstSeenAt)}</div>
                                     </div>
                                     <div>
-                                        <span className="block text-[10px] uppercase">Последний sync</span>
-                                        {formatDateTime(selected.lastSyncedAt)}
+                                        <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 3 }}>Последний sync</div>
+                                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{formatDateTime(selected.lastSyncedAt)}</div>
                                     </div>
                                     {selected.inactiveSince && (
                                         <div>
-                                            <span className="block text-[10px] uppercase">Стал неактивным</span>
-                                            {formatDateTime(selected.inactiveSince)}
+                                            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 3 }}>Стал неактивным</div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{formatDateTime(selected.inactiveSince)}</div>
                                         </div>
                                     )}
                                     {selected.deactivationReason && (
                                         <div>
-                                            <span className="block text-[10px] uppercase">Причина</span>
-                                            <span className="font-mono text-[10px]">{selected.deactivationReason}</span>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 3 }}>Причина</div>
+                                            <SkuTag>{selected.deactivationReason}</SkuTag>
                                         </div>
                                     )}
                                 </div>
                             </div>
 
-                            {/* metadata editor */}
-                            <div className="border-t pt-3">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-xs font-semibold uppercase text-slate-600 flex items-center gap-1">
-                                        <Tag className="h-3.5 w-3.5" /> Локальные метки
-                                    </h3>
+                            {/* Metadata editor */}
+                            <div style={{ borderTop: `1px solid ${S.border}`, paddingTop: 16 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                                        <Tag size={13} /> Локальные метки
+                                    </div>
                                     {!editingMeta ? (
-                                        <button
+                                        <Btn
+                                            size="sm"
+                                            variant="secondary"
                                             onClick={beginEdit}
                                             disabled={writeBlocked}
                                             title={writeBlocked ? writeBlockedHint : 'Изменить псевдоним и метки'}
-                                            className={`text-xs inline-flex items-center px-2 py-0.5 rounded border ${
-                                                writeBlocked
-                                                    ? 'border-slate-200 text-slate-400 cursor-not-allowed'
-                                                    : 'border-blue-300 text-blue-700 hover:bg-blue-50'
-                                            }`}
                                         >
-                                            {writeBlocked ? <Lock className="h-3 w-3 mr-1" /> : <Edit2 className="h-3 w-3 mr-1" />}
+                                            {writeBlocked ? <Lock size={12} /> : <Edit2 size={12} />}
                                             Изменить
-                                        </button>
+                                        </Btn>
                                     ) : (
-                                        <div className="flex gap-1">
-                                            <button
-                                                onClick={cancelEdit}
-                                                className="text-xs px-2 py-0.5 rounded border border-slate-300 text-slate-600 hover:bg-slate-50"
-                                            >
-                                                Отмена
-                                            </button>
-                                            <button
-                                                onClick={saveMeta}
-                                                disabled={metaSaving}
-                                                className="text-xs inline-flex items-center px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                                            >
-                                                <Save className="h-3 w-3 mr-1" />
-                                                Сохранить
-                                            </button>
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                            <Btn size="sm" variant="ghost" onClick={cancelEdit}>Отмена</Btn>
+                                            <Btn size="sm" variant="primary" onClick={saveMeta} disabled={metaSaving}>
+                                                <Save size={12} /> Сохранить
+                                            </Btn>
                                         </div>
                                     )}
                                 </div>
 
                                 {!editingMeta ? (
-                                    <div className="text-sm mt-2">
-                                        <div className="text-slate-500 text-[11px] uppercase">Псевдоним</div>
-                                        <div className="text-slate-800">{selected.aliasName || <span className="text-slate-400">—</span>}</div>
-                                        <div className="text-slate-500 text-[11px] uppercase mt-2">Метки</div>
-                                        <div className="flex flex-wrap gap-1 mt-1">
-                                            {selected.labels.length === 0 && <span className="text-slate-400 text-xs">нет меток</span>}
-                                            {selected.labels.map((l) => (
-                                                <span key={l} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-700">{l}</span>
-                                            ))}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                        <div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 4 }}>Псевдоним</div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 13, color: selected.aliasName ? S.ink : S.muted }}>
+                                                {selected.aliasName || '—'}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 6 }}>Метки</div>
+                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                                {selected.labels.length === 0
+                                                    ? <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>нет меток</span>
+                                                    : selected.labels.map(l => <SkuTag key={l}>{l}</SkuTag>)
+                                                }
+                                            </div>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="space-y-2 mt-2">
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                                         <div>
-                                            <label className="block text-[11px] text-slate-500 mb-1">Псевдоним (≤255)</label>
-                                            <input
+                                            <FieldLabel>Псевдоним (≤255)</FieldLabel>
+                                            <Input
                                                 value={aliasInput}
-                                                onChange={(e) => setAliasInput(e.target.value)}
-                                                maxLength={255}
-                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"
+                                                onChange={e => setAliasInput(e.target.value)}
                                                 placeholder="например: главный склад"
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-[11px] text-slate-500 mb-1">Метки через запятую (≤20, формат A-Z, 0-9, _, -)</label>
-                                            <input
+                                            <FieldLabel>Метки через запятую (≤20, формат A-Z, 0-9, _, -)</FieldLabel>
+                                            <Input
                                                 value={labelsInput}
-                                                onChange={(e) => setLabelsInput(e.target.value)}
-                                                className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm font-mono"
+                                                onChange={e => setLabelsInput(e.target.value)}
                                                 placeholder="hub, main_eu, fast"
                                             />
                                         </div>
                                         {metaError && (
-                                            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+                                            <div style={{ background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.2)`, borderRadius: 8, padding: '8px 12px', fontFamily: 'Inter', fontSize: 12, color: S.red }}>
                                                 {metaError}
                                             </div>
                                         )}
@@ -651,65 +557,112 @@ export default function Warehouses() {
                                 )}
                             </div>
 
-                            {/* stocks for warehouse */}
-                            <div className="border-t pt-3">
-                                <h3 className="text-xs font-semibold uppercase text-slate-600 flex items-center gap-1 mb-2">
-                                    <Boxes className="h-3.5 w-3.5" /> Остатки на складе
-                                </h3>
-                                {stocksLoading && <div className="text-xs text-slate-500">Загрузка...</div>}
+                            {/* Stocks */}
+                            <div style={{ borderTop: `1px solid ${S.border}`, paddingTop: 16 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 12 }}>
+                                    <Boxes size={13} /> Остатки на складе
+                                </div>
+                                {stocksLoading && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
+                                        <Spinner size={14} /> Загрузка...
+                                    </div>
+                                )}
                                 {!stocksLoading && stocks && (
                                     <>
-                                        <div className="grid grid-cols-3 gap-2 mb-2 text-xs">
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
                                             <Stat label="on_hand" value={stocks.totals.onHand} />
-                                            <Stat label="reserved" value={stocks.totals.reserved} tone="text-blue-700" />
-                                            <Stat label="available" value={stocks.totals.available} tone="text-emerald-700" />
+                                            <Stat label="reserved" value={stocks.totals.reserved} tone={S.blue} />
+                                            <Stat label="available" value={stocks.totals.available} tone={S.green} />
                                         </div>
-                                        {stocks.items.length === 0 && (
-                                            <div className="text-xs text-slate-500 italic">Остатки на этом складе не зафиксированы.</div>
-                                        )}
-                                        {stocks.items.length > 0 && (
-                                            <div className="max-h-60 overflow-y-auto border border-slate-100 rounded">
-                                                <table className="w-full text-xs">
-                                                    <thead className="bg-slate-50 text-slate-600">
-                                                        <tr>
-                                                            <th className="px-2 py-1 text-left">SKU</th>
-                                                            <th className="px-2 py-1 text-right">on_hand</th>
-                                                            <th className="px-2 py-1 text-right">reserved</th>
-                                                            <th className="px-2 py-1 text-right">available</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-50">
-                                                        {stocks.items.map((it) => (
-                                                            <tr key={it.productId}>
-                                                                <td className="px-2 py-1 truncate max-w-[140px]">
-                                                                    <div className="font-medium">{it.sku}</div>
-                                                                    <div className="text-[10px] text-slate-500 truncate">{it.name}</div>
-                                                                </td>
-                                                                <td className="px-2 py-1 text-right font-mono">{it.onHand}</td>
-                                                                <td className="px-2 py-1 text-right font-mono text-blue-700">{it.reserved}</td>
-                                                                <td className="px-2 py-1 text-right font-mono">{it.available}</td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
+                                        {stocks.items.length === 0 ? (
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>
+                                                Остатки на этом складе не зафиксированы.
+                                            </div>
+                                        ) : (
+                                            <div style={{ maxHeight: 240, overflowY: 'auto', border: `1px solid ${S.border}`, borderRadius: 8 }}>
+                                                {/* Stock table header */}
+                                                <div style={{ display: 'flex', background: S.bg, borderBottom: `1px solid ${S.border}`, padding: '6px 0' }}>
+                                                    <TH flex={3}>SKU</TH>
+                                                    <TH flex={1} align="right">on_hand</TH>
+                                                    <TH flex={1} align="right">reserved</TH>
+                                                    <TH flex={1} align="right">avail.</TH>
+                                                </div>
+                                                {stocks.items.map(it => (
+                                                    <div key={it.productId} style={{ display: 'flex', alignItems: 'center', minHeight: 40, borderBottom: `1px solid ${S.border}`, padding: '0 4px' }}>
+                                                        <div style={{ flex: 3, padding: '0 8px', minWidth: 0 }}>
+                                                            <div style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.sku}</div>
+                                                            <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+                                                        </div>
+                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.ink }}>{it.onHand}</div>
+                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.blue }}>{it.reserved}</div>
+                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.green }}>{it.available}</div>
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                     </>
                                 )}
                             </div>
-                        </>
+                        </div>
                     )}
-                </div>
+                </Card>
             </div>
         </div>
     );
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone?: string }) {
+// ─── Warehouse list row (extracted to avoid inline hook issues) ───────
+
+const SELECT_STYLE: React.CSSProperties = {
+    padding: '8px 12px', borderRadius: 8, border: `1px solid ${S.border}`,
+    fontFamily: 'Inter', fontSize: 13, color: S.ink, background: '#fff', outline: 'none',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+};
+
+function WarehouseRow({ w, active, onClick, ROW_STYLE }: {
+    w: Warehouse;
+    active: boolean;
+    onClick: () => void;
+    ROW_STYLE: (active: boolean, hovered: boolean) => React.CSSProperties;
+}) {
+    const [hovered, setHovered] = useState(false);
     return (
-        <div className="bg-slate-50 rounded px-2 py-1">
-            <div className="text-[10px] uppercase text-slate-500">{label}</div>
-            <div className={`font-mono ${tone ?? 'text-slate-800'}`}>{value}</div>
+        <div
+            key={w.id}
+            onClick={onClick}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={ROW_STYLE(active, hovered)}
+        >
+            <div style={{ width: 3, alignSelf: 'stretch', flexShrink: 0 }} />
+            <div style={{ flex: 3, padding: '0 12px', minWidth: 0 }}>
+                <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.name}>
+                    {w.aliasName ? `${w.aliasName} (${w.name})` : w.name}
+                </div>
+                <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {w.city ?? '—'} · ID: {w.externalWarehouseId}
+                </div>
+            </div>
+            <div style={{ flex: 1, padding: '0 8px' }}>
+                <Badge label={w.warehouseType} color={TYPE_BADGE[w.warehouseType].color} bg={TYPE_BADGE[w.warehouseType].bg} />
+            </div>
+            <div style={{ flex: 1.5, padding: '0 8px' }}>
+                <Badge label={SOURCE_LABEL[w.sourceMarketplace]} color={SOURCE_BADGE[w.sourceMarketplace].color} bg={SOURCE_BADGE[w.sourceMarketplace].bg} />
+            </div>
+            <div style={{ flex: 1.5, padding: '0 8px' }}>
+                <Badge label={STATUS_LABEL[w.status]} color={STATUS_BADGE[w.status].color} bg={STATUS_BADGE[w.status].bg} />
+                {w.deactivationReason && (
+                    <div style={{ fontFamily: 'Inter', fontSize: 10, color: S.muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={w.deactivationReason}>
+                        {w.deactivationReason}
+                    </div>
+                )}
+            </div>
+            <div style={{ flex: 2, padding: '0 8px', display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {w.labels.slice(0, 3).map(l => <SkuTag key={l}>{l}</SkuTag>)}
+                {w.labels.length > 3 && (
+                    <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted }}>+{w.labels.length - 3}</span>
+                )}
+            </div>
         </div>
     );
 }

@@ -6,6 +6,7 @@ axios.defaults.withCredentials = true;
 
 // CSRF: store token fetched from server, attach to all mutating requests
 let _csrfToken = '';
+let _activeTenantId = '';
 const MUTATING_METHODS = ['post', 'put', 'patch', 'delete'];
 
 async function refreshCsrfToken(): Promise<void> {
@@ -20,6 +21,9 @@ async function refreshCsrfToken(): Promise<void> {
 axios.interceptors.request.use((config) => {
     if (config.method && MUTATING_METHODS.includes(config.method.toLowerCase())) {
         config.headers['X-CSRF-Token'] = _csrfToken;
+    }
+    if (_activeTenantId) {
+        config.headers['X-Tenant-Id'] = _activeTenantId;
     }
     return config;
 });
@@ -125,13 +129,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
             const res = await axios.get('/auth/me');
             setUser(res.data.user);
-            setActiveTenant(res.data.activeTenant ?? null);
+            const tenant = res.data.activeTenant ?? null;
+            setActiveTenant(tenant);
+            _activeTenantId = tenant?.id ?? '';
             setTenants(res.data.tenants ?? []);
             setNextRoute(res.data.nextRoute ?? null);
             return res.data.nextRoute ?? null;
         } catch {
             setUser(null);
             setActiveTenant(null);
+            _activeTenantId = '';
             setTenants([]);
             setNextRoute(null);
             return null;
@@ -185,6 +192,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } finally {
             setUser(null);
             setActiveTenant(null);
+            _activeTenantId = '';
             setTenants([]);
             setNextRoute(null);
         }

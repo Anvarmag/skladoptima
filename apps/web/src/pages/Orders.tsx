@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+
+// ─── useIsDesktop hook ───────────────────────────────────────────────
+function useIsDesktop() {
+    const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 768px)');
+        const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    return isDesktop;
+}
 import axios from 'axios';
 import {
-    AlertCircle,
     AlertTriangle,
     CheckCircle2,
-    Clock,
     ClipboardList,
     Info,
-    Loader2,
     PauseCircle,
     PlayCircle,
     Plus,
@@ -17,8 +26,23 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { QuickCreateModal, type Member as TaskMember } from './Tasks';
+import {
+    S,
+    PageHeader,
+    Card,
+    Btn,
+    Badge,
+    MPBadge,
+    HiSelect,
+    Input,
+    TH,
+    FieldLabel,
+    SkuTag,
+    Spinner,
+    Pagination,
+} from '../components/ui';
 
-// ─── Doменные типы (зеркалят backend OrdersReadService DTO) ─────────
+// ─── Доменные типы (зеркалят backend OrdersReadService DTO) ─────────
 type Marketplace = 'WB' | 'OZON';
 type FulfillmentMode = 'FBS' | 'FBO';
 type InternalStatus =
@@ -89,39 +113,41 @@ interface OrderEventDto {
 }
 
 // ─── Лейблы и стили ─────────────────────────────────────────────────
-const INTERNAL_STATUS_LABEL: Record<InternalStatus, { label: string; tone: string }> = {
-    IMPORTED: { label: 'Принят', tone: 'bg-slate-100 text-slate-700 ring-slate-200' },
-    RESERVED: { label: 'Резерв', tone: 'bg-blue-50 text-blue-700 ring-blue-200' },
-    CANCELLED: { label: 'Отменён', tone: 'bg-rose-50 text-rose-700 ring-rose-200' },
-    FULFILLED: { label: 'Выполнен', tone: 'bg-emerald-50 text-emerald-700 ring-emerald-200' },
-    DISPLAY_ONLY_FBO: { label: 'FBO (без резерва)', tone: 'bg-violet-50 text-violet-700 ring-violet-200' },
-    UNRESOLVED: { label: 'Требует разбора', tone: 'bg-amber-50 text-amber-800 ring-amber-200' },
+const MARKETPLACE_LABEL: Record<Marketplace, string> = { WB: 'Wildberries', OZON: 'Ozon' };
+
+const INTERNAL_STATUS_CFG: Record<InternalStatus, { label: string; color: string; bg: string }> = {
+    IMPORTED:         { label: 'Принят',           color: S.sub,   bg: '#f1f5f9' },
+    RESERVED:         { label: 'Резерв',            color: S.blue,  bg: 'rgba(59,130,246,0.08)' },
+    CANCELLED:        { label: 'Отменён',           color: S.red,   bg: 'rgba(239,68,68,0.08)' },
+    FULFILLED:        { label: 'Выполнен',          color: S.green, bg: 'rgba(16,185,129,0.08)' },
+    DISPLAY_ONLY_FBO: { label: 'FBO (без резерва)', color: '#7c3aed', bg: 'rgba(124,58,237,0.08)' },
+    UNRESOLVED:       { label: 'Требует разбора',   color: S.amber, bg: 'rgba(245,158,11,0.10)' },
 };
 
-const STOCK_EFFECT_LABEL: Record<StockEffectStatus, { label: string; tone: string; explain: string }> = {
+const STOCK_EFFECT_LABEL: Record<StockEffectStatus, { label: string; color: string; explain: string }> = {
     NOT_REQUIRED: {
         label: 'Не требуется',
-        tone: 'text-slate-500',
+        color: S.muted,
         explain: 'Заказ не влияет на управляемый остаток (например, FBO).',
     },
     PENDING: {
         label: 'Ожидает применения',
-        tone: 'text-amber-600',
+        color: S.amber,
         explain: 'Бизнес-эффект на остаток ещё не применён. Обычно решается автоматически следующим циклом синхронизации.',
     },
     APPLIED: {
         label: 'Применено',
-        tone: 'text-emerald-600',
+        color: S.green,
         explain: 'Резерв/списание учтены в остатках.',
     },
     BLOCKED: {
         label: 'Заблокировано политикой',
-        tone: 'text-orange-600',
+        color: '#ea580c',
         explain: 'Действие приостановлено: tenant в режиме TRIAL_EXPIRED / SUSPENDED / CLOSED. Снимется автоматически после восстановления доступа.',
     },
     FAILED: {
         label: 'Ошибка применения',
-        tone: 'text-rose-600',
+        color: S.red,
         explain: 'Side-effect не применился. Чаще всего из-за несопоставленного SKU или неопределённого склада. Используйте «Повторить обработку» после устранения причины.',
     },
 };
@@ -131,24 +157,34 @@ const MATCH_LABEL: Record<MatchStatus, string> = {
     UNMATCHED: 'Не сопоставлен',
 };
 
-const EVENT_LABEL: Record<OrderEventType, { label: string; icon: any; tone: string }> = {
-    RECEIVED: { label: 'Получено событие', icon: Info, tone: 'text-slate-600' },
-    STATUS_CHANGED: { label: 'Изменение внешнего статуса', icon: RefreshCw, tone: 'text-blue-600' },
-    RESERVED: { label: 'Резерв оформлен', icon: CheckCircle2, tone: 'text-blue-600' },
-    RESERVE_RELEASED: { label: 'Резерв снят', icon: AlertTriangle, tone: 'text-amber-600' },
-    DEDUCTED: { label: 'Списано со склада', icon: CheckCircle2, tone: 'text-emerald-600' },
-    RETURN_LOGGED: { label: 'Возврат зафиксирован', icon: Info, tone: 'text-slate-600' },
-    DUPLICATE_IGNORED: { label: 'Дубль проигнорирован', icon: ShieldAlert, tone: 'text-slate-500' },
-    OUT_OF_ORDER_IGNORED: { label: 'Устаревшее событие пропущено', icon: ShieldAlert, tone: 'text-slate-500' },
-    STOCK_EFFECT_FAILED: { label: 'Ошибка применения остатка', icon: XCircle, tone: 'text-rose-600' },
+const EVENT_LABEL: Record<OrderEventType, { label: string; icon: any; color: string }> = {
+    RECEIVED:              { label: 'Получено событие',                  icon: Info,          color: S.sub },
+    STATUS_CHANGED:        { label: 'Изменение внешнего статуса',         icon: RefreshCw,     color: S.blue },
+    RESERVED:              { label: 'Резерв оформлен',                   icon: CheckCircle2,  color: S.blue },
+    RESERVE_RELEASED:      { label: 'Резерв снят',                       icon: AlertTriangle, color: S.amber },
+    DEDUCTED:              { label: 'Списано со склада',                  icon: CheckCircle2,  color: S.green },
+    RETURN_LOGGED:         { label: 'Возврат зафиксирован',               icon: Info,          color: S.sub },
+    DUPLICATE_IGNORED:     { label: 'Дубль проигнорирован',               icon: ShieldAlert,   color: S.muted },
+    OUT_OF_ORDER_IGNORED:  { label: 'Устаревшее событие пропущено',       icon: ShieldAlert,   color: S.muted },
+    STOCK_EFFECT_FAILED:   { label: 'Ошибка применения остатка',          icon: XCircle,       color: S.red },
 };
 
 const PAUSED_STATES = new Set(['TRIAL_EXPIRED', 'SUSPENDED', 'CLOSED']);
+
+// ─── KPI tile colours ────────────────────────────────────────────────
+const KPI_CFG: Record<string, { color: string; bg: string }> = {
+    blue:   { color: S.blue,   bg: 'rgba(59,130,246,0.08)' },
+    emerald:{ color: S.green,  bg: 'rgba(16,185,129,0.08)' },
+    rose:   { color: S.red,    bg: 'rgba(239,68,68,0.08)' },
+    amber:  { color: S.amber,  bg: 'rgba(245,158,11,0.10)' },
+    violet: { color: '#7c3aed', bg: 'rgba(124,58,237,0.08)' },
+};
 
 // ─── Component ──────────────────────────────────────────────────────
 export default function Orders() {
     const { activeTenant } = useAuth();
     const isPaused = activeTenant ? PAUSED_STATES.has(activeTenant.accessState) : false;
+    const isDesktop = useIsDesktop();
 
     const [orders, setOrders] = useState<OrderHeader[]>([]);
     const [loading, setLoading] = useState(true);
@@ -208,34 +244,156 @@ export default function Orders() {
         return c;
     }, [orders]);
 
-    return (
-        <div className="space-y-6">
-            <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                    <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Заказы</h1>
-                    <p className="text-slate-500 mt-1 text-xs sm:text-sm">
-                        Внутренний статус, влияние на остатки и таймлайн событий по каждому заказу
-                    </p>
+    // ── Mobile render ──────────────────────────────────────────────────
+    if (!isDesktop) {
+        return (
+            <div style={{ background: '#f8fafc', minHeight: '100vh' }}>
+                {/* Заголовок */}
+                <div style={{ padding: '8px 20px 12px' }}>
+                    <div style={{ fontFamily: 'Inter', fontWeight: 800, fontSize: 26, color: '#0f172a', letterSpacing: '-0.02em', lineHeight: 1.1 }}>Заказы</div>
+                    <div style={{ fontFamily: 'Inter', fontSize: 12, color: '#64748b', marginTop: 4 }}>{total} заказов</div>
                 </div>
-                <button
-                    onClick={fetchOrders}
-                    disabled={loading}
-                    className="inline-flex items-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-all disabled:opacity-50"
-                >
-                    <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+
+                {/* Фильтр по МП — pill tabs */}
+                <div style={{ padding: '0 20px 14px', display: 'flex', gap: 6, overflowX: 'auto' }}>
+                    {(['ALL', 'WB', 'OZON'] as const).map(mp => (
+                        <button
+                            key={mp}
+                            onClick={() => { setMarketplace(mp); setPage(1); }}
+                            style={{
+                                padding: '7px 16px', borderRadius: 999, border: 'none', flexShrink: 0,
+                                background: marketplace === mp ? '#0f172a' : '#f1f5f9',
+                                color: marketplace === mp ? '#fff' : '#64748b',
+                                fontFamily: 'Inter', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            }}
+                        >
+                            {mp === 'ALL' ? 'Все' : mp === 'OZON' ? 'Ozon' : mp}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Карточки заказов */}
+                <div style={{ padding: '0 20px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {loading && (
+                        <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8', fontFamily: 'Inter', fontSize: 13 }}>Загрузка…</div>
+                    )}
+                    {!loading && orders.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: 40, color: '#94a3b8', fontFamily: 'Inter', fontSize: 13 }}>Заказов нет</div>
+                    )}
+                    {orders.map(o => {
+                        const mpColor = o.marketplace === 'WB' ? '#cb11ab' : '#005bff';
+                        const intlCfg = INTERNAL_STATUS_CFG[o.internalStatus];
+                        const dateStr = new Date(o.orderCreatedAt ?? o.createdAt)
+                            .toLocaleDateString('ru', { day: '2-digit', month: '2-digit' });
+                        const timeStr = new Date(o.orderCreatedAt ?? o.createdAt)
+                            .toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+                        return (
+                            <div
+                                key={o.id}
+                                onClick={() => setSelectedOrderId(o.id)}
+                                style={{
+                                    background: '#fff', borderRadius: 16, padding: '14px 14px 12px',
+                                    border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                {/* Строка 1: МП бейдж + номер + дата/время */}
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <div style={{
+                                            width: 6, height: 6, borderRadius: '50%', background: mpColor, flexShrink: 0,
+                                        }} />
+                                        <span style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: mpColor }}>
+                                            {o.marketplace === 'WB' ? 'WB' : 'Ozon'}
+                                        </span>
+                                        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: '#94a3b8' }}>
+                                            {o.marketplaceOrderId}
+                                        </span>
+                                    </div>
+                                    <span style={{ fontFamily: 'Inter', fontSize: 11, color: '#94a3b8' }}>
+                                        {dateStr} {timeStr}
+                                    </span>
+                                </div>
+                                {/* Строка 2: Тип отгрузки */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                                    <span style={{
+                                        display: 'inline-flex', padding: '2px 8px', borderRadius: 6,
+                                        background: '#f1f5f9', fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: '#64748b',
+                                    }}>
+                                        {o.fulfillmentMode}
+                                    </span>
+                                    {o.externalStatus && (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 12, color: '#64748b' }}>
+                                            {o.externalStatus}
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Строка 3: Статус + эффект на остаток */}
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                    paddingTop: 10, borderTop: '1px solid #e2e8f0',
+                                }}>
+                                    <Badge label={intlCfg.label} bg={intlCfg.bg} color={intlCfg.color} />
+                                    {o.stockEffectStatus === 'FAILED' && (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 11, color: '#ef4444', fontWeight: 600 }}>
+                                            Ошибка остатка
+                                        </span>
+                                    )}
+                                    {o.stockEffectStatus === 'PENDING' && (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+                                            Ожидает
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {selectedOrderId && (
+                    <OrderDetailDrawer
+                        orderId={selectedOrderId}
+                        onClose={() => setSelectedOrderId(null)}
+                        onReprocessed={fetchOrders}
+                        isPaused={isPaused}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    // ── Desktop render ─────────────────────────────────────────────────
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <PageHeader
+                title="Заказы"
+                subtitle="Внутренний статус, влияние на остатки и таймлайн событий по каждому заказу"
+            >
+                <Btn variant="secondary" onClick={fetchOrders} disabled={loading}>
+                    <RefreshCw size={14} style={loading ? { animation: 'spin 0.7s linear infinite' } : undefined} />
                     Обновить список
-                </button>
-            </header>
+                </Btn>
+            </PageHeader>
 
             {/* TASK_ORDERS_6: paused integration banner.
                 §10 + §4 сценарий 4 + UX-правило: история доступна, но не
                 ждите новых заказов до снятия паузы. Не обещаем live-данные. */}
             {isPaused && (
-                <div className="border border-amber-200 bg-amber-50 text-amber-900 rounded-xl px-4 py-3 flex items-start gap-3">
-                    <PauseCircle className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                    <div className="text-sm">
-                        <div className="font-semibold">Интеграции с маркетплейсами на паузе</div>
-                        <div className="mt-0.5">
+                <div style={{
+                    border: `1px solid rgba(245,158,11,0.35)`,
+                    background: 'rgba(245,158,11,0.07)',
+                    borderRadius: 12,
+                    padding: '12px 16px',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 12,
+                }}>
+                    <PauseCircle size={18} color={S.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div>
+                        <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 13, color: '#92400e' }}>
+                            Интеграции с маркетплейсами на паузе
+                        </div>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, color: '#92400e', marginTop: 2 }}>
                             История ваших заказов доступна для просмотра, но новые заказы из внешних API
                             не будут приходить до снятия ограничения по компании
                             ({activeTenant?.accessState}). Side-effects на остатки также не применяются.
@@ -245,206 +403,146 @@ export default function Orders() {
             )}
 
             {error && (
-                <div className="flex items-center p-4 bg-red-50 text-red-700 rounded-xl border border-red-100">
-                    <AlertCircle className="h-5 w-5 mr-3 shrink-0" />
-                    <p className="text-sm font-medium">{error}</p>
+                <div style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '12px 16px',
+                    background: 'rgba(239,68,68,0.06)',
+                    border: `1px solid rgba(239,68,68,0.2)`,
+                    borderRadius: 12,
+                }}>
+                    <XCircle size={16} color={S.red} style={{ flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.red }}>{error}</span>
                 </div>
             )}
 
             {/* KPI tiles по текущей странице */}
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-                <KpiTile label="Резерв" value={counters.reserved} tone="blue" />
-                <KpiTile label="Выполнено" value={counters.fulfilled} tone="emerald" />
-                <KpiTile label="Отменено" value={counters.cancelled} tone="rose" />
-                <KpiTile label="Требует разбора" value={counters.unresolved} tone="amber" />
-                <KpiTile label="Ошибка остатка" value={counters.failedEffect} tone="rose" />
-                <KpiTile label="FBO" value={counters.fbo} tone="violet" />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12 }}>
+                <KpiTile label="Резерв"          value={counters.reserved}     tone="blue" />
+                <KpiTile label="Выполнено"        value={counters.fulfilled}    tone="emerald" />
+                <KpiTile label="Отменено"         value={counters.cancelled}    tone="rose" />
+                <KpiTile label="Требует разбора"  value={counters.unresolved}   tone="amber" />
+                <KpiTile label="Ошибка остатка"   value={counters.failedEffect} tone="rose" />
+                <KpiTile label="FBO"              value={counters.fbo}          tone="violet" />
             </div>
 
             {/* Filters */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-5 gap-3">
-                <Select
-                    label="Маркетплейс"
-                    value={marketplace}
-                    onChange={(v) => { setMarketplace(v as any); setPage(1); }}
-                    options={[
-                        ['ALL', 'Все'],
-                        ['WB', 'WB'],
-                        ['OZON', 'Ozon'],
-                    ]}
-                />
-                <Select
-                    label="Тип отгрузки"
-                    value={fulfillmentMode}
-                    onChange={(v) => { setFulfillmentMode(v as any); setPage(1); }}
-                    options={[
-                        ['ALL', 'Все'],
-                        ['FBS', 'FBS'],
-                        ['FBO', 'FBO'],
-                    ]}
-                />
-                <Select
-                    label="Внутренний статус"
-                    value={internalStatus}
-                    onChange={(v) => { setInternalStatus(v as any); setPage(1); }}
-                    options={[
-                        ['ALL', 'Все'],
-                        ['IMPORTED', 'Принят'],
-                        ['RESERVED', 'Резерв'],
-                        ['CANCELLED', 'Отменён'],
-                        ['FULFILLED', 'Выполнен'],
-                        ['DISPLAY_ONLY_FBO', 'FBO (без резерва)'],
-                        ['UNRESOLVED', 'Требует разбора'],
-                    ]}
-                />
-                <Select
-                    label="Эффект на остаток"
-                    value={stockEffectStatus}
-                    onChange={(v) => { setStockEffectStatus(v as any); setPage(1); }}
-                    options={[
-                        ['ALL', 'Все'],
-                        ['NOT_REQUIRED', 'Не требуется'],
-                        ['PENDING', 'Ожидает'],
-                        ['APPLIED', 'Применено'],
-                        ['BLOCKED', 'Заблокировано'],
-                        ['FAILED', 'Ошибка'],
-                    ]}
-                />
-                <div>
-                    <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                        Поиск по номеру
-                    </label>
-                    <input
-                        type="text"
-                        value={search}
-                        onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                        placeholder="WB12345 / 0000-1234-5678"
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm"
+            <Card>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+                    <FilterSelect
+                        label="Маркетплейс"
+                        value={marketplace}
+                        onChange={(v) => { setMarketplace(v as any); setPage(1); }}
+                        options={[
+                            ['ALL', 'Все'],
+                            ['WB', 'WB'],
+                            ['OZON', 'Ozon'],
+                        ]}
                     />
+                    <FilterSelect
+                        label="Тип отгрузки"
+                        value={fulfillmentMode}
+                        onChange={(v) => { setFulfillmentMode(v as any); setPage(1); }}
+                        options={[
+                            ['ALL', 'Все'],
+                            ['FBS', 'FBS'],
+                            ['FBO', 'FBO'],
+                        ]}
+                    />
+                    <FilterSelect
+                        label="Внутренний статус"
+                        value={internalStatus}
+                        onChange={(v) => { setInternalStatus(v as any); setPage(1); }}
+                        options={[
+                            ['ALL', 'Все'],
+                            ['IMPORTED', 'Принят'],
+                            ['RESERVED', 'Резерв'],
+                            ['CANCELLED', 'Отменён'],
+                            ['FULFILLED', 'Выполнен'],
+                            ['DISPLAY_ONLY_FBO', 'FBO (без резерва)'],
+                            ['UNRESOLVED', 'Требует разбора'],
+                        ]}
+                    />
+                    <FilterSelect
+                        label="Эффект на остаток"
+                        value={stockEffectStatus}
+                        onChange={(v) => { setStockEffectStatus(v as any); setPage(1); }}
+                        options={[
+                            ['ALL', 'Все'],
+                            ['NOT_REQUIRED', 'Не требуется'],
+                            ['PENDING', 'Ожидает'],
+                            ['APPLIED', 'Применено'],
+                            ['BLOCKED', 'Заблокировано'],
+                            ['FAILED', 'Ошибка'],
+                        ]}
+                    />
+                    <div>
+                        <FieldLabel>Поиск по номеру</FieldLabel>
+                        <Input
+                            type="text"
+                            value={search}
+                            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                            placeholder="WB12345 / 0000-1234-5678"
+                        />
+                    </div>
                 </div>
-            </div>
+            </Card>
 
             {/* Table */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead className="bg-slate-50/60 border-b border-slate-100">
-                            <tr>
-                                <Th>Дата</Th>
-                                <Th>Источник</Th>
-                                <Th>Номер</Th>
-                                <Th>Тип</Th>
-                                <Th>Внутренний статус</Th>
-                                <Th>Внешний статус</Th>
-                                <Th>Эффект на остаток</Th>
-                                <Th />
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {loading && orders.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="py-16 text-center text-slate-400">
-                                        <Loader2 className="h-6 w-6 animate-spin inline-block" />
-                                    </td>
-                                </tr>
-                            ) : orders.length === 0 ? (
-                                <tr>
-                                    <td colSpan={8} className="py-16 text-center text-slate-400 italic">
-                                        Заказов по выбранным фильтрам не найдено
-                                    </td>
-                                </tr>
-                            ) : (
-                                orders.map((o) => {
-                                    const intl = INTERNAL_STATUS_LABEL[o.internalStatus];
-                                    const eff = STOCK_EFFECT_LABEL[o.stockEffectStatus];
-                                    return (
-                                        <tr
-                                            key={o.id}
-                                            onClick={() => setSelectedOrderId(o.id)}
-                                            className="hover:bg-slate-50/60 cursor-pointer transition-colors"
-                                        >
-                                            <td className="px-4 py-3 text-sm text-slate-700">
-                                                <div className="font-medium text-slate-900">
-                                                    {formatDate(o.orderCreatedAt || o.createdAt)}
-                                                </div>
-                                                <div className="text-[11px] text-slate-400 mt-0.5">
-                                                    {timeAgo(o.orderCreatedAt || o.createdAt)}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span
-                                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ring-1 ring-inset ${
-                                                        o.marketplace === 'WB'
-                                                            ? 'bg-purple-50 text-purple-700 ring-purple-200'
-                                                            : 'bg-blue-50 text-blue-700 ring-blue-200'
-                                                    }`}
-                                                >
-                                                    {o.marketplace}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 font-mono text-sm font-semibold text-slate-900">
-                                                {o.marketplaceOrderId}
-                                            </td>
-                                            <td className="px-4 py-3 text-sm text-slate-600">
-                                                {o.fulfillmentMode}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <span
-                                                    className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold ring-1 ring-inset ${intl.tone}`}
-                                                >
-                                                    {intl.label}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-xs text-slate-500">
-                                                {o.externalStatus ?? '—'}
-                                            </td>
-                                            <td className="px-4 py-3 text-xs">
-                                                <div className={`flex items-center gap-1 font-semibold ${eff.tone}`}>
-                                                    {o.affectsStock ? <CheckCircle2 className="h-3.5 w-3.5" /> : <PlayCircle className="h-3.5 w-3.5" />}
-                                                    {eff.label}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-right">
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSelectedOrderId(o.id);
-                                                    }}
-                                                    className="text-blue-600 hover:text-blue-700 text-xs font-semibold"
-                                                >
-                                                    Подробнее →
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
+            <Card noPad>
+                {/* Table header */}
+                <div style={{
+                    display: 'flex', alignItems: 'center', height: 44,
+                    borderBottom: `1px solid ${S.border}`,
+                    background: '#f8fafc',
+                    borderRadius: '16px 16px 0 0',
+                }}>
+                    <TH flex={1.4}>Дата</TH>
+                    <TH flex={0.8}>Источник</TH>
+                    <TH flex={1.6}>Номер</TH>
+                    <TH flex={0.6}>Тип</TH>
+                    <TH flex={1.2}>Внутренний статус</TH>
+                    <TH flex={1.2}>Внешний статус</TH>
+                    <TH flex={1.4}>Эффект на остаток</TH>
+                    <TH flex={0.5} align="right"></TH>
                 </div>
 
-                <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between">
-                    <button
-                        disabled={page === 1}
-                        onClick={() => setPage((p) => p - 1)}
-                        className="px-3 py-1.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        Назад
-                    </button>
-                    <span className="text-xs text-slate-600">
-                        Страница <span className="font-semibold">{page}</span> из <span className="font-semibold">{pages}</span>
-                        {' · '}
-                        Всего: <span className="font-semibold">{total}</span>
-                    </span>
-                    <button
-                        disabled={page >= pages}
-                        onClick={() => setPage((p) => p + 1)}
-                        className="px-3 py-1.5 border border-slate-300 text-sm font-medium rounded-md text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        Вперёд
-                    </button>
-                </div>
-            </div>
+                {/* Table body */}
+                {loading && orders.length === 0 ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 160 }}>
+                        <Spinner size={24} />
+                    </div>
+                ) : orders.length === 0 ? (
+                    <div style={{
+                        display: 'flex', justifyContent: 'center', alignItems: 'center', height: 160,
+                        fontFamily: 'Inter', fontSize: 14, color: S.muted, fontStyle: 'italic',
+                    }}>
+                        Заказов по выбранным фильтрам не найдено
+                    </div>
+                ) : (
+                    orders.map((o) => {
+                        const intl = INTERNAL_STATUS_CFG[o.internalStatus];
+                        const eff = STOCK_EFFECT_LABEL[o.stockEffectStatus];
+                        return (
+                            <OrderRow
+                                key={o.id}
+                                o={o}
+                                intl={intl}
+                                eff={eff}
+                                onClick={() => setSelectedOrderId(o.id)}
+                                onDetailClick={(e) => { e.stopPropagation(); setSelectedOrderId(o.id); }}
+                            />
+                        );
+                    })
+                )}
+
+                <Pagination
+                    page={page}
+                    totalPages={pages}
+                    onPage={setPage}
+                    total={total}
+                    shown={orders.length}
+                />
+            </Card>
 
             {selectedOrderId && (
                 <OrderDetailDrawer
@@ -458,33 +556,125 @@ export default function Orders() {
     );
 }
 
-// ─── Subcomponents ──────────────────────────────────────────────────
-
-function KpiTile({ label, value, tone }: { label: string; value: number; tone: string }) {
-    const toneMap: Record<string, string> = {
-        blue: 'bg-blue-50 text-blue-700',
-        emerald: 'bg-emerald-50 text-emerald-700',
-        rose: 'bg-rose-50 text-rose-700',
-        amber: 'bg-amber-50 text-amber-700',
-        violet: 'bg-violet-50 text-violet-700',
-    };
+// ─── OrderRow ────────────────────────────────────────────────────────
+function OrderRow({
+    o,
+    intl,
+    eff,
+    onClick,
+    onDetailClick,
+}: {
+    o: OrderHeader;
+    intl: { label: string; color: string; bg: string };
+    eff: { label: string; color: string };
+    onClick: () => void;
+    onDetailClick: (e: React.MouseEvent) => void;
+}) {
+    const [hovered, setHovered] = useState(false);
     return (
-        <div className={`rounded-xl px-3 py-3 ${toneMap[tone]} border border-transparent`}>
-            <div className="text-[10px] uppercase tracking-wider font-semibold opacity-80">{label}</div>
-            <div className="text-2xl font-bold mt-0.5">{value}</div>
+        <div
+            onClick={onClick}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+                display: 'flex', alignItems: 'center', height: 52,
+                borderBottom: `1px solid ${S.border}`,
+                background: hovered ? '#f8fafc' : '#fff',
+                cursor: 'pointer',
+                transition: 'background 0.12s',
+            }}
+        >
+            {/* Date */}
+            <div style={{ flex: 1.4, padding: '0 16px' }}>
+                <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink }}>
+                    {formatDate(o.orderCreatedAt || o.createdAt)}
+                </div>
+                <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 1 }}>
+                    {timeAgo(o.orderCreatedAt || o.createdAt)}
+                </div>
+            </div>
+
+            {/* Marketplace */}
+            <div style={{ flex: 0.8, padding: '0 16px' }}>
+                <MPBadge mp={o.marketplace} />
+            </div>
+
+            {/* Order number */}
+            <div style={{ flex: 1.6, padding: '0 16px' }}>
+                <SkuTag>{o.marketplaceOrderId}</SkuTag>
+            </div>
+
+            {/* Fulfillment mode */}
+            <div style={{ flex: 0.6, padding: '0 16px' }}>
+                <span style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.sub }}>
+                    {o.fulfillmentMode}
+                </span>
+            </div>
+
+            {/* Internal status */}
+            <div style={{ flex: 1.2, padding: '0 16px' }}>
+                <Badge label={intl.label} color={intl.color} bg={intl.bg} />
+            </div>
+
+            {/* External status */}
+            <div style={{ flex: 1.2, padding: '0 16px' }}>
+                <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
+                    {o.externalStatus ?? '—'}
+                </span>
+            </div>
+
+            {/* Stock effect */}
+            <div style={{ flex: 1.4, padding: '0 16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {o.affectsStock
+                        ? <CheckCircle2 size={13} color={eff.color} />
+                        : <PlayCircle size={13} color={eff.color} />
+                    }
+                    <span style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: eff.color }}>
+                        {eff.label}
+                    </span>
+                </div>
+            </div>
+
+            {/* Detail link */}
+            <div style={{ flex: 0.5, padding: '0 16px', textAlign: 'right' }}>
+                <button
+                    onClick={onDetailClick}
+                    style={{
+                        background: 'none', border: 'none', cursor: 'pointer',
+                        fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.blue,
+                        padding: 0,
+                    }}
+                >
+                    Подробнее →
+                </button>
+            </div>
         </div>
     );
 }
 
-function Th({ children }: { children?: React.ReactNode }) {
+// ─── Subcomponents ──────────────────────────────────────────────────
+
+function KpiTile({ label, value, tone }: { label: string; value: number; tone: string }) {
+    const cfg = KPI_CFG[tone] ?? KPI_CFG.blue;
     return (
-        <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            {children}
-        </th>
+        <div style={{
+            borderRadius: 12,
+            padding: '12px 14px',
+            background: cfg.bg,
+            border: '1px solid transparent',
+        }}>
+            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: cfg.color, opacity: 0.8 }}>
+                {label}
+            </div>
+            <div style={{ fontFamily: 'Inter', fontSize: 24, fontWeight: 800, color: cfg.color, marginTop: 2, lineHeight: 1.2 }}>
+                {value}
+            </div>
+        </div>
     );
 }
 
-function Select({
+function FilterSelect({
     label,
     value,
     onChange,
@@ -497,18 +687,13 @@ function Select({
 }) {
     return (
         <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                {label}
-            </label>
-            <select
+            <FieldLabel>{label}</FieldLabel>
+            <HiSelect
                 value={value}
-                onChange={(e) => onChange(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
-            >
-                {options.map(([v, l]) => (
-                    <option key={v} value={v}>{l}</option>
-                ))}
-            </select>
+                onChange={onChange}
+                options={options.map(([v, l]) => ({ value: v, label: l }))}
+                style={{ width: '100%' }}
+            />
         </div>
     );
 }
@@ -592,87 +777,130 @@ function OrderDetailDrawer({
         }
     };
 
+    // Stock effect section styling
+    const effectSectionBg =
+        detail?.stockEffectStatus === 'FAILED'  ? 'rgba(239,68,68,0.05)'   :
+        detail?.stockEffectStatus === 'BLOCKED' ? 'rgba(234,88,12,0.05)'   :
+        detail?.stockEffectStatus === 'PENDING' ? 'rgba(245,158,11,0.06)'  :
+        detail?.stockEffectStatus === 'APPLIED' ? 'rgba(16,185,129,0.06)'  :
+        '#f8fafc';
+
+    const effectSectionBorder =
+        detail?.stockEffectStatus === 'FAILED'  ? 'rgba(239,68,68,0.2)'    :
+        detail?.stockEffectStatus === 'BLOCKED' ? 'rgba(234,88,12,0.2)'    :
+        detail?.stockEffectStatus === 'PENDING' ? 'rgba(245,158,11,0.25)'  :
+        detail?.stockEffectStatus === 'APPLIED' ? 'rgba(16,185,129,0.2)'   :
+        S.border;
+
     return (
-        <div className="fixed inset-0 z-50 flex">
-            <div className="flex-1 bg-slate-900/40" onClick={onClose} />
-            <aside className="w-full max-w-xl bg-white shadow-2xl flex flex-col">
-                <header className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
+            {/* Backdrop */}
+            <div
+                style={{ flex: 1, background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(2px)' }}
+                onClick={onClose}
+            />
+
+            {/* Panel */}
+            <aside style={{
+                width: '100%', maxWidth: 560,
+                background: '#fff',
+                boxShadow: '-4px 0 32px rgba(0,0,0,0.12)',
+                display: 'flex', flexDirection: 'column',
+            }}>
+                {/* Panel header */}
+                <div style={{
+                    padding: '16px 24px',
+                    borderBottom: `1px solid ${S.border}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    flexShrink: 0,
+                }}>
                     <div>
-                        <div className="text-xs text-slate-500">Заказ</div>
-                        <div className="font-mono font-bold text-slate-900">
-                            {detail?.marketplaceOrderId ?? '...'}
+                        <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                            Заказ
+                        </div>
+                        <div style={{ marginTop: 2 }}>
+                            <SkuTag>{detail?.marketplaceOrderId ?? '…'}</SkuTag>
                         </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <button
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Btn
+                            variant="secondary"
+                            size="sm"
                             onClick={() => setCreateTaskOpen(true)}
                             disabled={isPaused}
                             title={isPaused ? 'Создание недоступно при паузе интеграций' : 'Создать задачу по этому заказу'}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors"
                         >
-                            <Plus className="h-3.5 w-3.5" />
+                            <Plus size={13} />
                             Создать задачу
-                        </button>
-                        <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-2xl">
+                        </Btn>
+                        <button
+                            onClick={onClose}
+                            style={{
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                color: S.muted, fontSize: 22, lineHeight: 1,
+                                display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6,
+                            }}
+                        >
                             ×
                         </button>
                     </div>
-                </header>
+                </div>
 
-                <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                {/* Panel body */}
+                <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
                     {loading ? (
-                        <div className="flex items-center text-slate-500 text-sm">
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Загрузка...
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: S.sub, fontFamily: 'Inter', fontSize: 13 }}>
+                            <Spinner size={16} />
+                            Загрузка…
                         </div>
                     ) : error ? (
-                        <div className="text-rose-600 text-sm">{error}</div>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, color: S.red }}>{error}</div>
                     ) : detail ? (
                         <>
-                            {/* Header summary */}
-                            <section className="grid grid-cols-2 gap-3">
-                                <Field label="Маркетплейс" value={detail.marketplace} />
-                                <Field label="Тип отгрузки" value={detail.fulfillmentMode} />
-                                <Field
+                            {/* Header summary grid */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                <DrawerField label="Маркетплейс" value={MARKETPLACE_LABEL[detail.marketplace]} />
+                                <DrawerField label="Тип отгрузки" value={detail.fulfillmentMode} />
+                                <DrawerField
                                     label="Внутренний статус"
                                     value={
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ring-1 ring-inset ${INTERNAL_STATUS_LABEL[detail.internalStatus].tone}`}>
-                                            {INTERNAL_STATUS_LABEL[detail.internalStatus].label}
-                                        </span>
+                                        <Badge
+                                            label={INTERNAL_STATUS_CFG[detail.internalStatus].label}
+                                            color={INTERNAL_STATUS_CFG[detail.internalStatus].color}
+                                            bg={INTERNAL_STATUS_CFG[detail.internalStatus].bg}
+                                        />
                                     }
                                 />
-                                <Field
-                                    label="Внешний статус"
-                                    value={detail.externalStatus ?? '—'}
-                                />
-                                <Field label="Создано на маркетплейсе" value={detail.orderCreatedAt ? formatDate(detail.orderCreatedAt) : '—'} />
-                                <Field label="Последнее событие" value={detail.processedAt ? formatDate(detail.processedAt) : '—'} />
-                            </section>
+                                <DrawerField label="Внешний статус" value={detail.externalStatus ?? '—'} />
+                                <DrawerField label="Создано на маркетплейсе" value={detail.orderCreatedAt ? formatDate(detail.orderCreatedAt) : '—'} />
+                                <DrawerField label="Последнее событие" value={detail.processedAt ? formatDate(detail.processedAt) : '—'} />
+                            </div>
 
                             {/* Stock effect explanation */}
-                            <section className={`rounded-xl border p-4 ${
-                                detail.stockEffectStatus === 'FAILED' ? 'border-rose-200 bg-rose-50/60' :
-                                detail.stockEffectStatus === 'BLOCKED' ? 'border-orange-200 bg-orange-50/60' :
-                                detail.stockEffectStatus === 'PENDING' ? 'border-amber-200 bg-amber-50/60' :
-                                detail.stockEffectStatus === 'APPLIED' ? 'border-emerald-200 bg-emerald-50/60' :
-                                'border-slate-200 bg-slate-50'
-                            }`}>
-                                <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1">
+                            <div style={{
+                                borderRadius: 12,
+                                border: `1px solid ${effectSectionBorder}`,
+                                background: effectSectionBg,
+                                padding: 16,
+                            }}>
+                                <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 4 }}>
                                     Эффект на остаток
                                 </div>
-                                <div className={`text-sm font-bold ${STOCK_EFFECT_LABEL[detail.stockEffectStatus].tone}`}>
+                                <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 700, color: STOCK_EFFECT_LABEL[detail.stockEffectStatus].color }}>
                                     {STOCK_EFFECT_LABEL[detail.stockEffectStatus].label}
                                 </div>
-                                <div className="text-xs text-slate-600 mt-1">
+                                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 4 }}>
                                     {STOCK_EFFECT_LABEL[detail.stockEffectStatus].explain}
                                 </div>
 
                                 {detail.internalStatus === 'UNRESOLVED' && (
-                                    <p className="text-xs text-amber-800 mt-2 flex items-start gap-1">
-                                        <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-                                        В заказе есть несопоставленные SKU или не задан склад. Резерв не будет
-                                        выполнен до устранения причины — пожалуйста, проверьте список товаров ниже.
-                                    </p>
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 10 }}>
+                                        <AlertTriangle size={13} color={S.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                                        <span style={{ fontFamily: 'Inter', fontSize: 12, color: '#92400e' }}>
+                                            В заказе есть несопоставленные SKU или не задан склад. Резерв не будет
+                                            выполнен до устранения причины — пожалуйста, проверьте список товаров ниже.
+                                        </span>
+                                    </div>
                                 )}
 
                                 {/* Reprocess button: только для FBS заказов в business-critical статусах
@@ -682,143 +910,180 @@ function OrderDetailDrawer({
                                     && (detail.internalStatus === 'RESERVED'
                                         || detail.internalStatus === 'CANCELLED'
                                         || detail.internalStatus === 'FULFILLED') && (
-                                    <button
-                                        onClick={onReprocess}
-                                        disabled={reprocessing || isPaused}
-                                        className="mt-3 inline-flex items-center px-3 py-1.5 text-xs font-semibold bg-white border border-slate-300 rounded-md hover:bg-slate-50 disabled:opacity-50"
-                                        title={isPaused ? 'Недоступно при паузе интеграций' : ''}
-                                    >
-                                        {reprocessing ? (
-                                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                                        ) : (
-                                            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-                                        )}
-                                        Повторить обработку
-                                    </button>
+                                    <div style={{ marginTop: 12 }}>
+                                        <Btn
+                                            variant="secondary"
+                                            size="sm"
+                                            onClick={onReprocess}
+                                            disabled={reprocessing || isPaused}
+                                            title={isPaused ? 'Недоступно при паузе интеграций' : ''}
+                                        >
+                                            {reprocessing ? <Spinner size={13} /> : <RefreshCw size={13} />}
+                                            Повторить обработку
+                                        </Btn>
+                                    </div>
                                 )}
 
                                 {reprocessResult && (
-                                    <div className={`mt-2 text-xs ${
-                                        reprocessResult.status === 'APPLIED' ? 'text-emerald-700' :
-                                        reprocessResult.status === 'STILL_FAILED' ? 'text-rose-700' :
-                                        'text-slate-600'
-                                    }`}>
+                                    <div style={{
+                                        marginTop: 8, fontFamily: 'Inter', fontSize: 12,
+                                        color: reprocessResult.status === 'APPLIED' ? S.green :
+                                               reprocessResult.status === 'STILL_FAILED' ? S.red : S.sub,
+                                    }}>
                                         Результат: {reprocessResult.status}
                                         {reprocessResult.detail ? ` (${reprocessResult.detail})` : ''}
                                     </div>
                                 )}
-                            </section>
+                            </div>
 
                             {/* Items */}
-                            <section>
-                                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                            <div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 8 }}>
                                     Товары
-                                </h3>
-                                <div className="space-y-2">
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                     {detail.items.map((it) => (
-                                        <div key={it.id} className="border border-slate-200 rounded-lg p-3 bg-white">
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div className="min-w-0">
-                                                    <div className="text-sm font-medium text-slate-900 truncate">
+                                        <div key={it.id} style={{
+                                            border: `1px solid ${S.border}`,
+                                            borderRadius: 10,
+                                            padding: 12,
+                                            background: '#fff',
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                                                <div style={{ minWidth: 0, flex: 1 }}>
+                                                    <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                                         {it.name ?? '—'}
                                                     </div>
-                                                    <div className="text-xs text-slate-500 font-mono mt-0.5">
-                                                        {it.sku ?? '—'}
+                                                    <div style={{ marginTop: 3 }}>
+                                                        <SkuTag>{it.sku ?? '—'}</SkuTag>
                                                     </div>
                                                 </div>
-                                                <div className="text-right shrink-0">
-                                                    <div className="text-sm font-bold text-slate-900">×{it.quantity}</div>
+                                                <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                    <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 800, color: S.ink }}>
+                                                        ×{it.quantity}
+                                                    </div>
                                                     {it.price && (
-                                                        <div className="text-xs text-slate-500">{it.price} ₽</div>
+                                                        <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted }}>
+                                                            {it.price} ₽
+                                                        </div>
                                                     )}
                                                 </div>
                                             </div>
-                                            <div className="mt-2 flex items-center gap-2 text-[11px]">
-                                                <span className={`px-1.5 py-0.5 rounded ring-1 ring-inset font-semibold ${
-                                                    it.matchStatus === 'MATCHED'
-                                                        ? 'bg-emerald-50 text-emerald-700 ring-emerald-200'
-                                                        : 'bg-rose-50 text-rose-700 ring-rose-200'
-                                                }`}>
-                                                    {MATCH_LABEL[it.matchStatus]}
-                                                </span>
+                                            <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                <Badge
+                                                    label={MATCH_LABEL[it.matchStatus]}
+                                                    color={it.matchStatus === 'MATCHED' ? S.green : S.red}
+                                                    bg={it.matchStatus === 'MATCHED' ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)'}
+                                                />
                                                 {!it.warehouseId && (
-                                                    <span className="px-1.5 py-0.5 rounded ring-1 ring-inset bg-amber-50 text-amber-800 ring-amber-200 font-semibold">
-                                                        Склад не определён
-                                                    </span>
+                                                    <Badge
+                                                        label="Склад не определён"
+                                                        color={S.amber}
+                                                        bg="rgba(245,158,11,0.10)"
+                                                    />
                                                 )}
                                             </div>
                                         </div>
                                     ))}
                                 </div>
-                            </section>
+                            </div>
 
                             {/* Related tasks */}
-                            <section>
-                                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2 flex items-center gap-1.5">
-                                    <ClipboardList className="h-3.5 w-3.5" />
-                                    Связанные задачи
-                                    {relatedTasksLoading && <Loader2 className="h-3 w-3 animate-spin" />}
-                                </h3>
+                            <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                    <ClipboardList size={13} color={S.muted} />
+                                    <span style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted }}>
+                                        Связанные задачи
+                                    </span>
+                                    {relatedTasksLoading && <Spinner size={13} />}
+                                </div>
                                 {!relatedTasksLoading && relatedTasks.length === 0 ? (
-                                    <div className="text-xs text-slate-400 italic">
+                                    <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>
                                         Нет открытых задач по этому заказу.{' '}
                                         {!isPaused && (
-                                            <button onClick={() => setCreateTaskOpen(true)} className="text-blue-600 hover:underline">
+                                            <button
+                                                onClick={() => setCreateTaskOpen(true)}
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'Inter', fontSize: 12, color: S.blue, padding: 0, textDecoration: 'underline' }}
+                                            >
                                                 Создать
                                             </button>
                                         )}
                                     </div>
                                 ) : (
-                                    <div className="space-y-1.5">
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         {relatedTasks.map(t => (
-                                            <div key={t.id} className="flex items-center justify-between border border-slate-100 rounded-lg px-3 py-2 bg-slate-50">
-                                                <span className="text-sm text-slate-700 truncate flex-1">{t.title}</span>
-                                                <span className={`ml-2 shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ring-1 ring-inset ${
-                                                    t.status === 'OPEN' ? 'bg-slate-100 text-slate-600 ring-slate-200' :
-                                                    t.status === 'IN_PROGRESS' ? 'bg-blue-50 text-blue-700 ring-blue-200' :
-                                                    'bg-amber-50 text-amber-800 ring-amber-200'
-                                                }`}>
-                                                    {t.status === 'OPEN' ? 'Открыта' : t.status === 'IN_PROGRESS' ? 'В работе' : 'Ожидает'}
+                                            <div key={t.id} style={{
+                                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                                border: `1px solid ${S.border}`, borderRadius: 8,
+                                                padding: '8px 12px', background: '#f8fafc',
+                                            }}>
+                                                <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.ink, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {t.title}
                                                 </span>
+                                                <Badge
+                                                    label={t.status === 'OPEN' ? 'Открыта' : t.status === 'IN_PROGRESS' ? 'В работе' : 'Ожидает'}
+                                                    color={t.status === 'OPEN' ? S.sub : t.status === 'IN_PROGRESS' ? S.blue : S.amber}
+                                                    bg={t.status === 'OPEN' ? '#f1f5f9' : t.status === 'IN_PROGRESS' ? 'rgba(59,130,246,0.08)' : 'rgba(245,158,11,0.10)'}
+                                                    style={{ marginLeft: 8, flexShrink: 0 }}
+                                                />
                                             </div>
                                         ))}
                                     </div>
                                 )}
-                            </section>
+                            </div>
 
                             {/* Timeline */}
-                            <section>
-                                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                            <div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted, marginBottom: 8 }}>
                                     Таймлайн событий
-                                </h3>
+                                </div>
                                 {events.length === 0 ? (
-                                    <div className="text-xs text-slate-400 italic">Событий пока нет</div>
+                                    <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>
+                                        Событий пока нет
+                                    </div>
                                 ) : (
-                                    <ol className="relative border-l border-slate-200 ml-2">
+                                    <div style={{ position: 'relative', paddingLeft: 20, borderLeft: `2px solid ${S.border}`, display: 'flex', flexDirection: 'column', gap: 16 }}>
                                         {events.map((e) => {
                                             const meta = EVENT_LABEL[e.eventType] ?? EVENT_LABEL.RECEIVED;
                                             const Icon = meta.icon;
                                             return (
-                                                <li key={e.id} className="ml-4 mb-4">
-                                                    <span className="absolute -left-[7px] flex items-center justify-center w-3.5 h-3.5 bg-white border border-slate-300 rounded-full" />
-                                                    <div className={`flex items-center gap-2 text-sm font-semibold ${meta.tone}`}>
-                                                        <Icon className="h-3.5 w-3.5" />
-                                                        {meta.label}
+                                                <div key={e.id} style={{ position: 'relative' }}>
+                                                    {/* Dot */}
+                                                    <div style={{
+                                                        position: 'absolute', left: -27, top: 3,
+                                                        width: 12, height: 12, borderRadius: '50%',
+                                                        background: '#fff', border: `2px solid ${S.border}`,
+                                                    }} />
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                        <Icon size={13} color={meta.color} />
+                                                        <span style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: meta.color }}>
+                                                            {meta.label}
+                                                        </span>
                                                     </div>
-                                                    <time className="block text-[11px] text-slate-400 mt-0.5">
-                                                        {formatDate(e.createdAt)} <Clock className="inline h-3 w-3 ml-1" />
-                                                    </time>
+                                                    <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 2 }}>
+                                                        {formatDate(e.createdAt)}
+                                                    </div>
                                                     {e.payload && Object.keys(e.payload).length > 0 && (
-                                                        <pre className="mt-1 bg-slate-50 border border-slate-100 rounded p-2 text-[11px] text-slate-600 overflow-x-auto">
-{JSON.stringify(e.payload, null, 2)}
+                                                        <pre style={{
+                                                            marginTop: 6,
+                                                            background: '#f8fafc',
+                                                            border: `1px solid ${S.border}`,
+                                                            borderRadius: 6,
+                                                            padding: '8px 10px',
+                                                            fontFamily: "'JetBrains Mono', monospace",
+                                                            fontSize: 11,
+                                                            color: S.sub,
+                                                            overflowX: 'auto',
+                                                        }}>
+                                                            {JSON.stringify(e.payload, null, 2)}
                                                         </pre>
                                                     )}
-                                                </li>
+                                                </div>
                                             );
                                         })}
-                                    </ol>
+                                    </div>
                                 )}
-                            </section>
+                            </div>
                         </>
                     ) : null}
                 </div>
@@ -842,11 +1107,15 @@ function OrderDetailDrawer({
     );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function DrawerField({ label, value }: { label: string; value: React.ReactNode }) {
     return (
         <div>
-            <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">{label}</div>
-            <div className="text-sm text-slate-900 mt-0.5">{value}</div>
+            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: S.muted }}>
+                {label}
+            </div>
+            <div style={{ fontFamily: 'Inter', fontSize: 13, color: S.ink, marginTop: 3 }}>
+                {value}
+            </div>
         </div>
     );
 }

@@ -435,7 +435,31 @@ export class FinanceSnapshotService {
         });
         const profileMap = new Map(profiles.map((p) => [p.productId, p]));
 
+        // ── WbFinanceReport: per-SKU детализация комиссии и логистики ──
+        // TASK_ANALYTICS_8: если есть данные из отчёта реализации WB —
+        // используем точные per-SKU значения вместо пропорциональной разбивки.
+        const wbReportRows = await this.prisma.wbFinanceReport.findMany({
+            where: {
+                tenantId,
+                periodFrom: { lte: periodTo },
+                periodTo: { gte: periodFrom },
+            },
+            select: { sku: true, commissionRub: true, deliveryRub: true, storageFee: true },
+        });
+
+        // Группируем по sku: суммируем все строки отчёта за период.
+        const wbPerSku = new Map<string, { commission: number; logistics: number }>();
+        for (const row of wbReportRows) {
+            if (!row.sku) continue;
+            const cur = wbPerSku.get(row.sku) ?? { commission: 0, logistics: 0 };
+            cur.commission += row.commissionRub ?? 0;
+            cur.logistics += (row.deliveryRub ?? 0) + (row.storageFee ?? 0);
+            wbPerSku.set(row.sku, cur);
+        }
+        const hasWbReport = wbPerSku.size > 0;
+
         // Marketplace fees / logistics / returns — агрегаты периода (без per-SKU).
+        // Используется как fallback для SKU без данных из WbFinanceReport.
         const reports = await this.prisma.marketplaceReport.findMany({
             where: {
                 tenantId,
@@ -460,6 +484,16 @@ export class FinanceSnapshotService {
             const profile = profileMap.get(productId);
             const revenueShare = totalRevenue > 0 ? agg.revenue / totalRevenue : 0;
 
+            // TASK_ANALYTICS_8: приоритет — WbFinanceReport per-SKU данные.
+            // Fallback — пропорциональное распределение из MarketplaceReport.
+            const wbSku = wbPerSku.get(agg.sku);
+            const marketplaceFees = wbSku
+                ? round2(wbSku.commission)
+                : hasReports ? round2(totalFees * revenueShare) : null;
+            const logistics = wbSku
+                ? round2(wbSku.logistics)
+                : hasReports ? round2(totalLogistics * revenueShare) : null;
+
             inputs.push({
                 productId,
                 sku: agg.sku,
@@ -470,15 +504,24 @@ export class FinanceSnapshotService {
                 packagingCost: FinanceCalculatorService.decimalToNumber(profile?.packagingCost ?? null),
                 additionalCost: FinanceCalculatorService.decimalToNumber(profile?.additionalCost ?? null),
 
-                // Distribute proportionally. Нет reports → null (MISSING_FEES warning).
-                marketplaceFees: hasReports ? round2(totalFees * revenueShare) : null,
-                logistics: hasReports ? round2(totalLogistics * revenueShare) : null,
+                marketplaceFees,
+                logistics,
 
                 // Optional: ads/tax не агрегируем в MVP loader'е (нет источника).
                 adsCost: null,
                 taxImpact: null,
                 returnsImpact: hasReports ? round2(totalReturns * revenueShare) : null,
             });
+        }
+
+        // Логируем источник данных для диагностики (hasWbReport используется как маркер).
+        if (hasWbReport) {
+            this.logger.log(JSON.stringify({
+                event: 'finance_loader_wb_report_used',
+                tenantId,
+                skuCoveredByWb: wbPerSku.size,
+                totalSkuCount: perSku.size,
+            }));
         }
 
         return inputs;

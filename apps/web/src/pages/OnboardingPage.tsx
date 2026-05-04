@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Building2, ArrowRight, Check } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { onboardingApi, OnboardingState } from '../api/onboarding';
+import { onboardingApi, type OnboardingState } from '../api/onboarding';
 
 const TAX_SYSTEMS = [
     { value: 'USN_6',  label: 'УСН 6% (доходы)' },

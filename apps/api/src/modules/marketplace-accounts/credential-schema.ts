@@ -3,14 +3,15 @@ import { MarketplaceType } from '@prisma/client';
 
 /**
  * Schemas обязательных полей credentials per marketplace.
- * §13 system-analytics:
- *   - WB: apiToken, optional statToken, warehouseId
+ * §13 system-analytics (TASK_8):
+ *   - WB: apiToken (Маркетплейс r/w), analyticsToken (Статистика+Контент ro), warehouseId
+ *         statToken — deprecated alias analyticsToken, принимается в PATCH для обратной совместимости
  *   - Ozon: clientId, apiKey, warehouseId
  */
 const SCHEMAS: Record<'WB' | 'OZON', { required: string[]; optional: string[] }> = {
     WB: {
         required: ['apiToken', 'warehouseId'],
-        optional: ['statToken'],
+        optional: ['analyticsToken', 'statToken'],  // statToken — deprecated
     },
     OZON: {
         required: ['clientId', 'apiKey', 'warehouseId'],
@@ -137,9 +138,10 @@ function _validate(
  * Список secret-полей per marketplace для построения maskedPreview.
  * `warehouseId` — НЕ секрет (его UI спокойно показывает целиком),
  * остальные значения маскируются.
+ * statToken включён для маскировки в legacy-payload-ах до их перезаписи.
  */
 export const SECRET_FIELDS: Record<'WB' | 'OZON', Set<string>> = {
-    WB: new Set(['apiToken', 'statToken']),
+    WB: new Set(['apiToken', 'analyticsToken', 'statToken']),
     OZON: new Set(['apiKey']),
 };
 

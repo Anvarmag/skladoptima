@@ -7,6 +7,7 @@ import { OrdersIngestionService } from '../orders/orders-ingestion.service';
 import { AuditService } from '../audit/audit.service';
 import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 import { StockLocksService } from '../stock-locks/stock-locks.service';
+import { CredentialsCipher } from '../marketplace-accounts/credentials-cipher.service';
 
 @Injectable()
 export class SyncService implements OnModuleInit {
@@ -30,6 +31,9 @@ export class SyncService implements OnModuleInit {
         private readonly auditService: AuditService,
         // TASK_CHANNEL_3: batch-lookup блокировок перед каждым push batch.
         private readonly stockLocks: StockLocksService,
+        // TASK_8: декодирование analyticsToken из encrypted credentials для
+        // раздельной маршрутизации WB API-вызовов по scope.
+        private readonly cipher: CredentialsCipher,
     ) { }
 
     // ─── Lock application helper ───────────────────────────────────────────────
@@ -200,23 +204,89 @@ export class SyncService implements OnModuleInit {
     }
 
     private async getSettings(tenantId: string): Promise<any> {
-        const wb = await this.prisma.marketplaceAccount.findFirst({
-            where: { tenantId, marketplace: 'WB' as any }
-        });
-        const ozon = await this.prisma.marketplaceAccount.findFirst({
-            where: { tenantId, marketplace: 'OZON' as any }
-        });
+        const [wb, ozon] = await Promise.all([
+            this.prisma.marketplaceAccount.findFirst({
+                where: { tenantId, marketplace: 'WB' as any, lifecycleStatus: 'ACTIVE' as any },
+                include: { credential: true },
+            }),
+            this.prisma.marketplaceAccount.findFirst({
+                where: { tenantId, marketplace: 'OZON' as any, lifecycleStatus: 'ACTIVE' as any },
+                include: { credential: true },
+            }),
+        ]);
 
         if (!wb && !ozon) return null;
 
+        // Credentials resolution: encrypted storage (TASK_2) > legacy plaintext fields.
+        // Fallback ensures accounts created via old Settings page continue working.
+        let wbApiKey: string | null = wb?.apiKey ?? null;
+        let wbAnalyticsKey: string | null = null;
+        let wbWarehouseId: string | null = wb?.warehouseId ?? null;
+
+        if (wb?.credential?.encryptedPayload) {
+            try {
+                const dec = this.cipher.decrypt(wb.credential.encryptedPayload) as Record<string, string>;
+                wbApiKey = dec.apiToken ?? wbApiKey;
+                wbAnalyticsKey = dec.analyticsToken ?? dec.statToken ?? null;
+                wbWarehouseId = dec.warehouseId ?? wbWarehouseId;
+            } catch {
+                // Non-fatal: legacy plaintext fallback covers this case
+            }
+        }
+
+        // If wbWarehouseId not set in credentials, fall back to first FBS warehouse from sync.
+        if (!wbWarehouseId && wb) {
+            const firstWbWarehouse = await this.prisma.warehouse.findFirst({
+                where: {
+                    tenantId,
+                    marketplaceAccountId: wb.id,
+                    sourceMarketplace: 'WB' as any,
+                    warehouseType: 'FBS' as any,
+                    status: 'ACTIVE' as any,
+                },
+                select: { externalWarehouseId: true },
+                orderBy: { firstSeenAt: 'asc' },
+            });
+            if (firstWbWarehouse) wbWarehouseId = firstWbWarehouse.externalWarehouseId;
+        }
+
+        let ozonClientId: string | null = ozon?.clientId ?? null;
+        let ozonApiKey: string | null = ozon?.apiKey ?? null;
+        let ozonWarehouseId: string | null = ozon?.warehouseId ?? null;
+
+        if (ozon?.credential?.encryptedPayload) {
+            try {
+                const dec = this.cipher.decrypt(ozon.credential.encryptedPayload) as Record<string, string>;
+                ozonClientId = dec.clientId ?? ozonClientId;
+                ozonApiKey = dec.apiKey ?? ozonApiKey;
+                ozonWarehouseId = dec.warehouseId ?? ozonWarehouseId;
+            } catch {
+                // Non-fatal: legacy plaintext fallback covers this case
+            }
+        }
+
         return {
-            wbApiKey: wb?.apiKey,
-            wbStatApiKey: wb?.statApiKey,
-            wbWarehouseId: wb?.warehouseId,
-            ozonClientId: ozon?.clientId,
-            ozonApiKey: ozon?.apiKey,
-            ozonWarehouseId: ozon?.warehouseId,
+            wbApiKey,
+            wbAnalyticsKey,
+            wbWarehouseId,
+            ozonClientId,
+            ozonApiKey,
+            ozonWarehouseId,
         };
+    }
+
+    /** Возвращает WB Authorization-заголовок в зависимости от scope:
+     *  - operations → apiToken (marketplace-api.wildberries.ru)
+     *  - analytics  → analyticsToken ?? apiToken (statistics-api, content-api)
+     */
+    private getWbHeaders(
+        settings: { wbApiKey?: string; wbAnalyticsKey?: string | null },
+        scope: 'operations' | 'analytics',
+    ): { Authorization: string } {
+        if (scope === 'operations') {
+            return { Authorization: settings.wbApiKey! };
+        }
+        return { Authorization: settings.wbAnalyticsKey ?? settings.wbApiKey! };
     }
 
     private async updateMarketplaceStatus(tenantId: string, marketplace: 'WB' | 'OZON', error?: string | null) {
@@ -411,6 +481,7 @@ export class SyncService implements OnModuleInit {
             );
 
             const wbStocks: Array<{ sku: string; amount: number }> = res.data?.stocks ?? [];
+            this.logger.log(`[WB pullFromWb] warehouseId=${settings.wbWarehouseId} skus_sent=${skus.length} stocks_returned=${wbStocks.length} sample=${JSON.stringify(wbStocks.slice(0, 3))}`);
             if (wbStocks.length === 0) return { success: true, updated: 0, total: 0, message: 'Нет товаров на WB-складе' };
 
             // Get all our products that have wbBarcode set
@@ -485,7 +556,7 @@ export class SyncService implements OnModuleInit {
             const res = await axios.get(
                 `https://statistics-api.wildberries.ru/api/v1/supplier/stocks?dateFrom=${dateFrom}`,
                 {
-                    headers: { Authorization: settings.wbApiKey },
+                    headers: this.getWbHeaders(settings, 'analytics'),
                     timeout: 20_000
                 }
             );
@@ -1127,11 +1198,11 @@ export class SyncService implements OnModuleInit {
                 this.logger.log(`[Store ${tenantId}] [WB] Requesting cards/list (v2) with cursor...`);
                 const res = await axios.post('https://content-api.wildberries.ru/content/v2/get/cards/list', {
                     settings: {
-                        cursor: { limit: 100, nmID: 0 },
-                        filter: { withOnlyDeleted: false }
+                        cursor: { limit: 100 },
+                        filter: { withPhoto: -1 }
                     }
                 }, {
-                    headers: { Authorization: settings.wbApiKey },
+                    headers: this.getWbHeaders(settings, 'analytics'),
                     timeout: 25_000
                 });
 
@@ -1432,24 +1503,42 @@ export class SyncService implements OnModuleInit {
         }
     }
 
-    async importProductsFromWb(tenantId: string) {
+    async importProductsFromWb(tenantId: string): Promise<{ success: boolean; created: number; updated: number; error?: string }> {
         const settings = await this.getSettings(tenantId);
-        if (!settings?.wbApiKey) return;
+        if (!settings?.wbApiKey) {
+            return { success: false, created: 0, updated: 0, error: 'WB API ключ не задан. Проверьте подключение в разделе «Подключения».' };
+        }
 
         this.logger.log(`[Store ${tenantId}] Importing products from WB...`);
+        let created = 0;
+        let updated = 0;
         try {
             const res = await axios.post('https://content-api.wildberries.ru/content/v2/get/cards/list', {
                 settings: { cursor: { limit: 100 }, filter: { withPhoto: -1 } }
             }, {
-                headers: { Authorization: settings.wbApiKey },
+                headers: this.getWbHeaders(settings, 'analytics'),
                 timeout: 30_000
             });
 
             const cards = res.data?.cards || [];
+            const extractPhoto = (card: any): string | null => {
+                if (Array.isArray(card.photos) && card.photos.length > 0) {
+                    const first = card.photos[0];
+                    const url = first.big || first;
+                    if (url && typeof url === 'string') return url.startsWith('//') ? `https:${url}` : url;
+                }
+                if (Array.isArray(card.mediaUrls) && card.mediaUrls.length > 0) {
+                    const url = card.mediaUrls[0];
+                    if (url && typeof url === 'string') return url.startsWith('//') ? `https:${url}` : url;
+                }
+                return null;
+            };
+
             for (const card of cards) {
                 const sku = card.vendorCode?.toString();
                 if (!sku) continue;
 
+                const photo = extractPhoto(card);
                 const existing = await this.prisma.product.findFirst({
                     where: { sku, tenantId }
                 });
@@ -1462,6 +1551,7 @@ export class SyncService implements OnModuleInit {
                             tenantId,
                             total: 0,
                             reserved: 0,
+                            photo: photo ?? undefined,
                             wbBarcode: card.sizes?.[0]?.skus?.[0]?.toString() || null,
                             category: card.subjectName || null,
                             width: card.dimensions?.width || null,
@@ -1469,25 +1559,142 @@ export class SyncService implements OnModuleInit {
                             length: card.dimensions?.length || null,
                         }
                     });
+                    created++;
                 } else {
-                    // Update existing with metadata if missing
                     await this.prisma.product.update({
                         where: { id: existing.id },
                         data: {
                             deletedAt: null,
+                            photo: existing.photo || photo || undefined,
                             category: existing.category || card.subjectName || null,
                             width: existing.width || card.dimensions?.width || null,
                             height: existing.height || card.dimensions?.height || null,
                             length: existing.length || card.dimensions?.length || null,
                         }
                     });
+                    updated++;
                 }
             }
+            this.logger.log(`[Store ${tenantId}] WB Product Import: created=${created}, updated=${updated}`);
             await this.updateMarketplaceStatus(tenantId, 'WB', null);
+
+            // Best-effort: pull FBS stock levels right after import.
+            // Non-fatal if wbWarehouseId not yet configured or warehouse sync not done.
+            this.pullFromWb(tenantId).catch(() => {});
+
+            return { success: true, created, updated };
         } catch (e: any) {
             const err = e.response?.data ? JSON.stringify(e.response.data) : e.message;
             this.logger.error(`[Store ${tenantId}] WB Product Import Failed: ${err}`);
             await this.updateMarketplaceStatus(tenantId, 'WB', err);
+            return { success: false, created, updated, error: err };
+        }
+    }
+
+    // ─── Pull WB Finance Report (TASK_ANALYTICS_8) ───────────────────────────
+    // Вызывает /api/v5/supplier/reportDetailByPeriod через analyticsToken и
+    // сохраняет детализацию в WbFinanceReport для per-SKU юнит-экономики.
+    // Без analyticsToken (только apiToken) — ранний выход с понятной ошибкой.
+    async pullWbFinances(tenantId: string, days = 30) {
+        const settings = await this.getSettings(tenantId);
+        if (!settings?.wbApiKey) {
+            return { success: false, error: 'WB API ключ не задан' };
+        }
+
+        // analyticsToken обязателен для statistics-api scope.
+        if (!settings.wbAnalyticsKey) {
+            return {
+                success: false,
+                error: 'analyticsToken не задан. Добавьте токен «Статистика» в настройках подключения WB.',
+                code: 'ANALYTICS_TOKEN_MISSING',
+            };
+        }
+
+        const account = await this.prisma.marketplaceAccount.findFirst({
+            where: { tenantId, marketplace: 'WB' as any, lifecycleStatus: 'ACTIVE' },
+            select: { id: true },
+        });
+        if (!account) {
+            return { success: false, error: 'Активный WB-аккаунт не найден' };
+        }
+
+        const now = new Date();
+        const dateTo = now.toISOString().slice(0, 10);
+        const dateFrom = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .slice(0, 10);
+
+        const periodFrom = new Date(dateFrom);
+        const periodTo = new Date(dateTo);
+
+        let rrdid = 0;
+        let totalUpserted = 0;
+
+        this.logger.log(`[Store ${tenantId}] [WB Finances] Pulling ${dateFrom}..${dateTo}`);
+
+        try {
+            while (true) {
+                const res = await axios.get(
+                    'https://statistics-api.wildberries.ru/api/v5/supplier/reportDetailByPeriod',
+                    {
+                        headers: this.getWbHeaders(settings, 'analytics'),
+                        params: { dateFrom, dateTo, limit: 1000, rrdid },
+                        timeout: 30_000,
+                    },
+                );
+
+                const rows: any[] = res.data ?? [];
+                if (!Array.isArray(rows) || rows.length === 0) break;
+
+                for (const row of rows) {
+                    const rrdId: number = row.rrd_id ?? 0;
+                    if (!rrdId) continue;
+
+                    await this.prisma.wbFinanceReport.upsert({
+                        where: { tenantId_realizationId: { tenantId, realizationId: BigInt(rrdId) } },
+                        create: {
+                            tenantId,
+                            accountId: account.id,
+                            realizationId: BigInt(rrdId),
+                            orderId: row.gi_id != null ? String(row.gi_id) : null,
+                            sku: row.sa_name ?? null,
+                            commissionRub: row.ppvz_sales_commission ?? null,
+                            deliveryRub: row.delivery_rub ?? null,
+                            storageFee: row.storage_fee ?? null,
+                            penalty: row.deduction ?? null,
+                            periodFrom,
+                            periodTo,
+                            rawPayload: row,
+                        },
+                        update: {
+                            commissionRub: row.ppvz_sales_commission ?? null,
+                            deliveryRub: row.delivery_rub ?? null,
+                            storageFee: row.storage_fee ?? null,
+                            penalty: row.deduction ?? null,
+                            rawPayload: row,
+                        },
+                    });
+                    totalUpserted++;
+                }
+
+                // Pagination: next page starts from last rrd_id in batch.
+                rrdid = rows[rows.length - 1]?.rrd_id ?? 0;
+                if (rows.length < 1000) break;
+            }
+
+            this.logger.log(`[Store ${tenantId}] [WB Finances] Done. Upserted: ${totalUpserted}`);
+            return { success: true, upserted: totalUpserted, dateFrom, dateTo };
+        } catch (err: any) {
+            const status = err.response?.status;
+            if (status === 401 || status === 403) {
+                return {
+                    success: false,
+                    error: 'analyticsToken недействителен или не имеет прав на API Статистики WB',
+                    code: 'ANALYTICS_TOKEN_INVALID',
+                };
+            }
+            this.logger.error(`[Store ${tenantId}] [WB Finances] Error: ${err.message}`);
+            return { success: false, error: err.message };
         }
     }
 

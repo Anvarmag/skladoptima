@@ -75,4 +75,17 @@ export class SyncController {
     fullSync(@Req() req: any) {
         return this.syncService.fullSync(req.activeTenantId);
     }
+
+    @Post('pull/wb-finances')
+    @UseGuards(TenantWriteGuard)
+    pullWbFinances(@Req() req: any, @Query('days') days?: string) {
+        const daysNum = days ? parseInt(days, 10) : 30;
+        return this.syncService.pullWbFinances(req.activeTenantId, daysNum);
+    }
+
+    @Post('import/wb')
+    @UseGuards(TenantWriteGuard)
+    importFromWb(@Req() req: any) {
+        return this.syncService.importProductsFromWb(req.activeTenantId);
+    }
 }
