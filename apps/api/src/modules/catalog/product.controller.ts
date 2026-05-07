@@ -63,6 +63,9 @@ export class ProductController {
         @Query('limit') limit?: string,
         @Query('search') search?: string,
         @Query('status') status?: string,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortDir') sortDir?: string,
+        @Query('hideGroupSecondary') hideGroupSecondary?: string,
     ) {
         return this.productService.findAll(
             req.activeTenantId,
@@ -70,6 +73,9 @@ export class ProductController {
             limit ? parseInt(limit, 10) : 20,
             search,
             status,
+            sortBy,
+            sortDir as 'asc' | 'desc' | undefined,
+            hideGroupSecondary === 'true',
         );
     }
 

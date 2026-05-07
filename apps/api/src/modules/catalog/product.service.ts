@@ -10,7 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { ProductStatus, ProductSourceOfTruth } from '@prisma/client';
+import { ProductStatus, ProductSourceOfTruth, ProductGroupRole } from '@prisma/client';
 import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
 @Injectable()
@@ -139,7 +139,7 @@ export class ProductService {
     // LIST
     // ----------------------------------------------------------------
 
-    async findAll(tenantId: string, page = 1, limit = 20, search?: string, status?: string) {
+    async findAll(tenantId: string, page = 1, limit = 20, search?: string, status?: string, sortBy?: string, sortDir: 'asc' | 'desc' = 'desc', hideGroupSecondary = false) {
         const skip = (page - 1) * limit;
 
         const where: any = { tenantId };
@@ -152,20 +152,45 @@ export class ProductService {
             where.deletedAt = null;
         }
 
-        if (search) {
+        // В режиме Остатков скрываем SECONDARY товары из групп — они агрегируются в PRIMARY.
+        // Используем OR вместо NOT: в PG "NULL != 'SECONDARY'" = NULL (не TRUE),
+        // поэтому товары без группы (groupRole IS NULL) пропадали бы через NOT.
+        if (hideGroupSecondary) {
+            const roleFilter = { OR: [{ groupRole: null }, { groupRole: ProductGroupRole.PRIMARY }] };
+            if (search) {
+                const searchFilter = { OR: [
+                    { name: { contains: search, mode: 'insensitive' as const } },
+                    { sku:  { contains: search, mode: 'insensitive' as const } },
+                    { brand: { contains: search, mode: 'insensitive' as const } },
+                ]};
+                where.AND = [roleFilter, searchFilter];
+            } else {
+                where.OR = roleFilter.OR;
+            }
+        } else if (search) {
             where.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
-                { sku: { contains: search, mode: 'insensitive' } },
+                { sku:  { contains: search, mode: 'insensitive' } },
                 { brand: { contains: search, mode: 'insensitive' } },
             ];
         }
+
+        const allowedSortFields: Record<string, string> = { name: 'name', sku: 'sku', total: 'total', available: 'total', createdAt: 'createdAt' };
+        const orderByField = (sortBy && allowedSortFields[sortBy]) ? allowedSortFields[sortBy] : 'createdAt';
+        const orderBy = { [orderByField]: sortDir };
 
         const [data, totalCount] = await Promise.all([
             this.prisma.product.findMany({
                 where,
                 skip,
                 take: limit,
-                orderBy: { createdAt: 'desc' },
+                orderBy,
+                include: {
+                    group: { select: { id: true, name: true } },
+                    channelMappings: {
+                        select: { id: true, marketplace: true, externalProductId: true, externalSku: true, isAutoMatched: true },
+                    },
+                },
             }),
             this.prisma.product.count({ where }),
         ]);

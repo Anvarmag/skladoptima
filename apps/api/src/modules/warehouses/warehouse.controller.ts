@@ -53,8 +53,18 @@ export class WarehouseController {
 
     // GET /warehouses/:id/stocks — остатки по складу
     @Get(':id/stocks')
-    getStocks(@Param('id') id: string, @Req() req: any) {
-        return this.warehouseService.getStocks(req.activeTenantId, id);
+    getStocks(
+        @Param('id') id: string,
+        @Req() req: any,
+        @Query('page') page?: string,
+        @Query('limit') limit?: string,
+    ) {
+        return this.warehouseService.getStocks(
+            req.activeTenantId,
+            id,
+            page ? parseInt(page, 10) : 1,
+            limit ? parseInt(limit, 10) : 50,
+        );
     }
 
     // POST /warehouses/sync — ручной refresh всех аккаунтов tenant'а.

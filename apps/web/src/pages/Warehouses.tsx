@@ -56,6 +56,7 @@ interface WarehouseStocks {
         isExternal: boolean;
     }>;
     count: number;
+    meta?: { total: number; page: number; limit: number; lastPage: number };
 }
 
 // ─────────────────────────────── helpers ─────────────────────────────
@@ -136,6 +137,7 @@ export default function Warehouses() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [stocks, setStocks] = useState<WarehouseStocks | null>(null);
     const [stocksLoading, setStocksLoading] = useState(false);
+    const [stocksPage, setStocksPage] = useState(1);
 
     const [editingMeta, setEditingMeta] = useState(false);
     const [aliasInput, setAliasInput] = useState('');
@@ -166,11 +168,12 @@ export default function Warehouses() {
         }
     }, [search, filterAccount, filterSource, filterType, filterStatus]);
 
-    const loadStocks = useCallback(async (id: string) => {
+    const loadStocks = useCallback(async (id: string, p = 1) => {
         setStocksLoading(true);
         try {
-            const res = await axios.get(`/warehouses/${id}/stocks`);
+            const res = await axios.get(`/warehouses/${id}/stocks`, { params: { page: p, limit: 50 } });
             setStocks(res.data);
+            setStocksPage(p);
         } catch {
             setStocks(null);
         } finally {
@@ -183,8 +186,12 @@ export default function Warehouses() {
     const selected = useMemo(() => items.find(i => i.id === selectedId) ?? null, [items, selectedId]);
 
     useEffect(() => {
-        if (selectedId) loadStocks(selectedId);
-        else setStocks(null);
+        if (selectedId) {
+            setStocksPage(1);
+            loadStocks(selectedId, 1);
+        } else {
+            setStocks(null);
+        }
     }, [selectedId, loadStocks]);
 
     useEffect(() => {
@@ -570,35 +577,46 @@ export default function Warehouses() {
                                 {!stocksLoading && stocks && (
                                     <>
                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 12 }}>
-                                            <Stat label="on_hand" value={stocks.totals.onHand} />
-                                            <Stat label="reserved" value={stocks.totals.reserved} tone={S.blue} />
-                                            <Stat label="available" value={stocks.totals.available} tone={S.green} />
+                                            <Stat label="на руках" value={stocks.totals.onHand} />
+                                            <Stat label="резерв" value={stocks.totals.reserved} tone={S.blue} />
+                                            <Stat label="доступно" value={stocks.totals.available} tone={S.green} />
                                         </div>
                                         {stocks.items.length === 0 ? (
                                             <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>
                                                 Остатки на этом складе не зафиксированы.
                                             </div>
                                         ) : (
-                                            <div style={{ maxHeight: 240, overflowY: 'auto', border: `1px solid ${S.border}`, borderRadius: 8 }}>
-                                                {/* Stock table header */}
-                                                <div style={{ display: 'flex', background: S.bg, borderBottom: `1px solid ${S.border}`, padding: '6px 0' }}>
-                                                    <TH flex={3}>SKU</TH>
-                                                    <TH flex={1} align="right">on_hand</TH>
-                                                    <TH flex={1} align="right">reserved</TH>
-                                                    <TH flex={1} align="right">avail.</TH>
-                                                </div>
-                                                {stocks.items.map(it => (
-                                                    <div key={it.productId} style={{ display: 'flex', alignItems: 'center', minHeight: 40, borderBottom: `1px solid ${S.border}`, padding: '0 4px' }}>
-                                                        <div style={{ flex: 3, padding: '0 8px', minWidth: 0 }}>
-                                                            <div style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.sku}</div>
-                                                            <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
-                                                        </div>
-                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.ink }}>{it.onHand}</div>
-                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.blue }}>{it.reserved}</div>
-                                                        <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.green }}>{it.available}</div>
+                                            <>
+                                                <div style={{ border: `1px solid ${S.border}`, borderRadius: 8, overflow: 'hidden' }}>
+                                                    {/* Stock table header */}
+                                                    <div style={{ display: 'flex', background: S.bg, borderBottom: `1px solid ${S.border}`, padding: '6px 0' }}>
+                                                        <TH flex={3}>SKU / Название</TH>
+                                                        <TH flex={1} align="right">На руках</TH>
+                                                        <TH flex={1} align="right">Резерв</TH>
+                                                        <TH flex={1} align="right">Доступно</TH>
                                                     </div>
-                                                ))}
-                                            </div>
+                                                    {stocks.items.map(it => (
+                                                        <div key={it.productId} style={{ display: 'flex', alignItems: 'center', minHeight: 40, borderBottom: `1px solid ${S.border}`, padding: '0 4px' }}>
+                                                            <div style={{ flex: 3, padding: '0 8px', minWidth: 0 }}>
+                                                                <div style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.sku}</div>
+                                                                <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.name}</div>
+                                                            </div>
+                                                            <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.ink }}>{it.onHand}</div>
+                                                            <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.blue }}>{it.reserved}</div>
+                                                            <div style={{ flex: 1, padding: '0 8px', textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.green }}>{it.available}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                {stocks.meta && stocks.meta.lastPage > 1 && (
+                                                    <Pagination
+                                                        page={stocksPage}
+                                                        totalPages={stocks.meta.lastPage}
+                                                        onPage={p => loadStocks(selectedId!, p)}
+                                                        total={stocks.meta.total}
+                                                        shown={stocks.items.length}
+                                                    />
+                                                )}
+                                            </>
                                         )}
                                     </>
                                 )}

@@ -486,8 +486,17 @@ export class SyncService implements OnModuleInit {
 
             // Get all our products that have wbBarcode set
             const products = await this.prisma.product.findMany({
-                where: { tenantId, deletedAt: null, wbBarcode: { not: null } }
+                where: { tenantId, deletedAt: null, wbBarcode: { not: null } },
+                select: { id: true, sku: true, wbBarcode: true, wbFbs: true, total: true, groupId: true, groupRole: true },
             });
+
+            // Build map: groupId → PRIMARY total (для SECONDARY товаров берём остаток PRIMARY)
+            const primaryTotalByGroup = new Map<string, number>();
+            for (const p of products) {
+                if (p.groupId && p.groupRole === 'PRIMARY') {
+                    primaryTotalByGroup.set(p.groupId, p.total);
+                }
+            }
 
             // Build map: wbBarcode → product
             const barcodeMap = new Map<string, any>();
@@ -515,8 +524,12 @@ export class SyncService implements OnModuleInit {
                     data: { wbFbs: stock.amount }
                 });
 
-                // Если наше расчетное значение "Total" расходится с WB
-                const currentAvailable = Math.max(0, product.total);
+                // Если наше расчетное значение "Total" расходится с WB.
+                // Для SECONDARY товаров группы используем total PRIMARY — он мастер.
+                const effectiveTotal = (product.groupId && product.groupRole === 'SECONDARY')
+                    ? (primaryTotalByGroup.get(product.groupId) ?? product.total)
+                    : product.total;
+                const currentAvailable = Math.max(0, effectiveTotal);
                 if (stock.amount !== currentAvailable) {
                     this.logger.log(`[Store ${tenantId}] [Reconcile WB] Mismatch for ${product.sku}: WB=${stock.amount}, App=${currentAvailable}. Adding to push queue.`);
                     wbReconcileQueue.push({ id: product.id, sku: product.sku, wbBarcode: product.wbBarcode, amount: currentAvailable });
@@ -613,10 +626,19 @@ export class SyncService implements OnModuleInit {
         if (!settings?.ozonApiKey || !settings?.ozonClientId || !settings?.ozonWarehouseId) return { success: false, error: 'Ozon ключи или склад не настроены' };
 
         const products = await this.prisma.product.findMany({
-            where: { tenantId, deletedAt: null }
+            where: { tenantId, deletedAt: null },
+            select: { id: true, sku: true, ozonFbs: true, total: true, groupId: true, groupRole: true },
         });
 
         if (products.length === 0) return { success: true, updated: 0, total: 0 };
+
+        // Для SECONDARY товаров группы берём total PRIMARY
+        const ozonPrimaryTotalByGroup = new Map<string, number>();
+        for (const p of products) {
+            if (p.groupId && p.groupRole === 'PRIMARY') {
+                ozonPrimaryTotalByGroup.set(p.groupId, p.total);
+            }
+        }
 
         // TASK_CHANNEL_3: один SELECT на весь sync run — не поштучно.
         const ozonLockMap = await this.stockLocks.findByMarketplace(tenantId, MarketplaceType.OZON);
@@ -633,7 +655,10 @@ export class SyncService implements OnModuleInit {
                 const cd = this.lastPush.get(product.id)?.ozon || 0;
                 if (now - cd < this.COOLDOWN_MS) continue;
 
-                const newAvailable = Math.max(0, product.total);
+                const effectiveTotal = (product.groupId && product.groupRole === 'SECONDARY')
+                    ? (ozonPrimaryTotalByGroup.get(product.groupId) ?? product.total)
+                    : product.total;
+                const newAvailable = Math.max(0, effectiveTotal);
                 const lastKnownOzon = product.ozonFbs || 0;
 
                 if (newAvailable !== lastKnownOzon) {

@@ -15,6 +15,10 @@ export class AnalyticsPeriodDto {
 
     @IsDateString()
     to!: string;
+
+    @IsOptional()
+    @IsEnum(MarketplaceType)
+    marketplace?: MarketplaceType;
 }
 
 export class TopProductsQueryDto extends AnalyticsPeriodDto {
@@ -24,10 +28,6 @@ export class TopProductsQueryDto extends AnalyticsPeriodDto {
     @Min(1)
     @Max(100)
     limit?: number;
-
-    @IsOptional()
-    @IsEnum(MarketplaceType)
-    marketplace?: MarketplaceType;
 }
 
 export class RebuildDailyDto extends AnalyticsPeriodDto {}

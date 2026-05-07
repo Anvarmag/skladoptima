@@ -733,6 +733,7 @@ model User {
   createdTasks                   Task[]               @relation("TaskCreatedBy")
   taskComments                   TaskComment[]        @relation("TaskCommentAuthor")
   taskEvents                     TaskEvent[]          @relation("TaskEventActor")
+  productNotes                   ProductNote[]        @relation("ProductNoteAuthor")
 }
 
 // Серверные сессии с refresh token rotation и reuse detection
@@ -885,6 +886,8 @@ model Tenant {
   tasks                    Task[]
   taskEvents               TaskEvent[]
   wbFinanceReports         WbFinanceReport[]
+  productNotes             ProductNote[]
+  productGroups            ProductGroup[]
 }
 
 // Настройки компании, вынесены из Tenant для чистоты модели
@@ -1288,6 +1291,10 @@ model Product {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  groupId   String?
+  groupRole ProductGroupRole?
+  group     ProductGroup?     @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
   channelMappings      ProductChannelMapping[]
   stockBalances        StockBalance[]
   stockMovements       StockMovement[]
@@ -1298,9 +1305,56 @@ model Product {
   stockChannelLocks    StockChannelLock[]
   relatedTasks         Task[]
 
+  notes                ProductNote[]
+
   @@unique([tenantId, sku])
   @@unique([tenantId, wbBarcode])
   @@index([tenantId, status])
+}
+
+enum ProductGroupRole {
+  PRIMARY
+  SECONDARY
+}
+
+model ProductGroup {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@index([tenantId])
+}
+
+enum ProductNoteCategory {
+  PRICE
+  CARD
+  SUPPLY
+  OTHER
+}
+
+model ProductNote {
+  id        String              @id @default(uuid())
+  tenantId  String
+  productId String
+  category  ProductNoteCategory @default(OTHER)
+  title     String              @db.VarChar(255)
+  body      String?
+  date      DateTime            @default(now())
+  createdBy String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  tenant    Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  author    User?   @relation("ProductNoteAuthor", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, productId])
+  @@index([tenantId, category])
 }
 
 model MarketplaceOrder {

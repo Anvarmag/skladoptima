@@ -88,4 +88,10 @@ export class SyncController {
     importFromWb(@Req() req: any) {
         return this.syncService.importProductsFromWb(req.activeTenantId);
     }
+
+    @Post('import/ozon')
+    @UseGuards(TenantWriteGuard)
+    importFromOzon(@Req() req: any) {
+        return this.syncService.importProductsFromOzon(req.activeTenantId);
+    }
 }

@@ -3,8 +3,9 @@ import axios from 'axios';
 import {
     Plus, Edit2, Archive, ArrowDownUp, Search,
     RefreshCw, ImageDown, RotateCcw, AlertTriangle,
-    CheckCircle, XCircle, AlertCircle, Link2, Unlink, Download,
-    Package, Lock, Unlock, Trash2,
+    CheckCircle, XCircle, AlertCircle, Download,
+    Package, Lock, Unlock, Trash2, MessageSquare,
+    ArrowUp, ArrowDown, ChevronsUpDown, Link2, Crown, Unlink,
 } from 'lucide-react';
 import {
     fetchLocksForProduct, createLock, removeLock,
@@ -13,9 +14,21 @@ import {
 import { useAuth } from '../context/AuthContext';
 import AccessStateBanner from '../components/AccessStateBanner';
 import ProductMediaWidget from '../components/ProductMediaWidget';
-import { S, PageHeader, Card, Btn, Badge, MPBadge, Input, Modal, TH, FieldLabel, SkuTag, Pagination } from '../components/ui';
+import ProductDetailPanel from '../components/ProductDetailPanel';
+import { S, PageHeader, Card, Btn, Badge, MPBadge, Input, Modal, TH, FieldLabel, SkuTag } from '../components/ui';
 
 // ─────────────────────────────── types ───────────────────────────────
+
+interface GroupMember {
+    id: string;
+    sku: string;
+    name: string;
+    photo: string | null;
+    mainImageFileId: string | null;
+    total: number;
+    groupRole: 'PRIMARY' | 'SECONDARY' | null;
+    channelMappings: Array<{ id: string; marketplace: string; externalProductId: string }>;
+}
 
 interface Product {
     id: string;
@@ -36,6 +49,8 @@ interface Product {
     wbFbs: number;
     wbFbo: number;
     wbBarcode?: string;
+    groupId?: string | null;
+    groupRole?: 'PRIMARY' | 'SECONDARY' | null;
 }
 
 interface ImportPreviewItem {
@@ -58,15 +73,6 @@ interface ImportCommitResult {
     createdCount: number;
     updatedCount: number;
     errorCount: number;
-}
-
-interface ChannelMapping {
-    id: string;
-    marketplace: 'WB' | 'OZON';
-    externalProductId: string;
-    externalSku: string | null;
-    isAutoMatched: boolean;
-    createdAt: string;
 }
 
 // ─────────────────────────────── helpers ─────────────────────────────
@@ -110,8 +116,13 @@ export default function Products() {
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [totalPages, setTotalPages] = useState(1);
+    const [totalCount, setTotalCount] = useState(0);
     const [loading, setLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState<'active' | 'deleted'>('active');
+    const [pageSize, setPageSize] = useState(20);
+    const [pageSizeOpen, setPageSizeOpen] = useState(false);
+    const [sortBy, setSortBy] = useState<string>('createdAt');
+    const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
     // Inline edit state
     const [editingStock, setEditingStock] = useState<{ id: string; field: keyof Product; value: string } | null>(null);
@@ -126,6 +137,15 @@ export default function Products() {
         name: '', sku: '', wbBarcode: '', initialTotal: '0', file: null as File | null,
     });
     const [formError, setFormError] = useState<string | null>(null);
+
+    // Group members in edit modal
+    const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+    const [groupLoading, setGroupLoading] = useState(false);
+    const [groupLinkOpen, setGroupLinkOpen] = useState(false);
+    const [groupLinkQuery, setGroupLinkQuery] = useState('');
+    const [groupLinkResults, setGroupLinkResults] = useState<GroupMember[]>([]);
+    const [groupLinkSearching, setGroupLinkSearching] = useState(false);
+    const [groupLinkError, setGroupLinkError] = useState<string | null>(null);
 
     // SKU reuse confirmation
     const [skuReuseId, setSkuReuseId] = useState<string | null>(null);
@@ -144,21 +164,19 @@ export default function Products() {
     // Unmatched mappings badge
     const [unmatchedCount, setUnmatchedCount] = useState(0);
 
-    // Channel mappings (for edit modal)
-    const [mappings, setMappings] = useState<ChannelMapping[]>([]);
-    const [mappingsLoading, setMappingsLoading] = useState(false);
-    const [addMappingOpen, setAddMappingOpen] = useState(false);
-    const [addMpMarketplace, setAddMpMarketplace] = useState<'WB' | 'OZON'>('WB');
-    const [addMpExtId, setAddMpExtId] = useState('');
-    const [addMpExtSku, setAddMpExtSku] = useState('');
-    const [addMpError, setAddMpError] = useState<string | null>(null);
-    const [addMpSubmitting, setAddMpSubmitting] = useState(false);
-
     // Photos
     const [fetchingPhotos, setFetchingPhotos] = useState(false);
 
-    // Import from WB
+    // Import from WB / Ozon
     const [importingFromWb, setImportingFromWb] = useState(false);
+    const [importingFromOzon, setImportingFromOzon] = useState(false);
+
+    // Detail panel
+    const [detailProduct, setDetailProduct] = useState<Product | null>(null);
+    const [detailInitialTab, setDetailInitialTab] = useState<'stocks' | 'orders' | 'diary'>('stocks');
+
+    // Notes count per product (for badge in actions)
+    const [notesCountMap, setNotesCountMap] = useState<Record<string, number>>({});
 
     // Stock locks
     const [lockModalProduct, setLockModalProduct] = useState<Product | null>(null);
@@ -178,18 +196,34 @@ export default function Products() {
         try {
             const params = new URLSearchParams({
                 page: String(page),
+                limit: String(pageSize),
                 search: search || '',
+                sortBy,
+                sortDir,
+                hideGroupSecondary: 'true',
                 ...(statusFilter === 'deleted' ? { status: 'deleted' } : {}),
             });
             const { data } = await axios.get(`/products?${params}`);
             setProducts(data.data);
             setTotalPages(data.meta.lastPage || 1);
+            setTotalCount(data.meta.total ?? 0);
+            const ids: string[] = (data.data as Product[]).map((p: Product) => p.id);
+            if (ids.length > 0) {
+                try {
+                    const nr = await axios.get<Record<string, number>>('/product-notes-count', { params: { ids: ids.join(',') } });
+                    setNotesCountMap(nr.data);
+                } catch {
+                    setNotesCountMap({});
+                }
+            } else {
+                setNotesCountMap({});
+            }
         } catch (err) {
             console.error(err);
         } finally {
             setLoading(false);
         }
-    }, [page, search, statusFilter]);
+    }, [page, pageSize, search, statusFilter, sortBy, sortDir]);
 
     useEffect(() => {
         const timer = setTimeout(() => fetchProducts(), 300);
@@ -204,7 +238,7 @@ export default function Products() {
     }, []);
 
     // Reset page when filters change
-    useEffect(() => { setPage(1); }, [search, statusFilter]);
+    useEffect(() => { setPage(1); }, [search, statusFilter, pageSize, sortBy, sortDir]);
 
     // ─────────── create / edit ───────────
 
@@ -396,6 +430,26 @@ export default function Products() {
         }
     };
 
+    const handleImportFromOzon = async () => {
+        setImportingFromOzon(true);
+        try {
+            const res = await axios.post('/sync/import/ozon');
+            const created = res.data?.created ?? 0;
+            const updated = res.data?.updated ?? 0;
+            alert(
+                created > 0 || updated > 0
+                    ? `Загружено из Ozon: новых ${created}, обновлено ${updated}`
+                    : 'Новых товаров из Ozon не найдено.',
+            );
+            fetchProducts();
+        } catch (err: any) {
+            const msg = err?.response?.data?.message ?? err?.response?.data?.error ?? err?.message ?? 'неизвестная ошибка';
+            alert(`Ошибка при загрузке товаров из Ozon: ${msg}`);
+        } finally {
+            setImportingFromOzon(false);
+        }
+    };
+
     // ─────────── fetch photos ───────────
 
     const handleFetchPhotos = async () => {
@@ -473,7 +527,12 @@ export default function Products() {
             setLockFormFixed('');
             setLockFormNote('');
         } catch (err: any) {
-            setLockFormError(err?.response?.data?.message ?? 'Не удалось создать блокировку');
+            const msg = err?.response?.data?.message ?? err?.response?.data?.code ?? '';
+            if (msg === 'MARKETPLACE_ACCOUNT_NOT_ACTIVE') {
+                setLockFormError('Нет активного подключения к этому маркетплейсу. Перейдите в раздел «Подключения» и добавьте аккаунт.');
+            } else {
+                setLockFormError(msg || 'Не удалось создать блокировку');
+            }
         } finally {
             setLockFormSubmitting(false);
         }
@@ -556,61 +615,6 @@ export default function Products() {
         }
     };
 
-    // ─────────── mapping handlers ───────────
-
-    const loadMappings = useCallback(async (productId: string) => {
-        setMappingsLoading(true);
-        try {
-            const res = await axios.get(`/catalog/mappings/product/${productId}`);
-            setMappings(res.data.data ?? []);
-        } catch {
-            setMappings([]);
-        } finally {
-            setMappingsLoading(false);
-        }
-    }, []);
-
-    const handleDetachMapping = async (mappingId: string) => {
-        if (!window.confirm('Отвязать этот артикул?')) return;
-        setMappings(prev => prev.filter(m => m.id !== mappingId));
-        try {
-            await axios.delete(`/catalog/mappings/${mappingId}`);
-        } catch {
-            if (selectedProduct) loadMappings(selectedProduct.id);
-            alert('Не удалось отвязать артикул');
-        }
-    };
-
-    const handleAddMapping = async () => {
-        if (!selectedProduct || !addMpExtId.trim()) return;
-        setAddMpError(null);
-        setAddMpSubmitting(true);
-        try {
-            const res = await axios.post('/catalog/mappings/manual', {
-                productId: selectedProduct.id,
-                marketplace: addMpMarketplace,
-                externalProductId: addMpExtId.trim(),
-                externalSku: addMpExtSku.trim() || undefined,
-            });
-            setMappings(prev => [...prev, res.data]);
-            setAddMpExtId('');
-            setAddMpExtSku('');
-            setAddMappingOpen(false);
-        } catch (err: any) {
-            const code = err?.response?.data?.code;
-            const existingName = err?.response?.data?.existingProductId
-                ? `(ID: ${err.response.data.existingProductId})`
-                : '';
-            setAddMpError(
-                code === 'MAPPING_ALREADY_EXISTS'
-                    ? `Этот артикул уже связан с другим товаром ${existingName}. Сначала отвяжите его.`
-                    : err?.response?.data?.message ?? 'Не удалось добавить артикул',
-            );
-        } finally {
-            setAddMpSubmitting(false);
-        }
-    };
-
     // ─────────── open modals ───────────
 
     const openCreate = () => {
@@ -628,14 +632,90 @@ export default function Products() {
         setSelectedProduct(p);
         setFormData({ name: p.name, sku: p.sku, wbBarcode: (p as any).wbBarcode || '', initialTotal: '0', file: null });
         setFormError(null);
-        setMappings([]);
-        setAddMappingOpen(false);
-        setAddMpExtId('');
-        setAddMpExtSku('');
-        setAddMpError(null);
+        setGroupMembers([]);
+        setGroupLinkOpen(false);
+        setGroupLinkQuery('');
+        setGroupLinkError(null);
         setIsModalOpen(true);
-        loadMappings(p.id);
+        if (p.groupId) loadGroupMembers(p.groupId);
     };
+
+    const loadGroupMembers = async (groupId: string) => {
+        setGroupLoading(true);
+        try {
+            const res = await axios.get(`/catalog/groups/${groupId}/members`);
+            setGroupMembers(res.data.products ?? []);
+        } catch {
+            setGroupMembers([]);
+        } finally {
+            setGroupLoading(false);
+        }
+    };
+
+    const handleGroupUnlink = async (memberId: string) => {
+        if (!selectedProduct) return;
+        try {
+            await axios.delete(`/catalog/groups/unlink/${memberId}`);
+            // Refresh: if we unlinked self, close group section
+            const updated = await axios.get(`/catalog/products/${memberId}`).catch(() => null);
+            if (memberId === selectedProduct.id) {
+                setGroupMembers([]);
+                setSelectedProduct(prev => prev ? { ...prev, groupId: null, groupRole: null } : prev);
+            } else if (selectedProduct.groupId) {
+                loadGroupMembers(selectedProduct.groupId);
+            }
+            fetchProducts();
+        } catch { /* ignore */ }
+    };
+
+    const handleGroupSetPrimary = async (memberId: string) => {
+        try {
+            await axios.post(`/catalog/groups/primary/${memberId}`);
+            if (selectedProduct?.groupId) loadGroupMembers(selectedProduct.groupId);
+            fetchProducts();
+        } catch { /* ignore */ }
+    };
+
+    const handleGroupLink = async (targetId: string) => {
+        if (!selectedProduct) return;
+        setGroupLinkError(null);
+        try {
+            const res = await axios.post('/catalog/groups/link', { productAId: selectedProduct.id, productBId: targetId });
+            const newGroupId = res.data?.id ?? selectedProduct.groupId;
+            setGroupLinkOpen(false);
+            setGroupLinkQuery('');
+            // Update selectedProduct with new groupId
+            const updatedGroup = newGroupId;
+            setSelectedProduct(prev => prev ? { ...prev, groupId: updatedGroup } : prev);
+            loadGroupMembers(newGroupId);
+            fetchProducts();
+        } catch (e: any) {
+            const code = e?.response?.data?.code;
+            if (code === 'BOTH_IN_DIFFERENT_GROUPS') {
+                setGroupLinkError('Оба товара уже в разных группах. Сначала отвяжите один из них.');
+            } else if (code === 'ALREADY_LINKED') {
+                setGroupLinkError('Товары уже в одной группе.');
+            } else {
+                setGroupLinkError(e?.response?.data?.message ?? 'Ошибка связки');
+            }
+        }
+    };
+
+    // ─────────── group link search ───────────
+    useEffect(() => {
+        if (!groupLinkOpen || groupLinkQuery.trim().length < 1) { setGroupLinkResults([]); return; }
+        const t = setTimeout(async () => {
+            setGroupLinkSearching(true);
+            try {
+                const res = await axios.get('/catalog/groups/search', {
+                    params: { q: groupLinkQuery.trim(), excludeId: selectedProduct?.id },
+                });
+                setGroupLinkResults(res.data);
+            } catch { setGroupLinkResults([]); }
+            finally { setGroupLinkSearching(false); }
+        }, 250);
+        return () => clearTimeout(t);
+    }, [groupLinkQuery, groupLinkOpen, selectedProduct?.id]);
 
     const openAdjust = (p: Product) => {
         if (isReadOnly) return;
@@ -726,7 +806,8 @@ export default function Products() {
                             <div key={p.id} style={{
                                 background: '#fff', borderRadius: 16, padding: '14px 14px 12px',
                                 border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                            }}>
+                                cursor: 'pointer',
+                            }} onClick={() => { setDetailInitialTab('stocks'); setDetailProduct(p); }}>
                                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
                                     {/* Фото / иконка */}
                                     <div style={{ width: 72, height: 96, borderRadius: 10, overflow: 'hidden', background: '#f1f5f9', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -755,16 +836,53 @@ export default function Products() {
                                         </span>
                                         <span style={{ fontFamily: 'Inter', fontSize: 11, color: '#64748b' }}>склад: {p.total}</span>
                                     </div>
-                                    <Badge label={avail === 0 ? 'Нет' : avail <= 5 ? 'Мало' : 'В наличии'} bg={ac.bg} color={ac.color} />
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        {(notesCountMap[p.id] ?? 0) > 0 && (
+                                            <span style={{
+                                                display: 'inline-flex', alignItems: 'center', gap: 3,
+                                                background: '#dcfce7', color: S.green,
+                                                borderRadius: 6, padding: '2px 6px',
+                                                fontFamily: 'Inter', fontSize: 10, fontWeight: 600,
+                                            }}>
+                                                <MessageSquare size={10} />
+                                                {notesCountMap[p.id]}
+                                            </span>
+                                        )}
+                                        <Badge label={avail === 0 ? 'Нет' : avail <= 5 ? 'Мало' : 'В наличии'} bg={ac.bg} color={ac.color} />
+                                    </div>
                                 </div>
                                 {/* Кнопки действий */}
                                 {!isReadOnly && (
-                                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }} onClick={e => e.stopPropagation()}>
                                         <button onClick={() => openEdit(p)} style={{ flex: 1, padding: '8px', borderRadius: 8, border: '1px solid #e2e8f0', background: 'transparent', fontFamily: 'Inter', fontSize: 12, fontWeight: 500, color: '#0f172a', cursor: 'pointer' }}>
                                             Редактировать
                                         </button>
                                         <button onClick={() => openAdjust(p)} style={{ flex: 1, padding: '8px', borderRadius: 8, border: 'none', background: '#f1f5f9', fontFamily: 'Inter', fontSize: 12, fontWeight: 500, color: '#0f172a', cursor: 'pointer' }}>
                                             Остатки
+                                        </button>
+                                        <button
+                                            onClick={() => { setDetailInitialTab('diary'); setDetailProduct(p); }}
+                                            style={{
+                                                position: 'relative', padding: '8px 10px', borderRadius: 8,
+                                                border: 'none', background: '#f1f5f9', cursor: 'pointer',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                color: (notesCountMap[p.id] ?? 0) > 0 ? S.green : '#94a3b8',
+                                            }}
+                                            title="Заметки"
+                                        >
+                                            <MessageSquare size={15} />
+                                            {(notesCountMap[p.id] ?? 0) > 0 && (
+                                                <span style={{
+                                                    position: 'absolute', top: 2, right: 2,
+                                                    minWidth: 13, height: 13, borderRadius: 7,
+                                                    background: S.green, color: '#fff',
+                                                    fontSize: 8, fontWeight: 700, fontFamily: 'Inter',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    lineHeight: 1, padding: '0 2px',
+                                                }}>
+                                                    {notesCountMap[p.id]}
+                                                </span>
+                                            )}
                                         </button>
                                     </div>
                                 )}
@@ -858,9 +976,67 @@ export default function Products() {
                         </form>
                     )}
                 </Modal>
+
+                {/* ─── Product detail panel ─── */}
+                {detailProduct && (
+                    <ProductDetailPanel
+                        product={detailProduct}
+                        onClose={() => setDetailProduct(null)}
+                        onNotesChange={(pid, count) => setNotesCountMap(prev => ({ ...prev, [pid]: count }))}
+                        initialTab={detailInitialTab}
+                    />
+                )}
             </div>
         );
     }
+
+    const handleSort = (field: string) => {
+        if (sortBy === field) {
+            setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+        } else {
+            setSortBy(field);
+            setSortDir('asc');
+        }
+    };
+
+    const SortIcon = ({ field }: { field: string }) => {
+        const active = sortBy === field;
+        if (!active) return <ChevronsUpDown size={14} style={{ opacity: 0.35, flexShrink: 0 }} />;
+        return sortDir === 'asc'
+            ? <ArrowUp size={14} color={S.blue} style={{ flexShrink: 0 }} />
+            : <ArrowDown size={14} color={S.blue} style={{ flexShrink: 0 }} />;
+    };
+
+    const SortTh = ({
+        field, label, sortBy: curSort, onSort, thSt: style, children,
+    }: {
+        field: string; label: string; sortBy: string;
+        onSort: (f: string) => void; thSt: React.CSSProperties; children: React.ReactNode;
+    }) => {
+        const active = curSort === field;
+        return (
+            <th
+                style={style}
+                onClick={() => onSort(field)}
+                onMouseEnter={e => {
+                    (e.currentTarget as HTMLTableCellElement).style.color = S.blue;
+                    (e.currentTarget as HTMLTableCellElement).style.background = '#eff6ff';
+                }}
+                onMouseLeave={e => {
+                    (e.currentTarget as HTMLTableCellElement).style.color = active ? S.blue : '';
+                    (e.currentTarget as HTMLTableCellElement).style.background = '';
+                }}
+            >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: active ? S.blue : undefined }}>
+                    {label}
+                    {children}
+                </span>
+            </th>
+        );
+    };
+
+    const thSt: React.CSSProperties = { fontFamily: 'Inter', fontSize: 12, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', padding: '10px 16px', textAlign: 'left', verticalAlign: 'middle', whiteSpace: 'nowrap' };
+    const thSortSt: React.CSSProperties = { ...thSt, cursor: 'pointer', userSelect: 'none' };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -869,19 +1045,22 @@ export default function Products() {
 
             {/* Header */}
             <PageHeader title="Остатки товаров" subtitle="Управление запасами по всем маркетплейсам">
-                {unmatchedCount > 0 && (
-                    <Badge label={`${unmatchedCount} без привязки`} bg="rgba(245,158,11,0.1)" color={S.amber} style={{ marginRight: 4 }} />
-                )}
                 {!isReadOnly && (
-                    <Btn variant="ghost" size="sm" onClick={handleFetchPhotos} disabled={fetchingPhotos} title="Подтянуть фото с МП">
+                    <Btn variant="ghost" size="sm" onClick={handleFetchPhotos} disabled={fetchingPhotos} title="Обновить фото товаров с маркетплейсов">
                         <ImageDown size={13} style={{ animation: fetchingPhotos ? 'spin 1s linear infinite' : undefined }} />
-                        Фото МП
+                        {fetchingPhotos ? 'Обновление…' : 'Обновить фото'}
                     </Btn>
                 )}
                 {!isReadOnly && (
-                    <Btn variant="wb" size="sm" onClick={handleImportFromWb} disabled={importingFromWb} title="Загрузить карточки из WB">
+                    <Btn variant="wb" size="sm" onClick={handleImportFromWb} disabled={importingFromWb} title="Синхронизировать товары с Wildberries">
                         <Download size={13} />
-                        {importingFromWb ? 'Загрузка…' : 'Из WB'}
+                        {importingFromWb ? 'Загрузка…' : 'Синхр. WB'}
+                    </Btn>
+                )}
+                {!isReadOnly && (
+                    <Btn variant="oz" size="sm" onClick={handleImportFromOzon} disabled={importingFromOzon} title="Синхронизировать товары с Ozon">
+                        <Download size={13} />
+                        {importingFromOzon ? 'Загрузка…' : 'Синхр. Ozon'}
                     </Btn>
                 )}
                 {!isReadOnly && (
@@ -892,11 +1071,6 @@ export default function Products() {
                             {importLoading ? 'Анализ…' : 'Импорт Excel'}
                         </Btn>
                     </>
-                )}
-                {!isReadOnly && (
-                    <Btn variant="primary" size="sm" onClick={openCreate}>
-                        <Plus size={13} /> Новый товар
-                    </Btn>
                 )}
             </PageHeader>
 
@@ -944,46 +1118,55 @@ export default function Products() {
                     </div>
                 </div>
 
-                {/* Table header */}
-                <div style={{ display: 'flex', alignItems: 'center', padding: '10px 0', borderBottom: `1px solid ${S.border}`, background: '#fafbfc' }}>
-                    <TH flex={0.5}>Фото</TH>
-                    <TH flex={2.5}>Название</TH>
-                    <TH flex={1.2}>SKU</TH>
-                    {statusFilter === 'active' && (
-                        <>
-                            <TH flex={0.9}>Склад</TH>
-                            <TH flex={1} align="center"><span style={{ color: S.wb }}>WB</span> FBS/FBO</TH>
-                            <TH flex={1} align="center"><span style={{ color: S.oz }}>Ozon</span> FBS/FBO</TH>
-                            <TH flex={0.9} align="center">Доступно</TH>
-                        </>
-                    )}
-                    {statusFilter === 'deleted' && <TH flex={1}>Удалён</TH>}
-                    <TH flex={1} align="center">Действия</TH>
-                </div>
-
-                {/* Rows */}
-                {loading && (
-                    <div style={{ padding: '32px 24px', textAlign: 'center', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
-                        Загрузка…
-                    </div>
-                )}
-                {!loading && products.length === 0 && (
-                    <div style={{ padding: '32px 24px', textAlign: 'center', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
-                        {statusFilter === 'deleted' ? 'Архив пуст.' : 'Товары не найдены.'}
-                    </div>
-                )}
-                {products.map((p) => {
+                {/* Table */}
+                <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                    <colgroup>
+                        <col style={{ width: 104 }} />
+                        <col style={{ width: '28%' }} />
+                        <col style={{ width: '16%' }} />
+                        {statusFilter === 'active' && <>
+                            <col style={{ width: '11%' }} />
+                            <col style={{ width: '11%' }} />
+                            <col style={{ width: '11%' }} />
+                            <col style={{ width: '9%' }} />
+                        </>}
+                        {statusFilter === 'deleted' && <col style={{ width: '12%' }} />}
+                        <col style={{ width: '14%' }} />
+                    </colgroup>
+                    <thead>
+                        <tr style={{ background: '#fafbfc', borderBottom: `1px solid ${S.border}` }}>
+                            <th style={thSt}>Фото</th>
+                            <SortTh field="name" label="Название" sortBy={sortBy} onSort={handleSort} thSt={thSortSt}><SortIcon field="name" /></SortTh>
+                            <SortTh field="sku" label="SKU" sortBy={sortBy} onSort={handleSort} thSt={thSortSt}><SortIcon field="sku" /></SortTh>
+                            {statusFilter === 'active' && <>
+                                <SortTh field="total" label="Склад" sortBy={sortBy} onSort={handleSort} thSt={{ ...thSortSt, borderLeft: `1px solid ${S.border}` }}><SortIcon field="total" /></SortTh>
+                                <th style={thSt}><span style={{ color: S.wb }}>WB</span> FBS/FBO</th>
+                                <th style={thSt}><span style={{ color: S.oz }}>Ozon</span> FBS/FBO</th>
+                                <th style={thSt}>Доступно</th>
+                            </>}
+                            {statusFilter === 'deleted' && <th style={thSt}>Удалён</th>}
+                            <th style={{ ...thSt, borderLeft: `1px solid ${S.border}` }}>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {loading && (
+                            <tr><td colSpan={99} style={{ padding: '32px 24px', textAlign: 'center', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>Загрузка…</td></tr>
+                        )}
+                        {!loading && products.length === 0 && (
+                            <tr><td colSpan={99} style={{ padding: '32px 24px', textAlign: 'center', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>{statusFilter === 'deleted' ? 'Архив пуст.' : 'Товары не найдены.'}</td></tr>
+                        )}
+                        {products.map((p) => {
                     const ac = availColor(p.available);
                     return (
-                        <div
+                        <tr
                             key={p.id}
-                            style={{ display: 'flex', alignItems: 'center', borderBottom: `1px solid ${S.border}`, minHeight: 60, transition: 'background 0.15s', opacity: statusFilter === 'deleted' ? 0.75 : 1 }}
+                            style={{ borderBottom: `1px solid ${S.border}`, transition: 'background 0.15s', opacity: statusFilter === 'deleted' ? 0.75 : 1 }}
                             onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
                             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                         >
                             {/* Photo */}
-                            <div style={{ flex: 0.5, padding: '8px 16px', display: 'flex', alignItems: 'center' }}>
-                                <div style={{ width: 72, height: 96, borderRadius: 10, overflow: 'hidden', flexShrink: 0 }}>
+                            <td style={{ padding: '8px 16px', verticalAlign: 'middle' }}>
+                                <div style={{ width: 72, height: 96, borderRadius: 10, overflow: 'hidden' }}>
                                     <ProductMediaWidget
                                         productId={p.id}
                                         mainImageFileId={p.mainImageFileId}
@@ -992,109 +1175,64 @@ export default function Products() {
                                         onMediaUpdated={(newFileId) => handleMediaUpdated(p.id, newFileId)}
                                     />
                                 </div>
-                            </div>
+                            </td>
 
                             {/* Name */}
-                            <div style={{ flex: 2.5, padding: '0 16px' }}>
+                            <td style={{ padding: '0 16px', verticalAlign: 'middle', cursor: 'pointer' }} onClick={() => { setDetailInitialTab('stocks'); setDetailProduct(p); }}>
                                 <div style={{ fontFamily: 'Inter', fontSize: 15, fontWeight: 600, color: S.ink, marginBottom: 2 }}>{p.name}</div>
                                 {p.brand && <div style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}>{p.brand}</div>}
-                                {p.sourceOfTruth === 'IMPORT' && (
-                                    <span style={{ display: 'inline-block', fontFamily: 'Inter', fontSize: 10, color: S.blue, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 4, padding: '1px 5px', marginTop: 2 }}>import</span>
-                                )}
-                                {p.sourceOfTruth === 'SYNC' && (
-                                    <span style={{ display: 'inline-block', fontFamily: 'Inter', fontSize: 10, color: S.green, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 4, padding: '1px 5px', marginTop: 2 }}>sync</span>
-                                )}
-                            </div>
+                                {p.sourceOfTruth === 'IMPORT' && <span style={{ display: 'inline-block', fontFamily: 'Inter', fontSize: 10, color: S.blue, background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 4, padding: '1px 5px', marginTop: 2 }}>import</span>}
+                                {p.sourceOfTruth === 'SYNC' && <span style={{ display: 'inline-block', fontFamily: 'Inter', fontSize: 10, color: S.green, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 4, padding: '1px 5px', marginTop: 2 }}>sync</span>}
+                            </td>
 
                             {/* SKU */}
-                            <div style={{ flex: 1.2, padding: '0 16px' }}>
+                            <td style={{ padding: '0 16px', verticalAlign: 'middle', cursor: 'pointer' }} onClick={() => { setDetailInitialTab('stocks'); setDetailProduct(p); }}>
                                 <SkuTag>{p.sku}</SkuTag>
-                                {p.wbBarcode && (
-                                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.muted, marginTop: 3 }}>WB: {p.wbBarcode}</div>
-                                )}
-                            </div>
+                                {p.wbBarcode && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.muted, marginTop: 3 }}>WB: {p.wbBarcode}</div>}
+                            </td>
 
                             {/* Stock columns (active) */}
-                            {statusFilter === 'active' && (
-                                <>
-                                    {/* Warehouse */}
-                                    <div style={{ flex: 0.9, padding: '0 16px' }}>
-                                        {editingStock?.id === p.id && editingStock?.field === 'total' ? (
-                                            <input
-                                                type="number" autoFocus
-                                                style={{ width: 60, padding: '4px 8px', border: `1px solid ${S.blue}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 13, outline: 'none' }}
-                                                value={editingStock.value}
-                                                onChange={e => setEditingStock({ ...editingStock, value: e.target.value })}
-                                                onBlur={() => handleStockUpdate(p.id, 'total', editingStock.value)}
-                                                onKeyDown={e => handleKeyDown(e, p.id, 'total')}
-                                            />
-                                        ) : (
-                                            <span
-                                                style={{ fontFamily: 'Inter', fontSize: 16, fontWeight: 700, color: S.ink, cursor: isReadOnly ? 'default' : 'pointer' }}
-                                                onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'total', value: String(p.total) })}
-                                            >{p.total}</span>
-                                        )}
-                                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}> / р.{p.reserved}</span>
-                                    </div>
-
-                                    {/* WB */}
-                                    <div style={{ flex: 1, padding: '0 16px', textAlign: 'center' }}>
-                                        {editingStock?.id === p.id && editingStock?.field === 'wbFbs' ? (
-                                            <input
-                                                type="number" autoFocus
-                                                style={{ width: 50, padding: '4px 6px', border: `1px solid ${S.wb}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 12, outline: 'none', textAlign: 'center' }}
-                                                value={editingStock.value}
-                                                onChange={e => setEditingStock({ ...editingStock, value: e.target.value })}
-                                                onBlur={() => handleStockUpdate(p.id, 'wbFbs', editingStock.value)}
-                                                onKeyDown={e => handleKeyDown(e, p.id, 'wbFbs')}
-                                            />
-                                        ) : (
-                                            <span
-                                                style={{ fontFamily: 'Inter', fontSize: 14, color: S.wb, fontWeight: 600, cursor: isReadOnly ? 'default' : 'pointer' }}
-                                                onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'wbFbs', value: String(p.wbFbs) })}
-                                            >{p.wbFbs}</span>
-                                        )}
-                                        <span style={{ color: S.muted, fontFamily: 'Inter', fontSize: 14 }}>/</span>
-                                        <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.wb, fontWeight: 600 }}>{p.wbFbo}</span>
-                                    </div>
-
-                                    {/* Ozon */}
-                                    <div style={{ flex: 1, padding: '0 16px', textAlign: 'center' }}>
-                                        {editingStock?.id === p.id && editingStock?.field === 'ozonFbs' ? (
-                                            <input
-                                                type="number" autoFocus
-                                                style={{ width: 50, padding: '4px 6px', border: `1px solid ${S.oz}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 12, outline: 'none', textAlign: 'center' }}
-                                                value={editingStock.value}
-                                                onChange={e => setEditingStock({ ...editingStock, value: e.target.value })}
-                                                onBlur={() => handleStockUpdate(p.id, 'ozonFbs', editingStock.value)}
-                                                onKeyDown={e => handleKeyDown(e, p.id, 'ozonFbs')}
-                                            />
-                                        ) : (
-                                            <span
-                                                style={{ fontFamily: 'Inter', fontSize: 14, color: S.oz, fontWeight: 600, cursor: isReadOnly ? 'default' : 'pointer' }}
-                                                onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'ozonFbs', value: String(p.ozonFbs) })}
-                                            >{p.ozonFbs}</span>
-                                        )}
-                                        <span style={{ color: S.muted, fontFamily: 'Inter', fontSize: 14 }}>/</span>
-                                        <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.oz, fontWeight: 600 }}>{p.ozonFbo}</span>
-                                    </div>
-
-                                    {/* Available */}
-                                    <div style={{ flex: 0.9, padding: '0 16px', display: 'flex', justifyContent: 'center' }}>
-                                        <Badge label={`${p.available} шт.`} bg={ac.bg} color={ac.color} />
-                                    </div>
-                                </>
-                            )}
+                            {statusFilter === 'active' && <>
+                                <td style={{ padding: '0 16px', verticalAlign: 'middle', borderLeft: `1px solid ${S.border}` }}>
+                                    {editingStock?.id === p.id && editingStock?.field === 'total' ? (
+                                        <input type="number" autoFocus style={{ width: 60, padding: '4px 8px', border: `1px solid ${S.blue}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 13, outline: 'none' }} value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'total', editingStock.value)} onKeyDown={e => handleKeyDown(e, p.id, 'total')} />
+                                    ) : (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 16, fontWeight: 700, color: S.ink, cursor: isReadOnly ? 'default' : 'pointer' }} onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'total', value: String(p.total) })}>{p.total}</span>
+                                    )}
+                                    <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}> / резерв {p.reserved}</span>
+                                </td>
+                                <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                    {editingStock?.id === p.id && editingStock?.field === 'wbFbs' ? (
+                                        <input type="number" autoFocus style={{ width: 50, padding: '4px 6px', border: `1px solid ${S.wb}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 12, outline: 'none' }} value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'wbFbs', editingStock.value)} onKeyDown={e => handleKeyDown(e, p.id, 'wbFbs')} />
+                                    ) : (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.wb, fontWeight: 600, cursor: isReadOnly ? 'default' : 'pointer' }} onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'wbFbs', value: String(p.wbFbs) })}>{p.wbFbs}</span>
+                                    )}
+                                    <span style={{ color: S.muted, fontFamily: 'Inter', fontSize: 14 }}>/</span>
+                                    <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.wb, fontWeight: 600 }}>{p.wbFbo}</span>
+                                </td>
+                                <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                    {editingStock?.id === p.id && editingStock?.field === 'ozonFbs' ? (
+                                        <input type="number" autoFocus style={{ width: 50, padding: '4px 6px', border: `1px solid ${S.oz}`, borderRadius: 6, fontFamily: 'Inter', fontSize: 12, outline: 'none' }} value={editingStock.value} onChange={e => setEditingStock({ ...editingStock, value: e.target.value })} onBlur={() => handleStockUpdate(p.id, 'ozonFbs', editingStock.value)} onKeyDown={e => handleKeyDown(e, p.id, 'ozonFbs')} />
+                                    ) : (
+                                        <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.oz, fontWeight: 600, cursor: isReadOnly ? 'default' : 'pointer' }} onClick={() => !isReadOnly && setEditingStock({ id: p.id, field: 'ozonFbs', value: String(p.ozonFbs) })}>{p.ozonFbs}</span>
+                                    )}
+                                    <span style={{ color: S.muted, fontFamily: 'Inter', fontSize: 14 }}>/</span>
+                                    <span style={{ fontFamily: 'Inter', fontSize: 14, color: S.oz, fontWeight: 600 }}>{p.ozonFbo}</span>
+                                </td>
+                                <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                    <Badge label={`${p.available} шт.`} bg={ac.bg} color={ac.color} />
+                                </td>
+                            </>}
 
                             {/* Deleted at */}
                             {statusFilter === 'deleted' && (
-                                <div style={{ flex: 1, padding: '0 16px', fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
+                                <td style={{ padding: '0 16px', verticalAlign: 'middle', fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
                                     {p.deletedAt ? new Date(p.deletedAt).toLocaleDateString('ru-RU') : '—'}
-                                </div>
+                                </td>
                             )}
 
                             {/* Actions */}
-                            <div style={{ flex: 1, padding: '0 12px', display: 'flex', justifyContent: 'center', gap: 4, flexDirection: 'column', alignItems: 'center' }}>
+                            <td style={{ padding: '0 12px', verticalAlign: 'middle', borderLeft: `1px solid ${S.border}` }} onClick={e => e.stopPropagation()}>
                                 {/* Sync result tooltip */}
                                 {(syncResult as any)?.id === p.id && (() => {
                                     const sr = (syncResult as any).data;
@@ -1112,19 +1250,36 @@ export default function Products() {
                                 <div style={{ display: 'flex', gap: 4 }}>
                                     {statusFilter === 'active' && !isReadOnly && (
                                         <>
-                                            <ActionBtn onClick={() => handleSync(p.id)} disabled={syncingId === p.id} color={S.green} title="Синхронизировать остатки">
+                                            <ActionBtn onClick={() => handleSync(p.id)} disabled={syncingId === p.id} title="Синхронизировать остатки">
                                                 <RefreshCw size={18} style={{ animation: syncingId === p.id ? 'spin 1s linear infinite' : undefined }} />
                                             </ActionBtn>
-                                            <ActionBtn onClick={() => openAdjust(p)} color={S.blue} title="Корректировка остатка">
+                                            <ActionBtn onClick={() => openAdjust(p)} title="Корректировка остатка">
                                                 <ArrowDownUp size={18} />
                                             </ActionBtn>
-                                            <ActionBtn onClick={() => openEdit(p)} color={S.ink} title="Редактировать">
+                                            <ActionBtn onClick={() => openEdit(p)} title="Редактировать">
                                                 <Edit2 size={18} />
                                             </ActionBtn>
-                                            <ActionBtn onClick={() => openLockModal(p)} color={S.amber} title="Блокировки остатков">
+                                            <ActionBtn onClick={() => { setDetailInitialTab('diary'); setDetailProduct(p); }} title="Заметки">
+                                                <div style={{ position: 'relative', display: 'flex' }}>
+                                                    <MessageSquare size={18} />
+                                                    {(notesCountMap[p.id] ?? 0) > 0 && (
+                                                        <span style={{
+                                                            position: 'absolute', top: -5, right: -6,
+                                                            minWidth: 14, height: 14, borderRadius: 7,
+                                                            background: S.blue, color: '#fff',
+                                                            fontSize: 9, fontWeight: 700, fontFamily: 'Inter',
+                                                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            lineHeight: 1, padding: '0 3px',
+                                                        }}>
+                                                            {notesCountMap[p.id]}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </ActionBtn>
+                                            <ActionBtn onClick={() => openLockModal(p)} title="Блокировки остатков">
                                                 {(locksMap[p.id]?.length ?? 0) > 0 ? <Lock size={18} /> : <Unlock size={18} />}
                                             </ActionBtn>
-                                            <ActionBtn onClick={() => handleDelete(p.id)} color={S.red} title="В архив">
+                                            <ActionBtn onClick={() => handleDelete(p.id)} title="В архив">
                                                 <Archive size={18} />
                                             </ActionBtn>
                                         </>
@@ -1138,13 +1293,79 @@ export default function Products() {
                                         </Btn>
                                     )}
                                 </div>
-                            </div>
-                        </div>
+                            </td>
+                        </tr>
                     );
                 })}
+                    </tbody>
+                </table>
 
                 {/* Pagination */}
-                <Pagination page={page} totalPages={totalPages} onPage={setPage} />
+                <div style={{ padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: `1px solid ${S.border}` }}>
+                    {/* Строк на странице */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, position: 'relative' }}>
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}>Строк на странице:</span>
+                        <button
+                            onClick={() => setPageSizeOpen(v => !v)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                padding: '4px 10px', border: `1px solid ${S.border}`, borderRadius: 7,
+                                background: '#fff', fontFamily: 'Inter', fontSize: 13, fontWeight: 600,
+                                color: S.ink, cursor: 'pointer',
+                            }}
+                        >
+                            {pageSize}
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ transform: pageSizeOpen ? 'rotate(180deg)' : undefined, transition: 'transform 0.15s' }}>
+                                <path d="M2 4l4 4 4-4" stroke={S.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                        </button>
+                        {pageSizeOpen && (
+                            <>
+                                <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setPageSizeOpen(false)} />
+                                <div style={{
+                                    position: 'absolute', bottom: '100%', left: 0, marginBottom: 4, zIndex: 100,
+                                    background: '#fff', border: `1px solid ${S.border}`, borderRadius: 10,
+                                    boxShadow: '0 4px 16px rgba(0,0,0,0.1)', overflow: 'hidden', minWidth: 80,
+                                }}>
+                                    {[5, 10, 20, 50, 100].map(n => (
+                                        <button
+                                            key={n}
+                                            onClick={() => { setPageSize(n); setPageSizeOpen(false); }}
+                                            style={{
+                                                display: 'block', width: '100%', textAlign: 'left',
+                                                padding: '8px 16px', border: 'none', cursor: 'pointer',
+                                                fontFamily: 'Inter', fontSize: 13, fontWeight: n === pageSize ? 700 : 400,
+                                                background: n === pageSize ? '#f1f5f9' : 'transparent',
+                                                color: n === pageSize ? S.blue : S.ink,
+                                            }}
+                                        >{n}</button>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            {totalCount > 0 && `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalCount)} из ${totalCount}`}
+                        </span>
+                    </div>
+                    {/* Навигация */}
+                    <div style={{ display: 'flex', gap: 4 }}>
+                        <Btn variant="secondary" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>← Назад</Btn>
+                        {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                            const p = i + 1;
+                            const isActive = p === page;
+                            return (
+                                <div key={p} onClick={() => setPage(p)} style={{
+                                    width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    background: isActive ? S.ink : '#fff',
+                                    border: isActive ? 'none' : `1px solid ${S.border}`,
+                                    borderRadius: 8, fontFamily: 'Inter', fontSize: 13, fontWeight: 600,
+                                    color: isActive ? '#fff' : S.ink, cursor: 'pointer',
+                                }}>{p}</div>
+                            );
+                        })}
+                        <Btn variant="secondary" size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Вперёд →</Btn>
+                    </div>
+                </div>
             </Card>
 
             {/* ─── Modal: Create / Edit ─── */}
@@ -1183,70 +1404,126 @@ export default function Products() {
                             Для управления фото наведите курсор на изображение в таблице.
                         </p>
                     )}
-                    {formError && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter', fontSize: 13, color: S.red, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 12px' }}>
-                            <AlertCircle size={15} /> {formError}
-                        </div>
-                    )}
 
-                    {/* Linked mappings (edit mode) */}
+                    {/* ── Связанные товары (group members) ── */}
                     {modalMode === 'edit' && (
                         <div style={{ borderTop: `1px solid ${S.border}`, paddingTop: 14 }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink }}>
-                                    <Link2 size={14} color={S.muted} /> Связанные артикулы
+                                    <Link2 size={14} color={S.blue} />
+                                    Связанные товары
+                                    {groupMembers.length > 0 && (
+                                        <span style={{ fontSize: 11, color: S.muted, fontWeight: 400 }}>· {groupMembers.length} {groupMembers.length === 1 ? 'товар' : 'товара'}</span>
+                                    )}
                                 </div>
-                                <Btn variant="ghost" size="sm" type="button" onClick={() => { setAddMappingOpen(v => !v); setAddMpError(null); }}>
-                                    <Plus size={12} /> Добавить
-                                </Btn>
+                                {!isReadOnly && (
+                                    <Btn variant="ghost" size="sm" type="button" onClick={() => { setGroupLinkOpen(v => !v); setGroupLinkError(null); setGroupLinkQuery(''); }}>
+                                        <Plus size={12} /> Добавить
+                                    </Btn>
+                                )}
                             </div>
-                            {mappingsLoading && <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>Загрузка…</p>}
-                            {!mappingsLoading && mappings.length === 0 && <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>Нет связанных артикулов</p>}
-                            {mappings.map(m => (
-                                <div key={m.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: `1px solid ${S.border}` }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                        <MPBadge mp={m.marketplace} />
-                                        <SkuTag>{m.externalProductId}</SkuTag>
-                                        {m.externalSku && <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted }}>SKU: {m.externalSku}</span>}
-                                        {m.isAutoMatched && <span style={{ fontFamily: 'Inter', fontSize: 10, color: S.muted, background: '#f1f5f9', padding: '1px 5px', borderRadius: 4 }}>auto</span>}
-                                    </div>
-                                    <button type="button" onClick={() => handleDetachMapping(m.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: S.red, display: 'flex', padding: 4 }} title="Отвязать">
-                                        <Unlink size={14} />
-                                    </button>
-                                </div>
-                            ))}
-                            {addMappingOpen && (
-                                <div style={{ marginTop: 10, background: '#f8fafc', border: `1px solid ${S.border}`, borderRadius: 10, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                                        <div>
-                                            <FieldLabel>Маркетплейс</FieldLabel>
-                                            <select value={addMpMarketplace} onChange={e => setAddMpMarketplace(e.target.value as 'WB' | 'OZON')} style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${S.border}`, fontFamily: 'Inter', fontSize: 12, color: S.ink, outline: 'none' }}>
-                                                <option value="WB">Wildberries</option>
-                                                <option value="OZON">Ozon</option>
-                                            </select>
+
+                            {groupLoading && <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>Загрузка…</p>}
+
+                            {!groupLoading && groupMembers.length === 0 && !groupLinkOpen && (
+                                <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>Нет связанных товаров</p>
+                            )}
+
+                            {!groupLoading && groupMembers.map(m => {
+                                const thumb = m.mainImageFileId ? `/api/files/${m.mainImageFileId}/thumb` : m.photo ?? null;
+                                const isPrimary = m.groupRole === 'PRIMARY';
+                                const isSelf = m.id === selectedProduct?.id;
+                                return (
+                                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: `1px solid ${S.border}` }}>
+                                        {/* thumb */}
+                                        <div style={{ width: 36, height: 36, borderRadius: 8, flexShrink: 0, background: '#f1f5f9', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${S.border}` }}>
+                                            {thumb ? <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Package size={16} color="#94a3b8" />}
                                         </div>
-                                        <div>
-                                            <FieldLabel>Артикул МП *</FieldLabel>
-                                            <input type="text" value={addMpExtId} onChange={e => setAddMpExtId(e.target.value)} placeholder="externalProductId" style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${S.border}`, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: S.ink, outline: 'none' }} />
+                                        {/* info */}
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                <SkuTag>{m.sku}</SkuTag>
+                                                {isPrimary && (
+                                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '1px 6px', borderRadius: 4 }}>
+                                                        <Crown size={9} /> Главный
+                                                    </span>
+                                                )}
+                                                {isSelf && <span style={{ fontSize: 10, color: S.muted, fontStyle: 'italic' }}>этот товар</span>}
+                                            </div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.name}</div>
                                         </div>
+                                        {/* actions */}
+                                        {!isReadOnly && !isSelf && (
+                                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                                {!isPrimary && (
+                                                    <button type="button" onClick={() => handleGroupSetPrimary(m.id)} title="Сделать главным" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontFamily: 'Inter', fontSize: 11, color: S.amber, display: 'flex', alignItems: 'center', gap: 3 }}>
+                                                        <Crown size={11} /> Главным
+                                                    </button>
+                                                )}
+                                                <button type="button" onClick={() => handleGroupUnlink(m.id)} title="Отвязать" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontFamily: 'Inter', fontSize: 11, color: S.red, display: 'flex', alignItems: 'center', gap: 3 }}>
+                                                    <Unlink size={11} /> Отвязать
+                                                </button>
+                                            </div>
+                                        )}
+                                        {!isReadOnly && isSelf && (
+                                            <button type="button" onClick={() => handleGroupUnlink(m.id)} title="Покинуть группу" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', borderRadius: 4, fontFamily: 'Inter', fontSize: 11, color: S.red, display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
+                                                <Unlink size={11} /> Отвязать
+                                            </button>
+                                        )}
                                     </div>
-                                    <div>
-                                        <FieldLabel>SKU (опционально)</FieldLabel>
-                                        <input type="text" value={addMpExtSku} onChange={e => setAddMpExtSku(e.target.value)} placeholder="externalSku" style={{ width: '100%', padding: '7px 10px', borderRadius: 8, border: `1px solid ${S.border}`, fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: S.ink, outline: 'none' }} />
+                                );
+                            })}
+
+                            {/* Link picker inline */}
+                            {groupLinkOpen && (
+                                <div style={{ marginTop: 10, background: '#f8fafc', border: `1px solid ${S.border}`, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <div style={{ position: 'relative' }}>
+                                        <Search size={13} color={S.muted} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                                        <input
+                                            autoFocus
+                                            type="text"
+                                            value={groupLinkQuery}
+                                            onChange={e => setGroupLinkQuery(e.target.value)}
+                                            placeholder="Поиск по названию или SKU…"
+                                            style={{ width: '100%', padding: '7px 10px 7px 28px', borderRadius: 8, border: `1px solid ${S.border}`, fontFamily: 'Inter', fontSize: 12, color: S.ink, outline: 'none', boxSizing: 'border-box' }}
+                                        />
                                     </div>
-                                    {addMpError && (
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter', fontSize: 12, color: S.red, background: 'rgba(239,68,68,0.06)', borderRadius: 6, padding: '8px 10px' }}>
-                                            <AlertCircle size={13} /> {addMpError}
+                                    {groupLinkError && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'Inter', fontSize: 12, color: S.red, background: 'rgba(239,68,68,0.06)', borderRadius: 6, padding: '6px 8px' }}>
+                                            <AlertCircle size={12} /> {groupLinkError}
                                         </div>
                                     )}
-                                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                                        <Btn type="button" variant="secondary" size="sm" onClick={() => { setAddMappingOpen(false); setAddMpError(null); }}>Отмена</Btn>
-                                        <Btn type="button" variant="primary" size="sm" onClick={handleAddMapping} disabled={addMpSubmitting || !addMpExtId.trim()}>
-                                            {addMpSubmitting ? 'Добавляем…' : 'Привязать'}
-                                        </Btn>
+                                    {groupLinkSearching && <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, margin: 0 }}>Поиск…</p>}
+                                    {!groupLinkSearching && groupLinkQuery.trim().length > 0 && groupLinkResults.length === 0 && (
+                                        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, margin: 0 }}>Товары не найдены</p>
+                                    )}
+                                    {!groupLinkSearching && groupLinkQuery.trim().length === 0 && (
+                                        <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, margin: 0 }}>Введите название или SKU товара</p>
+                                    )}
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 160, overflowY: 'auto' }}>
+                                        {groupLinkResults.map(r => (
+                                            <button key={r.id} type="button" onClick={() => handleGroupLink(r.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 8, border: 'none', background: '#fff', cursor: 'pointer', textAlign: 'left', width: '100%' }}
+                                                onMouseEnter={e => (e.currentTarget.style.background = '#f1f5f9')}
+                                                onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+                                            >
+                                                <SkuTag>{r.sku}</SkuTag>
+                                                <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.ink, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</span>
+                                                {r.groupRole === 'PRIMARY' && <span style={{ fontSize: 10, color: '#92400e', background: '#fef3c7', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>Главный</span>}
+                                                {r.groupId && r.groupRole !== 'PRIMARY' && <span style={{ fontSize: 10, color: S.muted, background: '#f1f5f9', padding: '1px 5px', borderRadius: 4, flexShrink: 0 }}>В группе</span>}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                        <Btn type="button" variant="secondary" size="sm" onClick={() => { setGroupLinkOpen(false); setGroupLinkError(null); }}>Отмена</Btn>
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {formError && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter', fontSize: 13, color: S.red, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 12px' }}>
+                            <AlertCircle size={15} /> {formError}
                         </div>
                     )}
 
@@ -1508,22 +1785,32 @@ export default function Products() {
                     </div>
                 )}
             </Modal>
+
+            {/* ─── Product detail panel ─── */}
+            {detailProduct && (
+                <ProductDetailPanel
+                    product={detailProduct}
+                    onClose={() => setDetailProduct(null)}
+                    onNotesChange={(pid, count) => setNotesCountMap(prev => ({ ...prev, [pid]: count }))}
+                    initialTab={detailInitialTab}
+                />
+            )}
         </div>
     );
 }
 
 // ─── Action button helper ─────────────────────────────────────────────────────
-function ActionBtn({ children, onClick, disabled, color, title }: {
-    children: React.ReactNode; onClick?: () => void; disabled?: boolean; color: string; title?: string;
+function ActionBtn({ children, onClick, disabled, title }: {
+    children: React.ReactNode; onClick?: () => void; disabled?: boolean; color?: string; title?: string;
 }) {
     const [hovered, setHovered] = useState(false);
     return (
         <button
             onClick={onClick} disabled={disabled} title={title}
             style={{
-                background: hovered ? `${color}18` : 'transparent',
+                background: hovered ? `${S.blue}15` : 'transparent',
                 border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-                padding: 7, borderRadius: 6, color: hovered ? color : '#94a3b8',
+                padding: 7, borderRadius: 6, color: hovered ? S.blue : '#64748b',
                 display: 'flex', opacity: disabled ? 0.4 : 1, transition: 'all 0.15s',
             }}
             onMouseEnter={() => setHovered(true)}
