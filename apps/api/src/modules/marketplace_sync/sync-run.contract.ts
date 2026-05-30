@@ -26,6 +26,7 @@ export const SyncTypes = {
     PULL_ORDERS: 'PULL_ORDERS',
     PULL_METADATA: 'PULL_METADATA',
     FULL_SYNC: 'FULL_SYNC',
+    PULL_FINANCES_WB: 'PULL_FINANCES_WB',
 } as const;
 
 export type SyncType = typeof SyncTypes[keyof typeof SyncTypes];

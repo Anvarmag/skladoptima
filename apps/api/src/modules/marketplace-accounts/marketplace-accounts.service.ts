@@ -5,10 +5,13 @@ import {
     BadRequestException,
     ConflictException,
     ForbiddenException,
+    Inject,
+    forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CredentialsCipher } from './credentials-cipher.service';
 import { CredentialValidator, CredentialValidationResult } from './credential-validator.service';
+import { SyncService } from '../marketplace_sync/sync.service';
 import {
     MarketplaceType,
     MarketplaceLifecycleStatus,
@@ -72,6 +75,8 @@ export class MarketplaceAccountsService {
         private readonly prisma: PrismaService,
         private readonly cipher: CredentialsCipher,
         private readonly validator: CredentialValidator,
+        @Inject(forwardRef(() => SyncService))
+        private readonly syncService: SyncService,
     ) {}
 
     /**
@@ -180,6 +185,11 @@ export class MarketplaceAccountsService {
             accountId: result.id,
             marketplace,
         }));
+
+        // Запускаем первый sync в фоне — не ждём завершения
+        this.syncService.syncStore(tenantId).catch((err) =>
+            this.logger.warn(`Initial sync after account create failed: ${err?.message}`),
+        );
 
         return this._toReadModel({
             ...result,

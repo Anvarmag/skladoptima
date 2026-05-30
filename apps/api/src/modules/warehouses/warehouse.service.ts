@@ -104,7 +104,7 @@ export class WarehouseService {
      * TASK_INVENTORY_5 sentinel `'default'` для tenants без warehouse-домена).
      * После миграции FK логика заменится на простой `where.warehouseId`.
      */
-    async getStocks(tenantId: string, warehouseId: string) {
+    async getStocks(tenantId: string, warehouseId: string, page = 1, limit = 50) {
         const w = await this.prisma.warehouse.findFirst({
             where: { id: warehouseId, tenantId },
             select: {
@@ -119,17 +119,29 @@ export class WarehouseService {
         });
         if (!w) throw new NotFoundException({ code: 'WAREHOUSE_NOT_FOUND' });
 
+        const where = { tenantId, warehouseId: w.externalWarehouseId };
+
         // Bridge match: StockBalance.warehouseId == Warehouse.externalWarehouseId.
-        const balances = await this.prisma.stockBalance.findMany({
-            where: { tenantId, warehouseId: w.externalWarehouseId },
-            include: {
-                product: { select: { id: true, sku: true, name: true, deletedAt: true } },
-            },
-            orderBy: { available: 'asc' },
-            take: 500,
+        const [allBalances, total] = await Promise.all([
+            this.prisma.stockBalance.findMany({
+                where,
+                include: {
+                    product: { select: { id: true, sku: true, name: true, deletedAt: true } },
+                },
+                orderBy: { available: 'asc' },
+                skip: (page - 1) * limit,
+                take: limit,
+            }),
+            this.prisma.stockBalance.count({ where }),
+        ]);
+
+        // Totals computed across ALL balances (not just current page)
+        const totalsRaw = await this.prisma.stockBalance.aggregate({
+            where,
+            _sum: { onHand: true, reserved: true, available: true },
         });
 
-        const items = balances
+        const items = allBalances
             .filter((b) => b.product && !b.product.deletedAt)
             .map((b) => ({
                 productId: b.productId,
@@ -142,14 +154,11 @@ export class WarehouseService {
                 isExternal: b.isExternal,
             }));
 
-        const totals = items.reduce(
-            (acc, it) => ({
-                onHand: acc.onHand + it.onHand,
-                reserved: acc.reserved + it.reserved,
-                available: acc.available + Math.max(0, it.available),
-            }),
-            { onHand: 0, reserved: 0, available: 0 },
-        );
+        const totals = {
+            onHand: totalsRaw._sum.onHand ?? 0,
+            reserved: totalsRaw._sum.reserved ?? 0,
+            available: totalsRaw._sum.available ?? 0,
+        };
 
         return {
             warehouse: {
@@ -164,6 +173,12 @@ export class WarehouseService {
             totals,
             items,
             count: items.length,
+            meta: {
+                total,
+                page,
+                limit,
+                lastPage: Math.max(1, Math.ceil(total / limit)),
+            },
         };
     }
 

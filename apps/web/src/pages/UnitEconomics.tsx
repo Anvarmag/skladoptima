@@ -5,6 +5,18 @@ import {
     PauseCircle, RefreshCw, ShieldAlert, TrendingUp, TrendingDown,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { S } from '../components/ui';
+
+function useIsDesktop() {
+    const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 768px)');
+        const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    return isDesktop;
+}
 
 // ─── Domain types (mirror backend FinanceReadService DTO) ────────────
 type FreshnessClass =
@@ -171,6 +183,7 @@ function fmtDate(iso: string | null | undefined) {
 export default function UnitEconomics() {
     const { activeTenant } = useAuth();
     const isPaused = activeTenant ? PAUSED_STATES.has(activeTenant.accessState) : false;
+    const isDesktop = useIsDesktop();
 
     const [list, setList] = useState<ListResp | null>(null);
     const [dashboard, setDashboard] = useState<DashboardResp | null>(null);
@@ -251,6 +264,177 @@ export default function UnitEconomics() {
             setRebuilding(false);
         }
     };
+
+    if (!isDesktop) {
+        const totalRevenue = dashboard?.totals?.revenue ?? 0;
+        const totalProfit = dashboard?.totals?.profit ?? 0;
+        const avgMargin = dashboard?.totals?.marginPct ?? null;
+        return (
+            <div style={{ background: '#f8fafc', minHeight: '100vh' }}>
+                {/* Заголовок */}
+                <div style={{ padding: '8px 20px 14px' }}>
+                    <div style={{ fontFamily: 'Inter', fontWeight: 800, fontSize: 26, color: S.ink, letterSpacing: '-0.02em', lineHeight: 1.1 }}>
+                        Юнит-экономика
+                    </div>
+                    <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 4 }}>
+                        Прибыль по товарам
+                    </div>
+                </div>
+
+                {/* Hero KPI */}
+                <div style={{ padding: '0 20px 14px' }}>
+                    <div style={{
+                        background: 'linear-gradient(135deg,#1e40af,#4f46e5)', borderRadius: 18,
+                        padding: '18px 18px 16px', color: '#fff',
+                        boxShadow: '0 4px 16px rgba(30,64,175,0.25)',
+                    }}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.65)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                            Чистая прибыль
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
+                            <span style={{ fontFamily: 'Inter', fontWeight: 900, fontSize: 34, letterSpacing: '-0.03em', lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                                {totalProfit.toLocaleString('ru')}
+                            </span>
+                            <span style={{ fontFamily: 'Inter', fontSize: 14, opacity: 0.7, fontWeight: 500 }}>₽</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+                            <div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 10, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Выручка</div>
+                                <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 14, marginTop: 3 }}>{totalRevenue.toLocaleString('ru')} ₽</div>
+                            </div>
+                            <div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 10, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Маржа</div>
+                                <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 14, marginTop: 3 }}>{avgMargin !== null ? `${avgMargin.toFixed(1)}%` : '—'}</div>
+                            </div>
+                            <div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 10, color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>SKU</div>
+                                <div style={{ fontFamily: 'Inter', fontWeight: 700, fontSize: 14, marginTop: 3 }}>{dashboard?.totals?.skuCount ?? '—'}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Поиск */}
+                <div style={{ padding: '0 20px 14px' }}>
+                    <div style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        background: '#fff', borderRadius: 12, border: `1px solid ${S.border}`,
+                        padding: '0 12px', height: 40,
+                    }}>
+                        <input
+                            type="text"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Поиск по SKU…"
+                            style={{
+                                flex: 1, border: 'none', outline: 'none', fontFamily: 'Inter',
+                                fontSize: 14, color: S.ink, background: 'transparent',
+                            }}
+                        />
+                    </div>
+                </div>
+
+                {/* Кнопка rebuild */}
+                <div style={{ padding: '0 20px 16px', display: 'flex', gap: 8 }}>
+                    <button
+                        onClick={onRebuild}
+                        disabled={rebuilding || isPaused}
+                        style={{
+                            flex: 1, padding: '10px', borderRadius: 10, border: 'none', cursor: rebuilding || isPaused ? 'not-allowed' : 'pointer',
+                            background: rebuilding || isPaused ? '#e2e8f0' : S.ink, color: rebuilding || isPaused ? S.muted : '#fff',
+                            fontFamily: 'Inter', fontSize: 13, fontWeight: 600,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        }}
+                    >
+                        {rebuilding ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <TrendingUp size={14} />}
+                        Пересчитать
+                    </button>
+                </div>
+
+                {/* Карточки товаров */}
+                <div style={{ padding: '0 20px 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {loading && items.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: 40, color: S.muted, fontFamily: 'Inter', fontSize: 13 }}>Загрузка…</div>
+                    )}
+                    {!loading && items.length === 0 && (
+                        <div style={{ textAlign: 'center', padding: 40, color: S.muted, fontFamily: 'Inter', fontSize: 13, fontStyle: 'italic' }}>
+                            {snapshot ? 'Нет данных по фильтрам' : 'Snapshot не построен. Нажмите «Пересчитать».'}
+                        </div>
+                    )}
+                    {items.map((it) => (
+                        <div
+                            key={it.productId}
+                            onClick={() => setSelectedProductId(it.productId)}
+                            style={{
+                                background: '#fff', borderRadius: 14, padding: 14,
+                                border: `1px solid ${S.border}`, boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: 13, color: S.ink }}>
+                                    {it.sku}
+                                </span>
+                                <span style={{
+                                    display: 'inline-flex', padding: '2px 8px', borderRadius: 6,
+                                    fontFamily: 'Inter', fontSize: 11, fontWeight: 700,
+                                    background: it.marginPct === null ? '#f1f5f9'
+                                        : it.marginPct >= 30 ? 'rgba(16,185,129,0.1)'
+                                        : it.marginPct >= 20 ? 'rgba(245,158,11,0.1)'
+                                        : 'rgba(239,68,68,0.1)',
+                                    color: it.marginPct === null ? S.muted
+                                        : it.marginPct >= 30 ? S.green
+                                        : it.marginPct >= 20 ? S.amber
+                                        : S.red,
+                                }}>
+                                    {it.marginPct !== null ? `${it.marginPct.toFixed(1)}%` : '—'}
+                                </span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontFamily: 'Inter', fontSize: 11 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: S.muted }}>Выручка</span>
+                                    <span style={{ color: S.ink, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>+{fmtMoney(it.revenue)}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: S.muted }}>Себестоимость</span>
+                                    <span style={{ color: S.red, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>−{fmtMoney(it.cogs)}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: S.muted }}>Комиссия МП</span>
+                                    <span style={{ color: S.red, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>−{fmtMoney(it.marketplaceFees)}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: S.muted }}>Логистика</span>
+                                    <span style={{ color: S.red, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>−{fmtMoney(it.logistics)}</span>
+                                </div>
+                                <div style={{
+                                    display: 'flex', justifyContent: 'space-between',
+                                    paddingTop: 7, marginTop: 3, borderTop: `1px solid ${S.border}`,
+                                }}>
+                                    <span style={{ color: S.ink, fontWeight: 700 }}>Прибыль</span>
+                                    <span style={{
+                                        color: it.profit >= 0 ? S.green : S.red,
+                                        fontWeight: 800, fontVariantNumeric: 'tabular-nums',
+                                    }}>
+                                        {it.profit >= 0 ? '+' : ''}{fmtMoney(it.profit)}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {selectedProductId && (
+                    <ProductDrawer
+                        productId={selectedProductId}
+                        onClose={() => setSelectedProductId(null)}
+                        onSaved={fetchData}
+                        isPaused={isPaused}
+                    />
+                )}
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">

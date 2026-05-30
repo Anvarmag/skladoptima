@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SkladOptima</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&family=Montserrat:wght@700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body { font-family: 'Inter', sans-serif; background: #f8fafc; -webkit-font-smoothing: antialiased; }
+  input, select, button, textarea { font-family: inherit; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes slideIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+  /* Tweaks panel */
+  #tweaks-panel {
+    position: fixed; bottom: 24px; right: 24px; width: 260px;
+    background: #fff; border-radius: 16px; border: 1px solid #e2e8f0;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+    padding: 16px; z-index: 900; display: none; flex-direction: column; gap: 12px;
+    animation: slideIn 0.2s ease;
+  }
+  #tweaks-panel.open { display: flex; }
+  .tweak-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .tweak-label { font-family: Inter; font-size: 12px; color: #64748b; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<div id="tweaks-panel">
+  <div style="font-family:Inter;font-weight:700;font-size:13px;color:#0f172a;margin-bottom:4px">Tweaks</div>
+</div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "sidebarWidth": 240,
+  "cardRadius": 16,
+  "density": "comfortable",
+  "accentScheme": "blue-violet"
+}/*EDITMODE-END*/;
+
+function App() {
+  const saved = localStorage.getItem('so_screen') || 'products';
+  const [screen, setScreen] = useState(saved);
+  const [toasts, setToasts] = useState([]);
+  const [tweaks, setTweaks] = useState(TWEAK_DEFAULTS);
+  const toastRef = useRef(0);
+
+  const onNav = (id) => { setScreen(id); localStorage.setItem('so_screen', id); };
+
+  const onToast = (type, message) => {
+    const id = ++toastRef.current;
+    setToasts(t => [...t, { id, type, message }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+  };
+
+  // Tweaks panel
+  useEffect(() => {
+    const panel = document.getElementById('tweaks-panel');
+    window.addEventListener('message', e => {
+      if (e.data?.type === '__activate_edit_mode')   { panel.classList.add('open'); }
+      if (e.data?.type === '__deactivate_edit_mode') { panel.classList.remove('open'); }
+    });
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+  }, []);
+
+  const screenProps = { onToast };
+
+  const screens = {
+    products:  <ProductsScreen  {...screenProps}/>,
+    analytics: <AnalyticsScreen {...screenProps}/>,
+    orders:    <OrdersScreen    {...screenProps}/>,
+    telegram:  <TelegramScreen  {...screenProps}/>,
+    settings:  <SettingsScreen  {...screenProps}/>,
+    finance:   <PlaceholderScreen title="Юнит-экономика" icon="DollarSign"/>,
+    history:   <PlaceholderScreen title="История изменений" icon="Clock"/>,
+  };
+
+  return (
+    <div style={{ display:'flex', height:'100vh', overflow:'hidden' }}>
+      <Sidebar active={screen} onNav={onNav}/>
+      <main style={{ flex:1, overflowY:'auto', background:'#f8fafc' }}>
+        <div style={{ maxWidth:1200, margin:'0 auto', padding:'32px 32px' }}>
+          {screens[screen]}
+        </div>
+      </main>
+      <Toast toasts={toasts}/>
+
+      {/* Tweaks panel content */}
+      <div id="tweaks-panel" className="">
+        <div style={{ fontFamily:'Inter', fontWeight:700, fontSize:13, color:'#0f172a', borderBottom:'1px solid #f1f5f9', paddingBottom:10, marginBottom:4 }}>Tweaks</div>
+        <div className="tweak-row">
+          <span className="tweak-label">Плотность таблицы</span>
+          <select value={tweaks.density} onChange={e=>setTweaks(t=>({...t,density:e.target.value}))} style={{ fontFamily:'Inter',fontSize:11,padding:'3px 6px',borderRadius:6,border:'1px solid #e2e8f0',color:'#0f172a' }}>
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </div>
+        <div className="tweak-row">
+          <span className="tweak-label">Радиус карточек</span>
+          <input type="range" min={8} max={24} value={tweaks.cardRadius} onChange={e=>setTweaks(t=>({...t,cardRadius:Number(e.target.value)}))} style={{ width:90 }}/>
+        </div>
+        <div className="tweak-row">
+          <span className="tweak-label">Акцент сайдбара</span>
+          <select value={tweaks.accentScheme} onChange={e=>setTweaks(t=>({...t,accentScheme:e.target.value}))} style={{ fontFamily:'Inter',fontSize:11,padding:'3px 6px',borderRadius:6,border:'1px solid #e2e8f0',color:'#0f172a' }}>
+            <option value="blue-violet">Blue → Violet</option>
+            <option value="emerald-teal">Emerald → Teal</option>
+            <option value="rose-orange">Rose → Orange</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PlaceholderScreen({ title, icon }) {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'60vh', gap:16 }}>
+      <div style={{ width:64, height:64, borderRadius:20, background:'#f1f5f9', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <Icon name={icon} size={28} color="#94a3b8"/>
+      </div>
+      <div style={{ fontFamily:'Inter', fontWeight:800, fontSize:22, color:'#0f172a' }}>{title}</div>
+      <div style={{ fontFamily:'Inter', fontSize:14, color:'#64748b' }}>Раздел в разработке</div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+
+<template id="__bundler_thumbnail">
+  <svg viewBox="0 0 120 80" xmlns="http://www.w3.org/2000/svg">
+    <rect width="120" height="80" fill="#f8fafc"/>
+    <rect width="28" height="80" fill="#0f172a"/>
+    <rect x="8" y="14" width="12" height="12" rx="3" fill="url(#lg)"/>
+    <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs>
+    <rect x="8" y="34" width="12" height="4" rx="2" fill="rgba(255,255,255,0.3)"/>
+    <rect x="8" y="42" width="10" height="4" rx="2" fill="rgba(255,255,255,0.15)"/>
+    <rect x="8" y="50" width="11" height="4" rx="2" fill="rgba(255,255,255,0.15)"/>
+    <rect x="36" y="10" width="76" height="14" rx="4" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="36" y="28" width="17" height="12" rx="3" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="36" y="28" width="17" height="2" rx="1" fill="url(#lg)"/>
+    <rect x="57" y="28" width="17" height="12" rx="3" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="57" y="28" width="17" height="2" rx="1" fill="#ef4444"/>
+    <rect x="78" y="28" width="17" height="12" rx="3" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="78" y="28" width="17" height="2" rx="1" fill="#f59e0b"/>
+    <rect x="99" y="28" width="13" height="12" rx="3" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="36" y="44" width="76" height="30" rx="4" fill="#fff" stroke="#e2e8f0" stroke-width="0.5"/>
+    <rect x="40" y="50" width="20" height="3" rx="1" fill="#e2e8f0"/>
+    <rect x="40" y="56" width="14" height="3" rx="1" fill="#e2e8f0"/>
+    <rect x="40" y="62" width="18" height="3" rx="1" fill="#e2e8f0"/>
+  </svg>
+</template>
+</body>
+</html>

@@ -142,35 +142,49 @@ export class AnalyticsRecommendationsService {
 
         for (const c of candidates) {
             byRule[c.ruleKey] = (byRule[c.ruleKey] ?? 0) + 1;
-            await this.prisma.analyticsRecommendation.upsert({
-                where: {
-                    tenantId_productId_ruleKey: {
-                        tenantId,
-                        productId: c.productId as string,
-                        ruleKey: c.ruleKey,
+
+            const updateData = {
+                reasonCode: c.reasonCode,
+                priority: c.priority,
+                status: AnalyticsRecommendationStatus.ACTIVE,
+                message: c.message,
+                payload: c.payload as unknown as Prisma.InputJsonValue,
+                formulaVersion: ANALYTICS_FORMULA_VERSION,
+                resolvedAt: null,
+            };
+
+            if (c.productId !== null) {
+                // productId известен — используем составной unique для upsert
+                await this.prisma.analyticsRecommendation.upsert({
+                    where: {
+                        tenantId_productId_ruleKey: {
+                            tenantId,
+                            productId: c.productId,
+                            ruleKey: c.ruleKey,
+                        },
                     },
-                },
-                create: {
-                    tenantId,
-                    productId: c.productId,
-                    ruleKey: c.ruleKey,
-                    reasonCode: c.reasonCode,
-                    priority: c.priority,
-                    status: AnalyticsRecommendationStatus.ACTIVE,
-                    message: c.message,
-                    payload: c.payload as unknown as Prisma.InputJsonValue,
-                    formulaVersion: ANALYTICS_FORMULA_VERSION,
-                },
-                update: {
-                    reasonCode: c.reasonCode,
-                    priority: c.priority,
-                    status: AnalyticsRecommendationStatus.ACTIVE,
-                    message: c.message,
-                    payload: c.payload as unknown as Prisma.InputJsonValue,
-                    formulaVersion: ANALYTICS_FORMULA_VERSION,
-                    resolvedAt: null,
-                },
-            });
+                    create: { tenantId, productId: c.productId, ruleKey: c.ruleKey, ...updateData },
+                    update: updateData,
+                });
+            } else {
+                // productId = null — Prisma не поддерживает upsert с null в составном unique,
+                // поэтому делаем findFirst + create/update вручную
+                const existing = await this.prisma.analyticsRecommendation.findFirst({
+                    where: { tenantId, productId: null, ruleKey: c.ruleKey },
+                    select: { id: true },
+                });
+                if (existing) {
+                    await this.prisma.analyticsRecommendation.update({
+                        where: { id: existing.id },
+                        data: updateData,
+                    });
+                } else {
+                    await this.prisma.analyticsRecommendation.create({
+                        data: { tenantId, productId: null, ruleKey: c.ruleKey, ...updateData },
+                    });
+                }
+            }
+
             activated += 1;
         }
 

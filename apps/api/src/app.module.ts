@@ -31,6 +31,7 @@ import { WorkerModule } from './modules/worker/worker.module';
 import { StockLocksModule } from './modules/stock-locks/stock-locks.module';
 import { TasksModule } from './modules/tasks/tasks.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { ProductNotesModule } from './modules/product-notes/product-notes.module';
 
 // Примечание: В будущем SettingsModule и SyncModule могут быть сильно переработаны
 // или перенесены в apps/worker.
@@ -63,6 +64,7 @@ import { AdminModule } from './modules/admin/admin.module';
     StockLocksModule,
     TasksModule,
     AdminModule,
+    ProductNotesModule,
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',

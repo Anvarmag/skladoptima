@@ -5,6 +5,7 @@ import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Products from './pages/Products';
+import ProductCatalog from './pages/ProductCatalog';
 import Inventory from './pages/Inventory';
 import Warehouses from './pages/Warehouses';
 import MarketplaceAccounts from './pages/MarketplaceAccounts';
@@ -111,6 +112,7 @@ function App() {
                 </PrivateRoute>
             }>
                 <Route index element={<Products />} />
+                <Route path="products" element={<ProductCatalog />} />
                 <Route path="inventory" element={<Inventory />} />
                 <Route path="warehouses" element={<Warehouses />} />
                 <Route path="integrations" element={<MarketplaceAccounts />} />

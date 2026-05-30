@@ -203,6 +203,19 @@ export class AuditService {
             this.prisma.auditLog.count({ where }),
         ]);
 
+        // Enrich actor emails for user-type records
+        const userActorIds = [...new Set(
+            logs.filter(l => l.actorType === 'user' && l.actorId).map(l => l.actorId as string),
+        )];
+        const actorEmailMap = new Map<string, string>();
+        if (userActorIds.length > 0) {
+            const users = await this.prisma.user.findMany({
+                where: { id: { in: userActorIds } },
+                select: { id: true, email: true },
+            });
+            for (const u of users) actorEmailMap.set(u.id, u.email);
+        }
+
         this.logger.log(JSON.stringify({
             metric:   'audit_query_executed',
             query:    'getLogs',
@@ -213,7 +226,10 @@ export class AuditService {
         }));
 
         return {
-            data: logs.map(log => this.maskAuditLogForTenant(log)),
+            data: logs.map(log => ({
+                ...this.maskAuditLogForTenant(log),
+                actorEmail: log.actorType === 'user' && log.actorId ? (actorEmailMap.get(log.actorId) ?? null) : null,
+            })),
             meta: { total, page, lastPage: Math.ceil(total / limit), retentionDays: AUDIT_RETENTION_DAYS },
         };
     }

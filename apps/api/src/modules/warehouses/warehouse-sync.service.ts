@@ -10,6 +10,7 @@ import axios, { AxiosError } from 'axios';
 import { WarehouseSnapshot } from './warehouse-snapshot';
 import { normalizeWbWarehouseList } from './normalizers/wb.normalizer';
 import { normalizeOzonWarehouseList } from './normalizers/ozon.normalizer';
+import { CredentialsCipher } from '../marketplace-accounts/credentials-cipher.service';
 
 /** Безопасный безумный safe-window: 30 дней без возврата → ARCHIVED. */
 const ARCHIVE_AFTER_DAYS = 30;
@@ -56,7 +57,10 @@ export class WarehouseSyncService {
         OZON: this._fetchOzon.bind(this),
     };
 
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly cipher: CredentialsCipher,
+    ) {}
 
     /**
      * Sync для всех аккаунтов tenant'а. Skip целиком при tenant pause —
@@ -112,6 +116,7 @@ export class WarehouseSyncService {
     async syncForAccount(accountId: string): Promise<WarehouseSyncResult> {
         const account = await this.prisma.marketplaceAccount.findUnique({
             where: { id: accountId },
+            include: { credential: true },
         });
         if (!account) throw new NotFoundException({ code: 'MARKETPLACE_ACCOUNT_NOT_FOUND' });
 
@@ -152,7 +157,8 @@ export class WarehouseSyncService {
         }));
 
         const fetcher = this.fetchers[account.marketplace];
-        const fetched = await fetcher({ apiKey: account.apiKey, clientId: account.clientId });
+        const resolved = this._resolveCredentials(account);
+        const fetched = await fetcher(resolved);
 
         if (fetched.error) {
             // Failed API: НЕ применяем lifecycle, чтобы один сбой не зануллил справочник.
@@ -382,6 +388,41 @@ export class WarehouseSyncService {
             }));
         }
         return candidates.length;
+    }
+
+    /**
+     * Resolves API credentials for a marketplace account.
+     * Priority: encrypted storage (TASK_2) > legacy plaintext fields.
+     * Fallback ensures accounts created via old Settings page keep working.
+     *
+     * WB credential-schema stores the token as `apiToken`; the fetcher interface
+     * uses `apiKey` as the unified field name — mapping happens here.
+     */
+    private _resolveCredentials(
+        account: { marketplace: MarketplaceType; apiKey: string | null; clientId: string | null } & {
+            credential?: { encryptedPayload: Buffer } | null;
+        },
+    ): { apiKey: string | null; clientId: string | null } {
+        if (!account.credential?.encryptedPayload) {
+            return { apiKey: account.apiKey, clientId: account.clientId };
+        }
+        try {
+            const dec = this.cipher.decrypt(account.credential.encryptedPayload) as Record<string, string>;
+            if (account.marketplace === MarketplaceType.WB) {
+                return {
+                    apiKey: dec.apiToken ?? account.apiKey,
+                    clientId: null,
+                };
+            }
+            // OZON — credential-schema field names match fetcher expectations
+            return {
+                apiKey: dec.apiKey ?? account.apiKey,
+                clientId: dec.clientId ?? account.clientId,
+            };
+        } catch {
+            // Decryption failure is non-fatal: fall back to legacy plaintext
+            return { apiKey: account.apiKey, clientId: account.clientId };
+        }
     }
 
     private _marketplaceToSource(m: MarketplaceType): WarehouseSourceMarketplace {

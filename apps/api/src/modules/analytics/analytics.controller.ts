@@ -84,6 +84,7 @@ export class AnalyticsController {
         return this.readService.getDashboard(req.activeTenantId, {
             periodFrom: new Date(q.from),
             periodTo: new Date(q.to),
+            marketplace: q.marketplace,
         });
     }
 
@@ -92,6 +93,16 @@ export class AnalyticsController {
         return this.readService.getRevenueDynamics(req.activeTenantId, {
             periodFrom: new Date(q.from),
             periodTo: new Date(q.to),
+            marketplace: q.marketplace,
+        });
+    }
+
+    @Get('clusters')
+    async getClusterStock(@Req() req: any, @Query() q: AnalyticsPeriodDto) {
+        return this.readService.getClusterStock(req.activeTenantId, {
+            periodFrom: new Date(q.from),
+            periodTo: new Date(q.to),
+            marketplace: q.marketplace,
         });
     }
 

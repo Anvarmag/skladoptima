@@ -14,6 +14,7 @@ import {
     ImportItemAction,
     ProductSourceOfTruth,
     ProductStatus,
+    Prisma,
 } from '@prisma/client';
 import { AUDIT_EVENTS } from '../audit/audit-event-catalog';
 
@@ -82,7 +83,7 @@ export class ImportService {
                 jobId: job.id,
                 rowNumber: idx + 1,
                 rawPayload: row as object,
-                validationErrors: hasEntries ? entries : null,
+                validationErrors: hasEntries ? entries : Prisma.JsonNull,
                 action,
             };
         });
@@ -186,7 +187,7 @@ export class ImportService {
                 continue;
             }
 
-            const row = item.rawPayload as ImportRowDto;
+            const row = item.rawPayload as unknown as ImportRowDto;
 
             // Проверяем source-conflict в stored entries (чтобы аудировать его при commit)
             const entries = (item.validationErrors ?? []) as ValidationEntry[];

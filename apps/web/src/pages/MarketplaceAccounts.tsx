@@ -6,11 +6,12 @@ import {
     KeyRound, Eye, EyeOff,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { S, PageHeader, Card, Btn, Badge, Input, Modal, FieldLabel } from '../components/ui';
 
 // ─────────────────────────────── types ───────────────────────────────
 
-const WRITE_BLOCKED_STATES = ['SUSPENDED', 'CLOSED'];                       // полный read-only
-const EXTERNAL_API_BLOCKED_STATES = ['TRIAL_EXPIRED', 'SUSPENDED', 'CLOSED']; // блок validate/reactivate/create/credentials
+const WRITE_BLOCKED_STATES = ['SUSPENDED', 'CLOSED'];
+const EXTERNAL_API_BLOCKED_STATES = ['TRIAL_EXPIRED', 'SUSPENDED', 'CLOSED'];
 
 type Marketplace = 'WB' | 'OZON';
 type LifecycleStatus = 'ACTIVE' | 'INACTIVE';
@@ -62,27 +63,50 @@ interface AccountDiagnostics extends AccountRow {
 // ─────────────────────────────── helpers ─────────────────────────────
 
 const MARKETPLACE_LABEL: Record<Marketplace, string> = { WB: 'Wildberries', OZON: 'Ozon' };
-const MARKETPLACE_TONE: Record<Marketplace, string> = {
-    WB: 'bg-fuchsia-50 text-fuchsia-700 border border-fuchsia-200',
-    OZON: 'bg-sky-50 text-sky-700 border border-sky-200',
+const MARKETPLACE_COLOR: Record<Marketplace, string> = { WB: S.wb, OZON: S.oz };
+
+const FIELD_META: Record<string, { label: string; hint: string; placeholder?: string }> = {
+    apiToken: {
+        label: 'Токен управления остатками',
+        hint: 'ЛК Wildberries → Профиль → Настройки → Доступ к API. Нужны права: Маркетплейс (чтение и запись)',
+        placeholder: 'eyJ...',
+    },
+    warehouseId: {
+        label: 'ID склада FBS',
+        hint: 'ЛК маркетплейса → Логистика / Поставки → Склады → ID вашего склада FBS',
+        placeholder: '123456',
+    },
+    analyticsToken: {
+        label: 'Токен аналитики и юнит-экономики',
+        hint: 'ЛК Wildberries → Доступ к API → создайте токен с правами: Статистика + Контент + Финансы + Аналитика (только чтение). Нужен для FBO-остатков, карточек товаров и финансовой аналитики.',
+        placeholder: 'eyJ...',
+    },
+    clientId: {
+        label: 'Client ID',
+        hint: 'ЛК Ozon → Настройки → API ключи → Client ID',
+        placeholder: '123456',
+    },
+    apiKey: {
+        label: 'API-ключ',
+        hint: 'ЛК Ozon → Настройки → API ключи → Ключ. Создайте с правами: Контент, Склад, Аналитика, Финансы',
+        placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+    },
 };
 
-const LIFECYCLE_TONE: Record<LifecycleStatus, string> = {
-    ACTIVE: 'bg-emerald-100 text-emerald-800',
-    INACTIVE: 'bg-slate-200 text-slate-700',
-};
-const LIFECYCLE_LABEL: Record<LifecycleStatus, string> = {
-    ACTIVE: 'Активен',
-    INACTIVE: 'Отключён',
-};
+// Badge color helpers
+function lifecycleBadge(s: LifecycleStatus): { color: string; bg: string } {
+    if (s === 'ACTIVE') return { color: S.green, bg: 'rgba(16,185,129,0.10)' };
+    return { color: S.sub, bg: '#f1f5f9' };
+}
+const LIFECYCLE_LABEL: Record<LifecycleStatus, string> = { ACTIVE: 'Активен', INACTIVE: 'Отключён' };
 
-const CRED_TONE: Record<CredentialStatus, string> = {
-    VALIDATING: 'bg-blue-100 text-blue-800',
-    VALID: 'bg-emerald-100 text-emerald-800',
-    INVALID: 'bg-red-100 text-red-800',
-    NEEDS_RECONNECT: 'bg-amber-100 text-amber-800',
-    UNKNOWN: 'bg-slate-100 text-slate-700',
-};
+function credBadge(s: CredentialStatus): { color: string; bg: string } {
+    if (s === 'VALID') return { color: S.green, bg: 'rgba(16,185,129,0.10)' };
+    if (s === 'INVALID') return { color: S.red, bg: 'rgba(239,68,68,0.08)' };
+    if (s === 'NEEDS_RECONNECT') return { color: S.amber, bg: 'rgba(245,158,11,0.10)' };
+    if (s === 'VALIDATING') return { color: '#3b82f6', bg: 'rgba(59,130,246,0.08)' };
+    return { color: S.muted, bg: '#f1f5f9' };
+}
 const CRED_LABEL: Record<CredentialStatus, string> = {
     VALIDATING: 'Проверяется...',
     VALID: 'Ключи валидны',
@@ -91,13 +115,13 @@ const CRED_LABEL: Record<CredentialStatus, string> = {
     UNKNOWN: 'Статус неизвестен',
 };
 
-const SYNC_TONE: Record<SyncHealthStatus, string> = {
-    HEALTHY: 'bg-emerald-100 text-emerald-800',
-    DEGRADED: 'bg-amber-100 text-amber-800',
-    PAUSED: 'bg-slate-200 text-slate-700',
-    ERROR: 'bg-red-100 text-red-800',
-    UNKNOWN: 'bg-slate-100 text-slate-700',
-};
+function syncBadge(s: SyncHealthStatus): { color: string; bg: string } {
+    if (s === 'HEALTHY') return { color: S.green, bg: 'rgba(16,185,129,0.10)' };
+    if (s === 'DEGRADED') return { color: S.amber, bg: 'rgba(245,158,11,0.10)' };
+    if (s === 'ERROR') return { color: S.red, bg: 'rgba(239,68,68,0.08)' };
+    if (s === 'PAUSED') return { color: S.sub, bg: '#f1f5f9' };
+    return { color: S.muted, bg: '#f1f5f9' };
+}
 const SYNC_LABEL: Record<SyncHealthStatus, string> = {
     HEALTHY: 'Sync исправен',
     DEGRADED: 'Sync с ошибками',
@@ -106,13 +130,13 @@ const SYNC_LABEL: Record<SyncHealthStatus, string> = {
     UNKNOWN: 'Sync не запускался',
 };
 
-const EFFECTIVE_TONE: Record<EffectiveRuntimeState, string> = {
-    OPERATIONAL: 'bg-emerald-100 text-emerald-800',
-    PAUSED_BY_TENANT: 'bg-amber-100 text-amber-800',
-    CREDENTIAL_BLOCKED: 'bg-red-100 text-red-800',
-    SYNC_DEGRADED: 'bg-amber-100 text-amber-800',
-    INACTIVE: 'bg-slate-200 text-slate-700',
-};
+function effectiveBadge(s: EffectiveRuntimeState): { color: string; bg: string } {
+    if (s === 'OPERATIONAL') return { color: S.green, bg: 'rgba(16,185,129,0.10)' };
+    if (s === 'PAUSED_BY_TENANT') return { color: S.amber, bg: 'rgba(245,158,11,0.10)' };
+    if (s === 'CREDENTIAL_BLOCKED') return { color: S.red, bg: 'rgba(239,68,68,0.08)' };
+    if (s === 'SYNC_DEGRADED') return { color: S.amber, bg: 'rgba(245,158,11,0.10)' };
+    return { color: S.sub, bg: '#f1f5f9' };
+}
 const EFFECTIVE_LABEL: Record<EffectiveRuntimeState, string> = {
     OPERATIONAL: 'Работает',
     PAUSED_BY_TENANT: 'Пауза по тарифу',
@@ -120,7 +144,6 @@ const EFFECTIVE_LABEL: Record<EffectiveRuntimeState, string> = {
     SYNC_DEGRADED: 'Sync деградирован',
     INACTIVE: 'Отключён вручную',
 };
-
 const EFFECTIVE_HINT: Record<EffectiveRuntimeState, string> = {
     OPERATIONAL: 'Подключение работает штатно. Sync выполняется по расписанию.',
     PAUSED_BY_TENANT: 'Внешние API-вызовы приостановлены политикой подписки. Оформите подписку для возобновления.',
@@ -309,16 +332,15 @@ export default function MarketplaceAccounts() {
         return ['clientId', 'apiKey', 'warehouseId'];
     }, [formMarketplace]);
 
-    const optionalFields = useMemo(() => (formMarketplace === 'WB' ? ['statToken'] : []), [formMarketplace]);
+    const optionalFields = useMemo(() => (formMarketplace === 'WB' ? ['analyticsToken'] : []), [formMarketplace]);
 
-    const isSecretField = (k: string) => k === 'apiToken' || k === 'apiKey' || k === 'statToken';
+    const isSecretField = (k: string) => k === 'apiToken' || k === 'apiKey' || k === 'analyticsToken';
 
     const submitForm = async () => {
         setFormError(null);
         const label = formLabel.trim();
         if (!label) { setFormError('Название обязательно.'); return; }
 
-        // Сборка credentials: для CREATE — все required; для EDIT — только тронутые поля.
         const creds: Record<string, string> = {};
         const allFields = [...requiredFields, ...optionalFields];
         for (const k of allFields) {
@@ -337,17 +359,14 @@ export default function MarketplaceAccounts() {
         if (modalMode === 'edit' && !isCredentialChange && label === modalAccount?.label) {
             setFormError('Нет изменений.'); return;
         }
-        // EDIT с credentials — попадает под external-API guard.
         if (modalMode === 'edit' && isCredentialChange && externalBlocked) {
             setFormError(externalHint || 'Изменение ключей сейчас заблокировано тарифом.');
             return;
         }
-        // CREATE → external-API guard.
         if (modalMode === 'create' && externalBlocked) {
             setFormError(externalHint || 'Создание подключений сейчас заблокировано тарифом.');
             return;
         }
-        // EDIT label-only → internal write guard (только SUSPENDED/CLOSED блокируют).
         if (modalMode === 'edit' && !isCredentialChange && writeBlocked) {
             setFormError(writeHint || 'Изменения заблокированы.');
             return;
@@ -401,53 +420,72 @@ export default function MarketplaceAccounts() {
 
     // ─── render
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-                <div>
-                    <h1 className="text-xl md:text-2xl font-bold text-slate-900 flex items-center">
-                        <Plug className="h-6 w-6 mr-2 text-blue-600" />
-                        Маркетплейс-подключения
-                    </h1>
-                    <p className="text-xs md:text-sm text-slate-500 mt-1">
-                        WB, Ozon — credentials, статусы и диагностика. По одному активному аккаунту на маркетплейс.
-                    </p>
-                </div>
-                <div className="flex items-center gap-2">
-                    {writeBlocked && (
-                        <span className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800">
-                            <Lock className="h-3.5 w-3.5" />
-                            Только чтение
-                        </span>
-                    )}
-                    <button
-                        onClick={loadAccounts}
-                        disabled={loading || refreshing}
-                        className="px-3 py-1.5 text-sm rounded inline-flex items-center gap-1 border border-slate-300 text-slate-600 hover:bg-slate-50"
-                    >
-                        <RefreshCw className={`h-3.5 w-3.5 ${loading || refreshing ? 'animate-spin' : ''}`} />
-                        Обновить
-                    </button>
-                </div>
-            </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Page header */}
+            <PageHeader
+                title="Маркетплейс-подключения"
+                subtitle="WB, Ozon — credentials, статусы и диагностика. По одному активному аккаунту на маркетплейс."
+            >
+                {writeBlocked && (
+                    <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 5,
+                        fontSize: 12, padding: '5px 12px', borderRadius: 8,
+                        background: 'rgba(245,158,11,0.10)', border: '1px solid rgba(245,158,11,0.25)',
+                        color: S.amber, fontFamily: 'Inter', fontWeight: 600,
+                    }}>
+                        <Lock size={13} />
+                        Только чтение
+                    </span>
+                )}
+                <Btn
+                    variant="secondary"
+                    size="sm"
+                    onClick={loadAccounts}
+                    disabled={loading || refreshing}
+                >
+                    <RefreshCw size={13} style={{ animation: (loading || refreshing) ? 'spin 0.7s linear infinite' : undefined }} />
+                    Обновить
+                </Btn>
+            </PageHeader>
 
+            {/* Top message banner */}
             {topMessage && (
-                <div className={`text-sm border rounded-md px-3 py-2 flex items-start gap-2 ${
-                    topMessage.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : topMessage.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800'
-                    : 'bg-red-50 border-red-200 text-red-800'
-                }`}>
-                    {topMessage.kind === 'ok' ? <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        : topMessage.kind === 'warn' ? <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                        : <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />}
-                    <span>{topMessage.text}</span>
-                    <button onClick={() => setTopMessage(null)} className="ml-auto text-current/60 hover:text-current">
-                        <X className="h-3.5 w-3.5" />
+                <div style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 10,
+                    padding: '12px 16px', borderRadius: 10, fontSize: 13, fontFamily: 'Inter',
+                    background: topMessage.kind === 'ok'
+                        ? 'rgba(16,185,129,0.08)'
+                        : topMessage.kind === 'warn'
+                            ? 'rgba(245,158,11,0.08)'
+                            : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${
+                        topMessage.kind === 'ok'
+                            ? 'rgba(16,185,129,0.25)'
+                            : topMessage.kind === 'warn'
+                                ? 'rgba(245,158,11,0.25)'
+                                : 'rgba(239,68,68,0.25)'
+                    }`,
+                    color: topMessage.kind === 'ok' ? S.green
+                        : topMessage.kind === 'warn' ? S.amber
+                        : S.red,
+                }}>
+                    {topMessage.kind === 'ok'
+                        ? <CheckCircle2 size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                        : topMessage.kind === 'warn'
+                            ? <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                            : <AlertCircle size={15} style={{ flexShrink: 0, marginTop: 1 }} />}
+                    <span style={{ flex: 1 }}>{topMessage.text}</span>
+                    <button
+                        onClick={() => setTopMessage(null)}
+                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 2, color: 'inherit', opacity: 0.6, display: 'flex', alignItems: 'center' }}
+                    >
+                        <X size={14} />
                     </button>
                 </div>
             )}
 
             {/* Quick add buttons */}
-            <div className="flex flex-wrap gap-2">
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 {(['WB', 'OZON'] as Marketplace[]).map((mp) => {
                     const blocked = mp === 'WB' ? wbExistsActive : ozonExistsActive;
                     const disabled = externalBlocked || blocked;
@@ -457,294 +495,401 @@ export default function MarketplaceAccounts() {
                             ? externalHint
                             : `Подключить ${MARKETPLACE_LABEL[mp]}`;
                     return (
-                        <button
+                        <Btn
                             key={mp}
+                            variant={mp === 'WB' ? 'wb' : 'oz'}
+                            size="sm"
                             onClick={() => openCreate(mp)}
                             disabled={disabled}
                             title={reason}
-                            className={`text-sm inline-flex items-center px-3 py-1.5 rounded border ${
-                                disabled
-                                    ? 'border-slate-200 text-slate-400 bg-slate-50 cursor-not-allowed'
-                                    : 'border-blue-300 text-blue-700 hover:bg-blue-50'
-                            }`}
                         >
-                            {disabled ? <Lock className="h-3.5 w-3.5 mr-1" /> : <Plus className="h-3.5 w-3.5 mr-1" />}
+                            {disabled ? <Lock size={13} /> : <Plus size={13} />}
                             Подключить {MARKETPLACE_LABEL[mp]}
-                        </button>
+                        </Btn>
                     );
                 })}
             </div>
 
-            {/* Master-detail */}
-            <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                {/* List */}
-                <div className="lg:col-span-3 bg-white border border-slate-200 rounded-md overflow-hidden">
-                    <table className="w-full text-sm">
-                        <thead className="bg-slate-50 text-slate-600 text-xs uppercase">
-                            <tr>
-                                <th className="px-3 py-2 text-left">Подключение</th>
-                                <th className="px-3 py-2 text-left">Жизн. цикл</th>
-                                <th className="px-3 py-2 text-left">Ключи</th>
-                                <th className="px-3 py-2 text-left">Sync</th>
-                                <th className="px-3 py-2 text-right">Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                            {accounts.length === 0 && !loading && (
-                                <tr><td colSpan={5} className="text-center py-8 text-slate-500">Нет подключений. Используйте кнопки выше.</td></tr>
-                            )}
-                            {accounts.map((a) => {
-                                const active = selectedId === a.id;
-                                const isInactive = a.lifecycleStatus === 'INACTIVE';
-                                return (
-                                    <tr
-                                        key={a.id}
-                                        onClick={() => setSelectedId(a.id)}
-                                        className={`cursor-pointer ${active ? 'bg-blue-50' : 'hover:bg-slate-50'}`}
-                                    >
-                                        <td className="px-3 py-2">
-                                            <div className="flex items-center gap-2">
-                                                <span className={`text-[10px] px-1.5 py-0.5 rounded ${MARKETPLACE_TONE[a.marketplace]}`}>
-                                                    {MARKETPLACE_LABEL[a.marketplace]}
-                                                </span>
-                                                <span className="font-medium text-slate-900">{a.label}</span>
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 mt-0.5">
-                                                {a.credential?.maskedPreview && Object.entries(a.credential.maskedPreview).map(([k, v]) => v && (
-                                                    <span key={k} className="font-mono mr-2">{k}={v}</span>
+            {/* Master-detail layout */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 16 }}>
+                    {/* Accounts table */}
+                    <Card noPad>
+                        {/* Table header */}
+                        <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '2fr 1fr 1fr 1fr auto',
+                            alignItems: 'center',
+                            padding: '10px 16px',
+                            borderBottom: `1px solid ${S.border}`,
+                            background: '#f8fafc',
+                            borderRadius: '16px 16px 0 0',
+                        }}>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Подключение</div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Жизн. цикл</div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Ключи</div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Sync</div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em', textAlign: 'right' }}>Действия</div>
+                        </div>
+
+                        {/* Empty state */}
+                        {accounts.length === 0 && !loading && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '40px 24px' }}>
+                                <Plug size={28} color={S.muted} style={{ opacity: 0.4 }} />
+                                <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                                    Нет подключений. Используйте кнопки выше.
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Rows */}
+                        {accounts.map((a, idx) => {
+                            const isActive = selectedId === a.id;
+                            const isInactive = a.lifecycleStatus === 'INACTIVE';
+                            const mpColor = MARKETPLACE_COLOR[a.marketplace];
+                            const lc = lifecycleBadge(a.lifecycleStatus);
+                            const cr = credBadge(a.credentialStatus);
+                            const sy = syncBadge(a.syncHealthStatus);
+                            return (
+                                <div
+                                    key={a.id}
+                                    onClick={() => setSelectedId(a.id)}
+                                    style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '2fr 1fr 1fr 1fr auto',
+                                        alignItems: 'center',
+                                        padding: '12px 16px',
+                                        borderBottom: idx < accounts.length - 1 ? `1px solid ${S.border}` : 'none',
+                                        background: isActive ? 'rgba(59,130,246,0.04)' : '#fff',
+                                        borderLeft: `3px solid ${mpColor}`,
+                                        cursor: 'pointer',
+                                        transition: 'background 0.12s',
+                                        ...(idx === accounts.length - 1 ? { borderRadius: '0 0 16px 16px' } : {}),
+                                    }}
+                                    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#f8fafc'; }}
+                                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = '#fff'; }}
+                                >
+                                    {/* Name + masked preview */}
+                                    <div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <span style={{
+                                                fontFamily: 'Inter', fontWeight: 700, fontSize: 11,
+                                                color: mpColor, background: `${mpColor}14`,
+                                                padding: '2px 7px', borderRadius: 99, border: `1px solid ${mpColor}33`,
+                                                flexShrink: 0,
+                                            }}>
+                                                {MARKETPLACE_LABEL[a.marketplace]}
+                                            </span>
+                                            <span style={{ fontFamily: 'Inter', fontWeight: 600, fontSize: 13, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {a.label}
+                                            </span>
+                                        </div>
+                                        {a.credential?.maskedPreview && (
+                                            <div style={{ marginTop: 3, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                                {Object.entries(a.credential.maskedPreview).map(([k, v]) => v && (
+                                                    <span key={k} style={{ fontFamily: 'monospace', fontSize: 10, color: S.muted }}>
+                                                        {k}={v}
+                                                    </span>
                                                 ))}
                                             </div>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${LIFECYCLE_TONE[a.lifecycleStatus]}`}>
-                                                {LIFECYCLE_LABEL[a.lifecycleStatus]}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${CRED_TONE[a.credentialStatus]}`}>
-                                                {CRED_LABEL[a.credentialStatus]}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2">
-                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${SYNC_TONE[a.syncHealthStatus]}`}>
-                                                {SYNC_LABEL[a.syncHealthStatus]}
-                                            </span>
-                                        </td>
-                                        <td className="px-3 py-2 text-right">
-                                            <div className="inline-flex flex-wrap gap-1 justify-end">
-                                                {!isInactive && (
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); onValidate(a.id); }}
-                                                        disabled={externalBlocked || refreshing}
-                                                        title={externalBlocked ? externalHint : 'Проверить ключи'}
-                                                        className={`text-xs inline-flex items-center px-2 py-0.5 rounded border ${
-                                                            externalBlocked
-                                                                ? 'border-slate-200 text-slate-400 cursor-not-allowed'
-                                                                : 'border-blue-300 text-blue-700 hover:bg-blue-50'
-                                                        }`}
-                                                    >
-                                                        <Activity className="h-3 w-3 mr-1" />
-                                                        Проверить
-                                                    </button>
-                                                )}
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); openEdit(a); }}
-                                                    disabled={writeBlocked}
-                                                    title={writeBlocked ? writeHint : 'Изменить'}
-                                                    className={`text-xs inline-flex items-center px-2 py-0.5 rounded border ${
-                                                        writeBlocked
-                                                            ? 'border-slate-200 text-slate-400 cursor-not-allowed'
-                                                            : 'border-slate-300 text-slate-700 hover:bg-slate-50'
-                                                    }`}
-                                                >
-                                                    <Edit2 className="h-3 w-3 mr-1" />
-                                                    Изменить
-                                                </button>
-                                                {isInactive ? (
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); onReactivate(a.id); }}
-                                                        disabled={externalBlocked || refreshing}
-                                                        title={externalBlocked ? externalHint : 'Реактивировать (запустит проверку ключей)'}
-                                                        className={`text-xs inline-flex items-center px-2 py-0.5 rounded border ${
-                                                            externalBlocked
-                                                                ? 'border-slate-200 text-slate-400 cursor-not-allowed'
-                                                                : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
-                                                        }`}
-                                                    >
-                                                        <Power className="h-3 w-3 mr-1" />
-                                                        Включить
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); onDeactivate(a.id); }}
-                                                        disabled={writeBlocked || refreshing}
-                                                        title={writeBlocked ? writeHint : 'Отключить'}
-                                                        className={`text-xs inline-flex items-center px-2 py-0.5 rounded border ${
-                                                            writeBlocked
-                                                                ? 'border-slate-200 text-slate-400 cursor-not-allowed'
-                                                                : 'border-amber-300 text-amber-700 hover:bg-amber-50'
-                                                        }`}
-                                                    >
-                                                        <PowerOff className="h-3 w-3 mr-1" />
-                                                        Отключить
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-
-                {/* Diagnostics panel */}
-                <div className="lg:col-span-2 bg-white border border-slate-200 rounded-md p-4 space-y-3">
-                    {!selected && (
-                        <div className="text-sm text-slate-500 text-center py-10 flex flex-col items-center gap-2">
-                            <ChevronRight className="h-5 w-5 text-slate-300" />
-                            Выберите подключение слева, чтобы увидеть диагностику.
-                        </div>
-                    )}
-
-                    {selected && diagLoading && (
-                        <div className="text-sm text-slate-500">Загрузка диагностики...</div>
-                    )}
-
-                    {selected && diagnostics && (
-                        <>
-                            <div>
-                                <div className="flex items-start justify-between gap-2">
-                                    <div className="min-w-0">
-                                        <h2 className="font-semibold text-slate-900 truncate">{selected.label}</h2>
-                                        <div className="text-xs text-slate-500 mt-0.5">
-                                            {MARKETPLACE_LABEL[selected.marketplace]} • ID: <span className="font-mono">{selected.id.slice(0, 8)}...</span>
-                                        </div>
+                                        )}
                                     </div>
-                                    <span className={`text-[11px] px-2 py-0.5 rounded ${EFFECTIVE_TONE[diagnostics.effectiveRuntimeState]}`}>
-                                        {EFFECTIVE_LABEL[diagnostics.effectiveRuntimeState]}
-                                    </span>
+
+                                    {/* Lifecycle */}
+                                    <div>
+                                        <Badge label={LIFECYCLE_LABEL[a.lifecycleStatus]} color={lc.color} bg={lc.bg} />
+                                    </div>
+
+                                    {/* Credential */}
+                                    <div>
+                                        <Badge label={CRED_LABEL[a.credentialStatus]} color={cr.color} bg={cr.bg} />
+                                    </div>
+
+                                    {/* Sync */}
+                                    <div>
+                                        <Badge label={SYNC_LABEL[a.syncHealthStatus]} color={sy.color} bg={sy.bg} />
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                        {!isInactive && (
+                                            <Btn
+                                                size="sm"
+                                                variant="secondary"
+                                                onClick={() => onValidate(a.id)}
+                                                disabled={externalBlocked || refreshing}
+                                                title={externalBlocked ? externalHint : 'Проверить ключи'}
+                                            >
+                                                <Activity size={12} />
+                                                Проверить
+                                            </Btn>
+                                        )}
+                                        <Btn
+                                            size="sm"
+                                            variant="secondary"
+                                            onClick={() => openEdit(a)}
+                                            disabled={writeBlocked}
+                                            title={writeBlocked ? writeHint : 'Изменить'}
+                                        >
+                                            <Edit2 size={12} />
+                                            Изменить
+                                        </Btn>
+                                        {isInactive ? (
+                                            <Btn
+                                                size="sm"
+                                                variant="success"
+                                                onClick={() => onReactivate(a.id)}
+                                                disabled={externalBlocked || refreshing}
+                                                title={externalBlocked ? externalHint : 'Реактивировать (запустит проверку ключей)'}
+                                            >
+                                                <Power size={12} />
+                                                Включить
+                                            </Btn>
+                                        ) : (
+                                            <Btn
+                                                size="sm"
+                                                variant="danger"
+                                                onClick={() => onDeactivate(a.id)}
+                                                disabled={writeBlocked || refreshing}
+                                                title={writeBlocked ? writeHint : 'Отключить'}
+                                            >
+                                                <PowerOff size={12} />
+                                                Отключить
+                                            </Btn>
+                                        )}
+                                    </div>
                                 </div>
-                                <p className="text-xs text-slate-600 mt-2">
-                                    {EFFECTIVE_HINT[diagnostics.effectiveRuntimeState]}
-                                </p>
-                                {diagnostics.effectiveRuntimeReason && (
-                                    <p className="text-[10px] text-slate-400 mt-1 font-mono">
-                                        {diagnostics.effectiveRuntimeReason}
-                                    </p>
-                                )}
+                            );
+                        })}
+                    </Card>
+
+                    {/* Diagnostics panel */}
+                    <Card style={{ display: 'flex', flexDirection: 'column', gap: 16, alignSelf: 'start' }}>
+                        {!selected && (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 16px', gap: 10 }}>
+                                <ChevronRight size={32} color={S.muted} style={{ opacity: 0.4 }} />
+                                <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub, textAlign: 'center' }}>
+                                    Выберите подключение слева, чтобы увидеть диагностику.
+                                </span>
                             </div>
+                        )}
 
-                            {/* Status layers */}
-                            <div className="border-t pt-3 grid grid-cols-3 gap-2 text-[11px]">
-                                <StatusLayer
-                                    icon={<Activity className="h-3 w-3" />}
-                                    title="Жизн. цикл"
-                                    valueLabel={LIFECYCLE_LABEL[diagnostics.statusLayers.lifecycle.status]}
-                                    tone={LIFECYCLE_TONE[diagnostics.statusLayers.lifecycle.status]}
-                                    detail={diagnostics.statusLayers.lifecycle.deactivatedAt
-                                        ? `Отключён: ${formatDateTime(diagnostics.statusLayers.lifecycle.deactivatedAt)}`
-                                        : null}
-                                />
-                                <StatusLayer
-                                    icon={<KeyRound className="h-3 w-3" />}
-                                    title="Ключи"
-                                    valueLabel={CRED_LABEL[diagnostics.statusLayers.credential.status]}
-                                    tone={CRED_TONE[diagnostics.statusLayers.credential.status]}
-                                    detail={diagnostics.statusLayers.credential.lastValidationErrorMessage
-                                        ?? (diagnostics.statusLayers.credential.lastValidatedAt
-                                            ? `Проверены ${formatDateTime(diagnostics.statusLayers.credential.lastValidatedAt)}`
-                                            : null)}
-                                    errorCode={diagnostics.statusLayers.credential.lastValidationErrorCode}
-                                />
-                                <StatusLayer
-                                    icon={<RefreshCw className="h-3 w-3" />}
-                                    title="Sync"
-                                    valueLabel={SYNC_LABEL[diagnostics.statusLayers.syncHealth.status]}
-                                    tone={SYNC_TONE[diagnostics.statusLayers.syncHealth.status]}
-                                    detail={diagnostics.statusLayers.syncHealth.lastSyncErrorMessage
-                                        ?? (diagnostics.statusLayers.syncHealth.lastSyncAt
-                                            ? `Последний sync ${formatDateTime(diagnostics.statusLayers.syncHealth.lastSyncAt)}`
-                                            : null)}
-                                    errorCode={diagnostics.statusLayers.syncHealth.lastSyncErrorCode}
-                                />
+                        {selected && diagLoading && (
+                            <div style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub, padding: '16px 0' }}>
+                                Загрузка диагностики...
                             </div>
+                        )}
 
-                            {/* Tenant access state hint */}
-                            {diagnostics.tenantAccessState && diagnostics.effectiveRuntimeState === 'PAUSED_BY_TENANT' && (
-                                <div className="border-t pt-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
-                                    <PauseCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                                    <span>
-                                        Подписка: <span className="font-mono">{diagnostics.tenantAccessState}</span>. Внешние API-вызовы приостановлены до возобновления подписки.
-                                    </span>
-                                </div>
-                            )}
-
-                            {/* Recent events */}
-                            <div className="border-t pt-3">
-                                <h3 className="text-xs font-semibold uppercase text-slate-600 mb-1">События</h3>
-                                <div className="max-h-72 overflow-y-auto -mx-1">
-                                    {diagnostics.recentEvents.length === 0 && (
-                                        <div className="text-xs text-slate-400 italic">Событий пока нет.</div>
-                                    )}
-                                    {diagnostics.recentEvents.map((ev) => (
-                                        <div key={ev.id} className="px-1 py-1 border-b border-slate-50 last:border-0 text-[11px]">
-                                            <div className="flex items-center justify-between gap-2">
-                                                <span className="font-mono text-slate-700">{shortenEvent(ev.eventType)}</span>
-                                                <span className="text-slate-400">{formatDateTime(ev.createdAt)}</span>
+                        {selected && diagnostics && (
+                            <>
+                                {/* Header */}
+                                <div>
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                            <h2 style={{
+                                                fontFamily: 'Inter', fontWeight: 700, fontSize: 15,
+                                                color: S.ink, margin: 0,
+                                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                            }}>
+                                                {selected.label}
+                                            </h2>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 3 }}>
+                                                {MARKETPLACE_LABEL[selected.marketplace]} · ID:{' '}
+                                                <span style={{ fontFamily: 'monospace' }}>{selected.id.slice(0, 8)}...</span>
                                             </div>
-                                            {ev.payload && (
-                                                <div className="text-slate-500 truncate">{summarizePayload(ev.eventType, ev.payload)}</div>
-                                            )}
                                         </div>
-                                    ))}
+                                        <Badge
+                                            label={EFFECTIVE_LABEL[diagnostics.effectiveRuntimeState]}
+                                            {...effectiveBadge(diagnostics.effectiveRuntimeState)}
+                                            style={{ flexShrink: 0 }}
+                                        />
+                                    </div>
+                                    <p style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub, marginTop: 10, marginBottom: 0, lineHeight: 1.5 }}>
+                                        {EFFECTIVE_HINT[diagnostics.effectiveRuntimeState]}
+                                    </p>
+                                    {diagnostics.effectiveRuntimeReason && (
+                                        <p style={{ fontFamily: 'monospace', fontSize: 10, color: S.muted, marginTop: 4, marginBottom: 0 }}>
+                                            {diagnostics.effectiveRuntimeReason}
+                                        </p>
+                                    )}
                                 </div>
-                            </div>
-                        </>
-                    )}
+
+                                {/* Status layers */}
+                                <div style={{ borderTop: `1px solid ${S.border}`, paddingTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                                    <StatusLayer
+                                        icon={<Activity size={12} color={S.muted} />}
+                                        title="Жизн. цикл"
+                                        valueLabel={LIFECYCLE_LABEL[diagnostics.statusLayers.lifecycle.status]}
+                                        badge={lifecycleBadge(diagnostics.statusLayers.lifecycle.status)}
+                                        detail={diagnostics.statusLayers.lifecycle.deactivatedAt
+                                            ? `Отключён: ${formatDateTime(diagnostics.statusLayers.lifecycle.deactivatedAt)}`
+                                            : null}
+                                    />
+                                    <StatusLayer
+                                        icon={<KeyRound size={12} color={S.muted} />}
+                                        title="Ключи"
+                                        valueLabel={CRED_LABEL[diagnostics.statusLayers.credential.status]}
+                                        badge={credBadge(diagnostics.statusLayers.credential.status)}
+                                        detail={diagnostics.statusLayers.credential.lastValidationErrorMessage
+                                            ?? (diagnostics.statusLayers.credential.lastValidatedAt
+                                                ? `Проверены ${formatDateTime(diagnostics.statusLayers.credential.lastValidatedAt)}`
+                                                : null)}
+                                        errorCode={diagnostics.statusLayers.credential.lastValidationErrorCode}
+                                    />
+                                    <StatusLayer
+                                        icon={<RefreshCw size={12} color={S.muted} />}
+                                        title="Sync"
+                                        valueLabel={SYNC_LABEL[diagnostics.statusLayers.syncHealth.status]}
+                                        badge={syncBadge(diagnostics.statusLayers.syncHealth.status)}
+                                        detail={diagnostics.statusLayers.syncHealth.lastSyncErrorMessage
+                                            ?? (diagnostics.statusLayers.syncHealth.lastSyncAt
+                                                ? `Последний sync ${formatDateTime(diagnostics.statusLayers.syncHealth.lastSyncAt)}`
+                                                : null)}
+                                        errorCode={diagnostics.statusLayers.syncHealth.lastSyncErrorCode}
+                                    />
+                                </div>
+
+                                {/* Tenant access state hint */}
+                                {diagnostics.tenantAccessState && diagnostics.effectiveRuntimeState === 'PAUSED_BY_TENANT' && (
+                                    <div style={{
+                                        borderTop: `1px solid ${S.border}`, paddingTop: 12,
+                                        display: 'flex', alignItems: 'flex-start', gap: 8,
+                                        padding: '10px 12px', borderRadius: 8,
+                                        background: 'rgba(245,158,11,0.08)',
+                                        border: '1px solid rgba(245,158,11,0.25)',
+                                    }}>
+                                        <PauseCircle size={14} color={S.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+                                        <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.amber, lineHeight: 1.5 }}>
+                                            Подписка:{' '}
+                                            <span style={{ fontFamily: 'monospace' }}>{diagnostics.tenantAccessState}</span>.{' '}
+                                            Внешние API-вызовы приостановлены до возобновления подписки.
+                                        </span>
+                                    </div>
+                                )}
+
+                                {/* Recent events */}
+                                <div style={{ borderTop: `1px solid ${S.border}`, paddingTop: 14 }}>
+                                    <div style={{
+                                        fontFamily: 'Inter', fontSize: 10, fontWeight: 700,
+                                        color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em',
+                                        marginBottom: 8,
+                                    }}>
+                                        События
+                                    </div>
+                                    <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                        {diagnostics.recentEvents.length === 0 && (
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, fontStyle: 'italic' }}>
+                                                Событий пока нет.
+                                            </div>
+                                        )}
+                                        {diagnostics.recentEvents.map((ev) => (
+                                            <div key={ev.id} style={{
+                                                padding: '7px 10px', borderRadius: 8,
+                                                background: '#f8fafc', border: `1px solid ${S.border}`,
+                                                marginBottom: 4,
+                                            }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: S.ink, fontWeight: 600 }}>
+                                                        {shortenEvent(ev.eventType)}
+                                                    </span>
+                                                    <span style={{ fontFamily: 'Inter', fontSize: 10, color: S.muted, flexShrink: 0 }}>
+                                                        {formatDateTime(ev.createdAt)}
+                                                    </span>
+                                                </div>
+                                                {ev.payload && (
+                                                    <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.sub, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {summarizePayload(ev.eventType, ev.payload)}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </Card>
                 </div>
             </div>
 
-            {/* Modal */}
-            {modalMode && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-3">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-full overflow-y-auto">
-                        <div className="px-4 py-3 border-b flex items-center justify-between">
-                            <h2 className="text-base font-semibold text-slate-900">
-                                {modalMode === 'create' ? 'Подключить' : 'Изменить'} {MARKETPLACE_LABEL[formMarketplace]}
-                            </h2>
-                            <button onClick={closeModal} className="text-slate-400 hover:text-slate-600">
-                                <X className="h-4 w-4" />
-                            </button>
-                        </div>
-                        <div className="p-4 space-y-3">
-                            <div>
-                                <label className="block text-xs text-slate-600 mb-1">Название</label>
-                                <input
-                                    value={formLabel}
-                                    onChange={(e) => setFormLabel(e.target.value)}
-                                    maxLength={128}
-                                    className="w-full px-2 py-1.5 border border-slate-300 rounded text-sm"
-                                    placeholder={MARKETPLACE_LABEL[formMarketplace] + ' Основной'}
-                                />
-                            </div>
-
-                            {modalMode === 'edit' && modalAccount?.credential?.maskedPreview && (
-                                <div className="bg-slate-50 rounded p-2 text-[11px] space-y-0.5">
-                                    <div className="text-slate-500 uppercase">Текущие ключи (маска):</div>
-                                    {Object.entries(modalAccount.credential.maskedPreview).map(([k, v]) => v && (
-                                        <div key={k} className="font-mono text-slate-700">{k}: {v}</div>
-                                    ))}
-                                    <div className="text-slate-400 pt-1">Заполните только те поля, что хотите обновить.</div>
+            {/* Create / Edit modal */}
+            <Modal
+                open={!!modalMode}
+                onClose={closeModal}
+                title={`${modalMode === 'create' ? 'Подключить' : 'Изменить'} ${MARKETPLACE_LABEL[formMarketplace]}`}
+                width={520}
+            >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {/* How-to hint for create */}
+                    {modalMode === 'create' && (
+                        <div style={{
+                            padding: '12px 14px', borderRadius: 10,
+                            background: formMarketplace === 'WB' ? 'rgba(203,17,171,0.05)' : 'rgba(0,91,255,0.05)',
+                            border: `1px solid ${formMarketplace === 'WB' ? 'rgba(203,17,171,0.2)' : 'rgba(0,91,255,0.2)'}`,
+                            fontFamily: 'Inter', fontSize: 12, lineHeight: 1.6,
+                            color: S.ink,
+                        }}>
+                            {formMarketplace === 'WB' ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ fontWeight: 700, color: S.wb, marginBottom: 2 }}>Как подключить WB</div>
+                                    <div style={{ fontWeight: 600, color: S.ink }}>Токен для управления остатками (обязательно)</div>
+                                    <div>1. ЛК Wildberries → <b>Профиль</b> → <b>Настройки</b> → <b>Доступ к API</b></div>
+                                    <div>2. Создайте токен с правами: <b>Маркетплейс (чтение и запись)</b></div>
+                                    <div>3. ID склада FBS: <b>Поставки</b> → <b>Склады</b> → скопируйте ID</div>
+                                    <div style={{ fontWeight: 600, color: S.ink, marginTop: 4 }}>Токен для аналитики (необязательно)</div>
+                                    <div>4. Создайте второй токен с правами: <b>Статистика</b> + <b>Контент</b> + <b>Финансы</b> + <b>Аналитика</b> (только чтение)</div>
+                                    <div style={{ color: S.sub, marginTop: 2 }}>Без него FBO-остатки и карточки товаров не загружаются.</div>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    <div style={{ fontWeight: 700, color: S.oz, marginBottom: 2 }}>Как получить ключ Ozon</div>
+                                    <div>1. Войдите в ЛК Ozon → <b>Настройки</b> → <b>API ключи</b> → <b>Добавить ключ</b></div>
+                                    <div>2. Роль: <b>Admin</b> или создайте с правами: <b>Контент</b>, <b>Склад</b>, <b>Аналитика</b>, <b>Финансы</b></div>
+                                    <div>3. ID склада: <b>Логистика</b> → <b>Мои склады</b> → ID вашего FBS-склада</div>
                                 </div>
                             )}
+                        </div>
+                    )}
 
-                            {[...requiredFields, ...optionalFields].map((field) => (
+                    {/* Label */}
+                    <div>
+                        <FieldLabel>Название подключения</FieldLabel>
+                        <Input
+                            value={formLabel}
+                            onChange={(e) => setFormLabel(e.target.value)}
+                            placeholder={MARKETPLACE_LABEL[formMarketplace] + ' Основной'}
+                        />
+                    </div>
+
+                    {/* Masked preview for edit */}
+                    {modalMode === 'edit' && modalAccount?.credential?.maskedPreview && (
+                        <div style={{
+                            padding: '10px 12px', borderRadius: 8,
+                            background: '#f8fafc', border: `1px solid ${S.border}`,
+                        }}>
+                            <div style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                                Текущие ключи (маска)
+                            </div>
+                            {Object.entries(modalAccount.credential.maskedPreview).map(([k, v]) => v && (
+                                <div key={k} style={{ fontFamily: 'monospace', fontSize: 12, color: S.ink }}>{k}: {v}</div>
+                            ))}
+                            <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 6 }}>
+                                Заполните только те поля, что хотите обновить.
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Credential fields for WB */}
+                    {formMarketplace === 'WB' ? (
+                        <>
+                            <div>
+                                <FieldLabel>Токен для управления остатками и заказами</FieldLabel>
+                            </div>
+                            {requiredFields.map((field) => (
                                 <CredentialField
                                     key={field}
                                     field={field}
                                     isSecret={isSecretField(field)}
-                                    isRequired={modalMode === 'create' && requiredFields.includes(field)}
+                                    isRequired={modalMode === 'create'}
                                     value={formCredentials[field] ?? ''}
                                     show={!!showSecrets[field]}
                                     onChange={(v) => {
@@ -752,61 +897,109 @@ export default function MarketplaceAccounts() {
                                         setFormSecretsTouched((p) => ({ ...p, [field]: true }));
                                     }}
                                     onToggleShow={() => setShowSecrets((p) => ({ ...p, [field]: !p[field] }))}
-                                    placeholderInEdit={
-                                        modalMode === 'edit' && isSecretField(field)
-                                            ? 'Не менять'
-                                            : undefined
-                                    }
+                                    placeholderInEdit={modalMode === 'edit' && isSecretField(field) ? 'Не менять' : undefined}
                                 />
                             ))}
+                            <div>
+                                <FieldLabel>
+                                    Токен для аналитики{' '}
+                                    <span style={{ textTransform: 'none', fontWeight: 400 }}>(необязательно)</span>
+                                </FieldLabel>
+                            </div>
+                            {optionalFields.map((field) => (
+                                <CredentialField
+                                    key={field}
+                                    field={field}
+                                    isSecret={isSecretField(field)}
+                                    isRequired={false}
+                                    value={formCredentials[field] ?? ''}
+                                    show={!!showSecrets[field]}
+                                    onChange={(v) => {
+                                        setFormCredentials((p) => ({ ...p, [field]: v }));
+                                        setFormSecretsTouched((p) => ({ ...p, [field]: true }));
+                                    }}
+                                    onToggleShow={() => setShowSecrets((p) => ({ ...p, [field]: !p[field] }))}
+                                    placeholderInEdit={modalMode === 'edit' && isSecretField(field) ? 'Не менять' : undefined}
+                                />
+                            ))}
+                        </>
+                    ) : (
+                        [...requiredFields, ...optionalFields].map((field) => (
+                            <CredentialField
+                                key={field}
+                                field={field}
+                                isSecret={isSecretField(field)}
+                                isRequired={modalMode === 'create' && requiredFields.includes(field)}
+                                value={formCredentials[field] ?? ''}
+                                show={!!showSecrets[field]}
+                                onChange={(v) => {
+                                    setFormCredentials((p) => ({ ...p, [field]: v }));
+                                    setFormSecretsTouched((p) => ({ ...p, [field]: true }));
+                                }}
+                                onToggleShow={() => setShowSecrets((p) => ({ ...p, [field]: !p[field] }))}
+                                placeholderInEdit={modalMode === 'edit' && isSecretField(field) ? 'Не менять' : undefined}
+                            />
+                        ))
+                    )}
 
-                            {formError && (
-                                <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">
-                                    {formError}
-                                </div>
-                            )}
+                    {/* Form error */}
+                    {formError && (
+                        <div style={{
+                            padding: '10px 12px', borderRadius: 8,
+                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
+                            fontFamily: 'Inter', fontSize: 12, color: S.red,
+                        }}>
+                            {formError}
                         </div>
-                        <div className="px-4 py-3 border-t flex justify-end gap-2">
-                            <button onClick={closeModal} className="px-3 py-1.5 text-sm text-slate-600 hover:text-slate-900">Отмена</button>
-                            <button
-                                onClick={submitForm}
-                                disabled={formSubmitting}
-                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                            >
-                                {formSubmitting ? 'Сохраняем...' : modalMode === 'create' ? 'Создать' : 'Сохранить'}
-                            </button>
-                        </div>
+                    )}
+
+                    {/* Modal actions */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${S.border}`, paddingTop: 16, marginTop: 4 }}>
+                        <Btn variant="ghost" onClick={closeModal}>Отмена</Btn>
+                        <Btn variant="primary" onClick={submitForm} disabled={formSubmitting}>
+                            {formSubmitting ? 'Сохраняем...' : modalMode === 'create' ? 'Создать' : 'Сохранить'}
+                        </Btn>
                     </div>
                 </div>
+            </Modal>
+        </div>
+    );
+}
+
+// ─── StatusLayer subcomponent ───
+function StatusLayer({
+    icon, title, valueLabel, badge, detail, errorCode,
+}: {
+    icon: React.ReactNode;
+    title: string;
+    valueLabel: string;
+    badge: { color: string; bg: string };
+    detail?: string | null;
+    errorCode?: string | null;
+}) {
+    return (
+        <div style={{
+            background: '#f8fafc', borderRadius: 10, padding: '10px 10px 8px',
+            border: `1px solid ${S.border}`, display: 'flex', flexDirection: 'column', gap: 5,
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                {icon}
+                <span style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    {title}
+                </span>
+            </div>
+            <Badge label={valueLabel} color={badge.color} bg={badge.bg} />
+            {errorCode && (
+                <div style={{ fontFamily: 'monospace', fontSize: 10, color: S.muted }}>{errorCode}</div>
+            )}
+            {detail && (
+                <div style={{ fontFamily: 'Inter', fontSize: 10, color: S.sub, lineHeight: 1.4 }}>{detail}</div>
             )}
         </div>
     );
 }
 
-// ─── small subcomponents ───
-function StatusLayer({
-    icon, title, valueLabel, tone, detail, errorCode,
-}: {
-    icon: React.ReactNode;
-    title: string;
-    valueLabel: string;
-    tone: string;
-    detail?: string | null;
-    errorCode?: string | null;
-}) {
-    return (
-        <div className="bg-slate-50 rounded p-2">
-            <div className="flex items-center gap-1 text-[10px] uppercase text-slate-500">
-                {icon}
-                {title}
-            </div>
-            <div className={`text-[11px] mt-0.5 inline-block px-1.5 py-0.5 rounded ${tone}`}>{valueLabel}</div>
-            {errorCode && <div className="text-[10px] text-slate-400 mt-1 font-mono">{errorCode}</div>}
-            {detail && <div className="text-[10px] text-slate-500 mt-0.5">{detail}</div>}
-        </div>
-    );
-}
-
+// ─── CredentialField subcomponent ───
 function CredentialField({
     field, isSecret, isRequired, value, show, onChange, onToggleShow, placeholderInEdit,
 }: {
@@ -819,34 +1012,53 @@ function CredentialField({
     onToggleShow: () => void;
     placeholderInEdit?: string;
 }) {
+    const meta = FIELD_META[field];
     return (
-        <div>
-            <label className="block text-xs text-slate-600 mb-1">
-                {field}{isRequired && ' *'}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <label style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink }}>
+                {meta?.label ?? field}
+                {isRequired && <span style={{ color: S.red, marginLeft: 2 }}>*</span>}
             </label>
-            <div className="relative">
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                 <input
                     type={isSecret && !show ? 'password' : 'text'}
                     value={value}
                     onChange={(e) => onChange(e.target.value)}
-                    placeholder={placeholderInEdit ?? (isRequired ? 'обязательное поле' : 'опционально')}
-                    className="w-full px-2 py-1.5 pr-9 border border-slate-300 rounded text-sm font-mono"
+                    placeholder={placeholderInEdit ?? meta?.placeholder ?? (isRequired ? 'обязательное поле' : 'опционально')}
                     autoComplete="new-password"
+                    style={{
+                        width: '100%', padding: isSecret ? '8px 36px 8px 12px' : '8px 12px',
+                        borderRadius: 8, border: `1px solid ${S.border}`,
+                        fontFamily: 'monospace', fontSize: 12, color: S.ink,
+                        background: '#fff', outline: 'none',
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                        boxSizing: 'border-box',
+                    }}
                 />
                 {isSecret && (
                     <button
                         type="button"
                         onClick={onToggleShow}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                        style={{
+                            position: 'absolute', right: 10,
+                            background: 'transparent', border: 'none', cursor: 'pointer',
+                            padding: 0, color: S.muted, display: 'flex', alignItems: 'center',
+                        }}
                     >
-                        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        {show ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                 )}
             </div>
+            {meta?.hint && (
+                <p style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, margin: 0, lineHeight: 1.5 }}>
+                    {meta.hint}
+                </p>
+            )}
         </div>
     );
 }
 
+// ─── utility functions ───
 function shortenEvent(t: string): string {
     return t.replace(/^marketplace_account_/, '');
 }

@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { Shield, ChevronRight, X, AlertTriangle, Search, Filter, Clock } from 'lucide-react';
+import { Shield, X, AlertTriangle, Filter, Clock, ChevronRight, User, Cpu, Headphones } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { auditApi, AuditLog, SecurityEvent, AuditLogFilters, SecurityEventFilters } from '../api/audit';
+import { auditApi, type AuditLog, type SecurityEvent, type AuditLogFilters, type SecurityEventFilters } from '../api/audit';
+import { S, PageHeader, Card, FieldLabel, Btn, Input, HiSelect, Pagination, EmptyState, SkuTag, Spinner } from '../components/ui';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -16,50 +17,56 @@ const DOMAIN_LABELS: Record<string, string> = {
     BILLING: 'Биллинг', SUPPORT: 'Поддержка', FINANCE: 'Финансы',
 };
 
-const DOMAIN_COLORS: Record<string, string> = {
-    AUTH:        'bg-rose-100 text-rose-800',
-    SESSION:     'bg-red-100 text-red-800',
-    PASSWORD:    'bg-pink-100 text-pink-800',
-    TEAM:        'bg-violet-100 text-violet-800',
-    TENANT:      'bg-blue-100 text-blue-800',
-    CATALOG:     'bg-cyan-100 text-cyan-800',
-    INVENTORY:   'bg-emerald-100 text-emerald-800',
-    MARKETPLACE: 'bg-orange-100 text-orange-800',
-    SYNC:        'bg-amber-100 text-amber-800',
-    BILLING:     'bg-yellow-100 text-yellow-800',
-    SUPPORT:     'bg-slate-100 text-slate-700',
-    FINANCE:     'bg-teal-100 text-teal-800',
+const ACTION_BADGE: Record<string, { label: string; color: string; bg: string }> = {
+    STOCK_MANUALLY_ADJUSTED:   { label: 'Корректировка',   color: '#0e7490', bg: '#ecfeff' },
+    STOCK_CORRECTION_IMPORTED: { label: 'Импорт остатков', color: '#0e7490', bg: '#ecfeff' },
+    STOCK_ORDER_DEDUCTED:      { label: 'Списание заказа', color: '#be123c', bg: '#fff1f2' },
+    STOCK_ORDER_RETURNED:      { label: 'Возврат',         color: '#065f46', bg: '#ecfdf5' },
+    STOCK_ADJUSTED:            { label: 'Корректировка',   color: '#0e7490', bg: '#ecfeff' },
+    ORDER_DEDUCTED:            { label: 'Списание заказа', color: '#be123c', bg: '#fff1f2' },
+    PRODUCT_CREATED:           { label: 'Создание товара', color: '#065f46', bg: '#ecfdf5' },
+    PRODUCT_UPDATED:           { label: 'Обновление',      color: '#1d4ed8', bg: '#eff6ff' },
+    PRODUCT_ARCHIVED:          { label: 'Архивация',       color: '#92400e', bg: '#fffbeb' },
+    PRODUCT_RESTORED:          { label: 'Восстановление',  color: '#065f46', bg: '#ecfdf5' },
+    PRODUCT_DELETED:           { label: 'Удаление',        color: '#be123c', bg: '#fff1f2' },
+    PRODUCT_DUPLICATE_MERGED:  { label: 'Объединение',     color: '#6d28d9', bg: '#f5f3ff' },
+    CATALOG_IMPORT_COMMITTED:  { label: 'Импорт каталога', color: '#1d4ed8', bg: '#eff6ff' },
+    MARKETPLACE_MAPPING_CREATED:     { label: 'Привязка к МП',   color: '#c2410c', bg: '#fff7ed' },
+    MARKETPLACE_MAPPING_DELETED:     { label: 'Отвязка МП',      color: '#be123c', bg: '#fff1f2' },
+    MARKETPLACE_ACCOUNT_CONNECTED:   { label: 'МП подключён',    color: '#065f46', bg: '#ecfdf5' },
+    MARKETPLACE_CREDENTIALS_UPDATED: { label: 'Ключи МП',        color: '#92400e', bg: '#fffbeb' },
+    MARKETPLACE_ACCOUNT_DEACTIVATED: { label: 'МП отключён',     color: '#be123c', bg: '#fff1f2' },
+    SYNC_MANUAL_REQUESTED:     { label: 'Синхронизация',   color: '#92400e', bg: '#fffbeb' },
+    SYNC_RETRY_REQUESTED:      { label: 'Повтор синхр.',   color: '#92400e', bg: '#fffbeb' },
+    SYNC_FAILED_TERMINALLY:    { label: 'Ошибка синхр.',   color: '#be123c', bg: '#fff1f2' },
+    INVITE_CREATED:            { label: 'Приглашение',     color: '#6d28d9', bg: '#f5f3ff' },
+    MEMBER_ROLE_CHANGED:       { label: 'Роль изменена',   color: '#1d4ed8', bg: '#eff6ff' },
+    MEMBER_REMOVED:            { label: 'Участник удалён', color: '#be123c', bg: '#fff1f2' },
+    LOGIN_SUCCESS:             { label: 'Вход',            color: '#065f46', bg: '#ecfdf5' },
+    LOGIN_FAILED:              { label: 'Ошибка входа',    color: '#be123c', bg: '#fff1f2' },
+    PASSWORD_RESET_COMPLETED:  { label: 'Пароль изменён',  color: '#6d28d9', bg: '#f5f3ff' },
+    TRIAL_STARTED:             { label: 'Пробный период',  color: '#0e7490', bg: '#ecfeff' },
+    SUBSCRIPTION_CHANGED:      { label: 'Подписка',        color: '#854d0e', bg: '#fefce8' },
+    PAYMENT_STATUS_CHANGED:    { label: 'Оплата',          color: '#854d0e', bg: '#fefce8' },
+    SUSPENSION_ENTERED:        { label: 'Приостановка',    color: '#be123c', bg: '#fff1f2' },
+    SUPPORT_TENANT_DATA_CHANGED:{ label: 'Поддержка',      color: '#475569', bg: '#f1f5f9' },
 };
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
-    LOGIN_SUCCESS: 'Вход', LOGIN_FAILED: 'Ошибка входа', LOGOUT_ALL: 'Выход везде',
-    SESSION_REVOKED: 'Сессия отозвана', PASSWORD_RESET_REQUESTED: 'Сброс пароля запрошен',
-    PASSWORD_RESET_COMPLETED: 'Пароль изменён', INVITE_CREATED: 'Приглашение отправлено',
-    INVITE_RESENT: 'Приглашение повторно', INVITE_CANCELLED: 'Приглашение отменено',
-    MEMBER_ROLE_CHANGED: 'Роль изменена', MEMBER_REMOVED: 'Участник удалён',
-    TENANT_CREATED: 'Компания создана', TENANT_STATE_CHANGED: 'Статус изменён',
-    TENANT_CLOSED: 'Компания закрыта', TENANT_RESTORED: 'Компания восстановлена',
-    PRODUCT_CREATED: 'Товар создан', PRODUCT_UPDATED: 'Товар обновлён',
-    PRODUCT_ARCHIVED: 'Товар архивирован', PRODUCT_RESTORED: 'Товар восстановлен',
-    PRODUCT_DUPLICATE_MERGED: 'Дубликаты объединены', CATALOG_IMPORT_COMMITTED: 'Импорт применён',
-    MARKETPLACE_MAPPING_CREATED: 'Маппинг добавлен', MARKETPLACE_MAPPING_DELETED: 'Маппинг удалён',
-    STOCK_MANUALLY_ADJUSTED: 'Коррекция остатка', STOCK_CORRECTION_IMPORTED: 'Импорт остатков',
-    STOCK_ORDER_DEDUCTED: 'Списание по заказу', STOCK_ORDER_RETURNED: 'Возврат остатка',
-    MARKETPLACE_ACCOUNT_CONNECTED: 'Аккаунт подключён', MARKETPLACE_CREDENTIALS_UPDATED: 'Ключи обновлены',
-    MARKETPLACE_CREDENTIALS_REVALIDATED: 'Ключи проверены', MARKETPLACE_ACCOUNT_DEACTIVATED: 'Аккаунт отключён',
-    SYNC_MANUAL_REQUESTED: 'Синхронизация запущена', SYNC_RETRY_REQUESTED: 'Повтор синхронизации',
-    SYNC_BLOCKED_BY_POLICY: 'Синхронизация заблокирована', SYNC_FAILED_TERMINALLY: 'Синхронизация упала',
-    TRIAL_STARTED: 'Пробный период начат', TRIAL_EXPIRED: 'Пробный период истёк',
-    SUBSCRIPTION_CHANGED: 'Подписка изменена', PAYMENT_STATUS_CHANGED: 'Статус оплаты изменён',
-    SUSPENSION_ENTERED: 'Приостановка', GRACE_ENTERED: 'Льготный период',
-    SUPPORT_ACCESS_GRANTED: 'Доступ поддержки', SUPPORT_TENANT_DATA_CHANGED: 'Данные изменены поддержкой',
-    SUPPORT_TENANT_RESTORED: 'Восстановлено поддержкой', SUPPORT_TENANT_CLOSED: 'Закрыто поддержкой',
-    // Legacy
-    PRODUCT_DELETED: 'Удаление товара', STOCK_ADJUSTED: 'Корректировка', ORDER_DEDUCTED: 'Списание заказа',
+const MP_COLORS: Record<string, { label: string; color: string; bg: string }> = {
+    WB:   { label: 'Wildberries',    color: '#7c3aed', bg: '#f5f3ff' },
+    OZON: { label: 'Ozon',           color: '#1d4ed8', bg: '#eff6ff' },
+    OZ:   { label: 'Ozon',           color: '#1d4ed8', bg: '#eff6ff' },
+    YM:   { label: 'Яндекс Маркет',  color: '#b45309', bg: '#fffbeb' },
 };
 
-const ACTOR_TYPE_LABELS: Record<string, string> = {
-    user: 'Пользователь', system: 'Система', support: 'Поддержка', marketplace: 'Маркетплейс',
+const ACTOR_ICONS: Record<string, React.ReactNode> = {
+    user:    <User size={13} />,
+    system:  <Cpu size={13} />,
+    support: <Headphones size={13} />,
+};
+
+const ACTOR_LABELS: Record<string, string> = {
+    user: 'Пользователь', system: 'Система', support: 'Поддержка',
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -80,184 +87,278 @@ const READ_ONLY_BANNER: Record<string, string> = {
 
 const DOMAINS = ['AUTH', 'SESSION', 'PASSWORD', 'TEAM', 'TENANT', 'CATALOG', 'INVENTORY', 'MARKETPLACE', 'SYNC', 'BILLING', 'SUPPORT'];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const thSt: React.CSSProperties = {
+    fontFamily: 'Inter', fontSize: 12, fontWeight: 700, color: S.muted,
+    textTransform: 'uppercase', letterSpacing: '0.1em',
+    padding: '10px 16px', textAlign: 'left', verticalAlign: 'middle',
+    whiteSpace: 'nowrap', background: '#fafbfc',
+};
 
-function getEventLabel(log: AuditLog): string {
-    if (log.eventType) return EVENT_TYPE_LABELS[log.eventType] ?? log.eventType;
-    if (log.actionType) return EVENT_TYPE_LABELS[log.actionType] ?? log.actionType;
-    return '—';
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function getActionKey(log: AuditLog): string {
+    return log.eventType ?? log.actionType ?? '';
 }
 
-function getDomainBadge(domain: string | null): JSX.Element | null {
-    if (!domain) return null;
-    const color = DOMAIN_COLORS[domain] ?? 'bg-slate-100 text-slate-600';
+function getActionBadge(log: AuditLog): React.ReactElement {
+    const key = getActionKey(log);
+    const cfg = ACTION_BADGE[key];
+    const label = cfg?.label || key || '—';
+    const color = cfg?.color ?? S.sub;
+    const bg    = cfg?.bg    ?? '#f1f5f9';
     return (
-        <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${color}`}>
-            {DOMAIN_LABELS[domain] ?? domain}
+        <span style={{
+            display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+            fontFamily: 'Inter', fontSize: 12, fontWeight: 600,
+            background: bg, color, whiteSpace: 'nowrap',
+        }}>
+            {label}
         </span>
     );
 }
 
-// ─── Before/After Diff ───────────────────────────────────────────────────────
+function getActorCell(log: AuditLog): React.ReactElement {
+    const type = log.actorType ?? '';
 
-function DiffView({ before, after, changedFields }: {
-    before: Record<string, unknown> | null;
-    after:  Record<string, unknown> | null;
-    changedFields: string[] | null;
-}) {
-    if (!before && !after) return <p className="text-xs text-slate-400 italic">Нет данных об изменениях</p>;
+    if (type === 'marketplace') {
+        const mpKey = (log.metadata?.marketplace as string | undefined)?.toUpperCase() ?? '';
+        const mp = MP_COLORS[mpKey];
+        const label = (mp?.label ?? mpKey) || 'Маркетплейс';
+        const color = mp?.color ?? S.sub;
+        const bg    = mp?.bg    ?? '#f1f5f9';
+        return (
+            <span style={{
+                display: 'inline-block', padding: '3px 10px', borderRadius: 999,
+                fontFamily: 'Inter', fontSize: 12, fontWeight: 600,
+                background: bg, color, whiteSpace: 'nowrap',
+            }}>
+                {label}
+            </span>
+        );
+    }
 
-    const keys = changedFields?.length
-        ? changedFields
-        : [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
-
-    if (keys.length === 0) return <p className="text-xs text-slate-400 italic">Изменений не зафиксировано</p>;
-
+    const icon  = ACTOR_ICONS[type] ?? <User size={13} />;
+    const label = (log.actorEmail ?? ACTOR_LABELS[type] ?? type) || '—';
     return (
-        <div className="space-y-1.5">
-            {keys.map(key => {
-                const bv = before?.[key];
-                const av = after?.[key];
-                const changed = JSON.stringify(bv) !== JSON.stringify(av);
-                return (
-                    <div key={key} className={`rounded-lg p-2 text-xs font-mono ${changed ? 'bg-amber-50 border border-amber-200' : 'bg-slate-50'}`}>
-                        <span className="text-slate-500 font-sans font-medium">{key}: </span>
-                        {before && bv !== undefined && (
-                            <span className="line-through text-red-500 mr-1">{JSON.stringify(bv)}</span>
-                        )}
-                        {after && av !== undefined && (
-                            <span className="text-emerald-700">{JSON.stringify(av)}</span>
-                        )}
-                    </div>
-                );
-            })}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: 'Inter', fontSize: 13, color: S.ink }}>
+            <span style={{ color: S.muted, flexShrink: 0, display: 'flex' }}>{icon}</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        </span>
+    );
+}
+
+function getChangeSummary(log: AuditLog): React.ReactElement | null {
+    if (log.beforeTotal != null || log.afterTotal != null) {
+        const before = log.beforeTotal ?? '?';
+        const after  = log.afterTotal  ?? '?';
+        const delta  = log.delta;
+        const deltaColor = delta == null ? S.sub : delta > 0 ? '#16a34a' : delta < 0 ? '#dc2626' : S.muted;
+        return (
+            <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.ink }}>
+                <span style={{ color: S.muted }}>{String(before)}</span>
+                <span style={{ color: S.muted, margin: '0 4px' }}>→</span>
+                <span style={{ fontWeight: 600 }}>{String(after)}</span>
+                {delta != null && (
+                    <span style={{ marginLeft: 6, color: deltaColor, fontWeight: 600 }}>
+                        ({delta > 0 ? '+' : ''}{delta})
+                    </span>
+                )}
+                {log.note && (
+                    <span style={{ display: 'block', color: S.muted, fontSize: 11, marginTop: 2 }}>{log.note}</span>
+                )}
+            </span>
+        );
+    }
+    const keys = log.changedFields?.length
+        ? log.changedFields
+        : [...new Set([...Object.keys(log.before ?? {}), ...Object.keys(log.after ?? {})])];
+    if (keys.length === 0) return null;
+    const shown = keys.slice(0, 3);
+    const more  = keys.length - 3;
+    return (
+        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+            {shown.join(', ')}{more > 0 ? ` +${more}` : ''}
+        </span>
+    );
+}
+
+function getProductCell(log: AuditLog): React.ReactElement | null {
+    if (log.productSku) return <SkuTag>{log.productSku}</SkuTag>;
+    if ((log.entityType === 'PRODUCT' || log.entityType === 'STOCK') && log.entityId) {
+        return <SkuTag>…{log.entityId.slice(-6)}</SkuTag>;
+    }
+    return null;
+}
+
+// ─── Detail Panel ─────────────────────────────────────────────────────────────
+
+function DiffRow({ label, before, after }: { label: string; before: unknown; after: unknown }) {
+    const fmt = (v: unknown) =>
+        v === undefined || v === null
+            ? <span style={{ color: S.muted, fontStyle: 'italic' }}>—</span>
+            : <span>{JSON.stringify(v)}</span>;
+    const changed = JSON.stringify(before) !== JSON.stringify(after);
+    return (
+        <div style={{
+            borderRadius: 8, padding: '8px 12px',
+            background: changed ? 'rgba(245,158,11,0.05)' : '#f8fafc',
+            border: `1px solid ${changed ? 'rgba(245,158,11,0.25)' : S.border}`,
+            fontSize: 12,
+        }}>
+            <div style={{ fontFamily: 'Inter', color: S.muted, fontWeight: 600, marginBottom: 4, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontFamily: "'JetBrains Mono', monospace" }}>
+                <span style={{ color: '#dc2626', textDecoration: 'line-through' }}>{fmt(before)}</span>
+                <span style={{ color: S.muted }}>→</span>
+                <span style={{ color: '#16a34a', fontWeight: 600 }}>{fmt(after)}</span>
+            </div>
         </div>
     );
 }
 
-// ─── Detail Panel ────────────────────────────────────────────────────────────
+function InfoCard({ label, children }: { label: string; children: React.ReactNode }) {
+    return (
+        <div style={{ borderRadius: 8, padding: '10px 12px', background: S.bg, border: `1px solid ${S.border}` }}>
+            <div style={{ fontSize: 11, fontFamily: 'Inter', color: S.muted, fontWeight: 600, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+            {children}
+        </div>
+    );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+    return (
+        <p style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 10, marginTop: 0 }}>
+            {children}
+        </p>
+    );
+}
 
 function DetailPanel({ log, onClose }: { log: AuditLog; onClose: () => void }) {
     const isRedacted = log.redactionLevel === 'strict';
+    const key = getActionKey(log);
+    const cfg = ACTION_BADGE[key];
+    const actionLabel = cfg?.label || key || '—';
+    const actionColor = cfg?.color ?? S.sub;
+    const actionBg    = cfg?.bg    ?? '#f1f5f9';
+
+    const diffKeys = log.changedFields?.length
+        ? log.changedFields
+        : [...new Set([...Object.keys(log.before ?? {}), ...Object.keys(log.after ?? {})])];
+
+    const hasLegacyStock = log.beforeTotal != null || log.afterTotal != null;
 
     return (
-        <div className="fixed inset-y-0 right-0 z-40 w-full max-w-lg bg-white shadow-2xl border-l border-slate-200 flex flex-col">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-slate-50">
-                <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold">Детали события</p>
-                    <p className="text-sm font-bold text-slate-900 mt-0.5">{getEventLabel(log)}</p>
+        <div style={{
+            position: 'fixed', insetBlock: 0, right: 0, zIndex: 40,
+            width: '100%', maxWidth: 500,
+            background: '#fff', boxShadow: '-8px 0 40px rgba(0,0,0,0.12)',
+            borderLeft: `1px solid ${S.border}`, display: 'flex', flexDirection: 'column',
+        }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${S.border}` }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontFamily: 'Inter', fontSize: 10, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Детали события</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontFamily: 'Inter', fontSize: 12, fontWeight: 600, background: actionBg, color: actionColor, whiteSpace: 'nowrap' }}>
+                            {actionLabel}
+                        </span>
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub }}>
+                            {format(new Date(log.createdAt), 'dd MMM yyyy, HH:mm:ss', { locale: ru })}
+                        </span>
+                    </div>
                 </div>
-                <button onClick={onClose} className="p-1.5 hover:bg-slate-200 rounded-lg transition-colors">
-                    <X className="w-4 h-4 text-slate-600" />
+                <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 8, borderRadius: 8, color: S.muted, display: 'flex' }}>
+                    <X size={16} />
                 </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-                {/* Meta */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
                 <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Контекст</h3>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                        {log.eventDomain && (
-                            <>
-                                <dt className="text-slate-500">Домен</dt>
-                                <dd>{getDomainBadge(log.eventDomain)}</dd>
-                            </>
-                        )}
+                    <SectionTitle>Кто и что</SectionTitle>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <InfoCard label="Автор">
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: S.ink }}>
+                                <span style={{ color: S.muted, display: 'flex' }}>{ACTOR_ICONS[log.actorType ?? ''] ?? <User size={13} />}</span>
+                                {log.actorEmail ?? ACTOR_LABELS[log.actorType ?? ''] ?? log.actorType ?? '—'}
+                            </div>
+                            {log.actorRole && <div style={{ fontSize: 11, color: S.muted, marginTop: 2 }}>{log.actorRole}</div>}
+                        </InfoCard>
+                        <InfoCard label="Источник">
+                            <span style={{ fontSize: 13, color: S.ink }}>{SOURCE_LABELS[log.source ?? ''] ?? log.source ?? '—'}</span>
+                        </InfoCard>
                         {log.entityType && (
-                            <>
-                                <dt className="text-slate-500">Тип сущности</dt>
-                                <dd className="font-mono text-xs text-slate-800">{log.entityType}</dd>
-                            </>
+                            <InfoCard label="Тип объекта"><SkuTag>{log.entityType}</SkuTag></InfoCard>
                         )}
-                        {log.entityId && (
-                            <>
-                                <dt className="text-slate-500">ID сущности</dt>
-                                <dd className="font-mono text-xs text-slate-600 truncate">{log.entityId}</dd>
-                            </>
+                        {(log.productSku || (log.entityType === 'PRODUCT' && log.entityId)) && (
+                            <InfoCard label="Артикул / ID"><SkuTag>{log.productSku ?? log.entityId}</SkuTag></InfoCard>
                         )}
-                        <dt className="text-slate-500">Исполнитель</dt>
-                        <dd className="text-slate-800">
-                            {ACTOR_TYPE_LABELS[log.actorType ?? ''] ?? log.actorType ?? '—'}
-                            {log.actorRole && <span className="text-slate-400 ml-1 text-xs">({log.actorRole})</span>}
-                        </dd>
-                        {log.source && (
-                            <>
-                                <dt className="text-slate-500">Источник</dt>
-                                <dd className="text-slate-800">{SOURCE_LABELS[log.source] ?? log.source}</dd>
-                            </>
-                        )}
-                        <dt className="text-slate-500">Время</dt>
-                        <dd className="text-slate-800">{format(new Date(log.createdAt), 'dd MMM yyyy, HH:mm:ss', { locale: ru })}</dd>
-                    </dl>
+                    </div>
                 </section>
 
-                {/* Correlation */}
-                {(log.requestId || log.correlationId) && (
+                {hasLegacyStock && (
                     <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Трассировка</h3>
-                        <dl className="space-y-1.5 text-xs font-mono">
-                            {log.requestId && (
-                                <div>
-                                    <span className="text-slate-500 font-sans">requestId: </span>
-                                    <span className="text-slate-700">{log.requestId}</span>
-                                </div>
-                            )}
-                            {log.correlationId && (
-                                <div>
-                                    <span className="text-slate-500 font-sans">correlationId: </span>
-                                    <span className="text-slate-700">{log.correlationId}</span>
-                                </div>
-                            )}
-                        </dl>
-                    </section>
-                )}
-
-                {/* Changes */}
-                <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Изменения</h3>
-                    {isRedacted ? (
-                        <p className="text-xs text-slate-400 italic flex items-center gap-1.5">
-                            <Shield className="w-3.5 h-3.5" /> Детали скрыты политикой редактирования
-                        </p>
-                    ) : (
-                        <>
-                            {log.changedFields && log.changedFields.length > 0 && (
-                                <div className="mb-3">
-                                    <p className="text-xs text-slate-500 mb-1.5">Изменённые поля:</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                        {log.changedFields.map(f => (
-                                            <span key={f} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs font-mono rounded">{f}</span>
-                                        ))}
+                        <SectionTitle>Изменение остатка</SectionTitle>
+                        <div style={{ borderRadius: 10, padding: '14px 16px', background: 'rgba(14,116,144,0.05)', border: '1px solid rgba(14,116,144,0.2)', display: 'flex', alignItems: 'center', gap: 20 }}>
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 11, color: S.muted, marginBottom: 2 }}>Было</div>
+                                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, color: '#dc2626', fontWeight: 700 }}>{log.beforeTotal ?? '?'}</div>
+                            </div>
+                            <div style={{ fontSize: 18, color: S.muted }}>→</div>
+                            <div style={{ textAlign: 'center' }}>
+                                <div style={{ fontSize: 11, color: S.muted, marginBottom: 2 }}>Стало</div>
+                                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, color: '#16a34a', fontWeight: 700 }}>{log.afterTotal ?? '?'}</div>
+                            </div>
+                            {log.delta != null && (
+                                <div style={{ textAlign: 'center', marginLeft: 8 }}>
+                                    <div style={{ fontSize: 11, color: S.muted, marginBottom: 2 }}>Изменение</div>
+                                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 20, fontWeight: 700, color: log.delta > 0 ? '#16a34a' : log.delta < 0 ? '#dc2626' : S.muted }}>
+                                        {log.delta > 0 ? '+' : ''}{log.delta}
                                     </div>
                                 </div>
                             )}
-                            <DiffView before={log.before} after={log.after} changedFields={log.changedFields} />
-                        </>
-                    )}
-                </section>
-
-                {/* Legacy changes for old records */}
-                {!log.eventType && log.actionType && (
-                    <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Изменения (устаревший формат)</h3>
-                        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                            {log.productSku && (<><dt className="text-slate-500">SKU</dt><dd className="font-medium">{log.productSku}</dd></>)}
-                            {log.beforeTotal != null && (<><dt className="text-slate-500">Было</dt><dd>{log.beforeTotal}</dd></>)}
-                            {log.afterTotal != null && (<><dt className="text-slate-500">Стало</dt><dd className="font-semibold">{log.afterTotal}</dd></>)}
-                            {log.delta != null && (<><dt className="text-slate-500">Δ</dt><dd className={log.delta > 0 ? 'text-emerald-600 font-medium' : 'text-red-600 font-medium'}>{log.delta > 0 ? '+' : ''}{log.delta}</dd></>)}
-                            {log.note && (<><dt className="text-slate-500">Примечание</dt><dd className="text-slate-700">{log.note}</dd></>)}
-                        </dl>
+                        </div>
+                        {log.note && (
+                            <div style={{ marginTop: 8, borderRadius: 8, padding: '10px 14px', background: '#f8fafc', border: `1px solid ${S.border}`, fontSize: 13, fontFamily: 'Inter', color: S.ink }}>
+                                <span style={{ fontWeight: 600, color: S.sub, marginRight: 6 }}>Примечание:</span>{log.note}
+                            </div>
+                        )}
                     </section>
                 )}
 
-                {/* Metadata */}
+                {!isRedacted && diffKeys.length > 0 && (
+                    <section>
+                        <SectionTitle>Изменения полей</SectionTitle>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {diffKeys.map(k => (
+                                <DiffRow key={k} label={k} before={log.before?.[k]} after={log.after?.[k]} />
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {isRedacted && (
+                    <section>
+                        <SectionTitle>Изменения</SectionTitle>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', borderRadius: 8, background: '#f8fafc', border: `1px solid ${S.border}`, fontSize: 13, color: S.muted }}>
+                            <Shield size={14} /> Детали скрыты политикой редактирования
+                        </div>
+                    </section>
+                )}
+
                 {log.metadata && Object.keys(log.metadata).length > 0 && (
                     <section>
-                        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Метаданные</h3>
-                        <pre className="text-xs font-mono bg-slate-50 rounded-lg p-3 overflow-x-auto text-slate-700 whitespace-pre-wrap">
+                        <SectionTitle>Метаданные</SectionTitle>
+                        <pre style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", background: S.bg, borderRadius: 8, padding: 12, overflowX: 'auto', color: S.ink, whiteSpace: 'pre-wrap', border: `1px solid ${S.border}`, margin: 0 }}>
                             {JSON.stringify(log.metadata, null, 2)}
                         </pre>
+                    </section>
+                )}
+
+                {(log.requestId || log.correlationId) && (
+                    <section>
+                        <SectionTitle>Трассировка</SectionTitle>
+                        <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: S.sub, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {log.requestId    && <div><span style={{ fontFamily: 'Inter', color: S.muted }}>requestId: </span>{log.requestId}</div>}
+                            {log.correlationId && <div><span style={{ fontFamily: 'Inter', color: S.muted }}>correlationId: </span>{log.correlationId}</div>}
+                        </div>
                     </section>
                 )}
             </div>
@@ -271,36 +372,30 @@ type Tab = 'logs' | 'security';
 
 export default function History() {
     const { activeTenant } = useAuth();
-    const tenantId = activeTenant?.id;
+    const tenantId   = activeTenant?.id;
     const accessState = activeTenant?.accessState ?? '';
-    const isReadOnly = READ_ONLY_STATES.has(accessState);
+    const isReadOnly  = READ_ONLY_STATES.has(accessState);
 
     const [tab, setTab] = useState<Tab>('logs');
 
-    // Audit logs state
-    const [logs, setLogs] = useState<AuditLog[]>([]);
+    const [logs, setLogs]         = useState<AuditLog[]>([]);
     const [logsMeta, setLogsMeta] = useState({ total: 0, page: 1, lastPage: 1, retentionDays: 180 });
     const [logsPage, setLogsPage] = useState(1);
     const [logsLoading, setLogsLoading] = useState(false);
 
-    // Audit log filters
-    const [domain, setDomain] = useState('');
-    const [fromDate, setFromDate] = useState('');
-    const [toDate, setToDate] = useState('');
+    const [domain, setDomain]         = useState('');
+    const [fromDate, setFromDate]     = useState('');
+    const [toDate, setToDate]         = useState('');
     const [entityType, setEntityType] = useState('');
     const [showFilters, setShowFilters] = useState(false);
 
-    // Security events state
-    const [secEvents, setSecEvents] = useState<SecurityEvent[]>([]);
-    const [secMeta, setSecMeta] = useState({ total: 0, page: 1, lastPage: 1 });
-    const [secPage, setSecPage] = useState(1);
+    const [secEvents, setSecEvents]   = useState<SecurityEvent[]>([]);
+    const [secMeta, setSecMeta]       = useState({ total: 0, page: 1, lastPage: 1 });
+    const [secPage, setSecPage]       = useState(1);
     const [secLoading, setSecLoading] = useState(false);
     const [secEventType, setSecEventType] = useState('');
 
-    // Drill-down
     const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-
-    // ── Fetch audit logs ──────────────────────────────────────────────────────
 
     const fetchLogs = useCallback(async () => {
         setLogsLoading(true);
@@ -310,7 +405,6 @@ export default function History() {
             if (fromDate)   filters.from        = new Date(fromDate).toISOString();
             if (toDate)     filters.to          = new Date(toDate + 'T23:59:59').toISOString();
             if (entityType) filters.entityType  = entityType;
-
             const res = await auditApi.getLogs(tenantId, filters);
             setLogs(res.data);
             setLogsMeta(res.meta as any);
@@ -321,14 +415,11 @@ export default function History() {
         }
     }, [tenantId, logsPage, domain, fromDate, toDate, entityType]);
 
-    // ── Fetch security events ─────────────────────────────────────────────────
-
     const fetchSecEvents = useCallback(async () => {
         setSecLoading(true);
         try {
             const filters: SecurityEventFilters = { page: secPage, limit: 20 };
             if (secEventType) filters.eventType = secEventType;
-
             const res = await auditApi.getSecurityEvents(tenantId, filters);
             setSecEvents(res.data);
             setSecMeta(res.meta);
@@ -340,307 +431,252 @@ export default function History() {
     }, [tenantId, secPage, secEventType]);
 
     useEffect(() => {
-        if (tab === 'logs') {
-            const t = setTimeout(fetchLogs, 200);
-            return () => clearTimeout(t);
-        }
+        if (tab === 'logs') { const t = setTimeout(fetchLogs, 200); return () => clearTimeout(t); }
     }, [tab, fetchLogs]);
 
     useEffect(() => {
-        if (tab === 'security') {
-            const t = setTimeout(fetchSecEvents, 200);
-            return () => clearTimeout(t);
-        }
+        if (tab === 'security') { const t = setTimeout(fetchSecEvents, 200); return () => clearTimeout(t); }
     }, [tab, fetchSecEvents]);
 
-    // Reset page when filters change
     useEffect(() => { setLogsPage(1); }, [domain, fromDate, toDate, entityType]);
     useEffect(() => { setSecPage(1); }, [secEventType]);
 
-    // ── Render helpers ────────────────────────────────────────────────────────
-
-    const renderLogRow = (log: AuditLog) => (
-        <tr
-            key={log.id}
-            className="hover:bg-blue-50/40 transition-colors cursor-pointer"
-            onClick={() => setSelectedLog(log)}
-        >
-            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
-                {format(new Date(log.createdAt), 'dd MMM, HH:mm', { locale: ru })}
-            </td>
-            <td className="px-4 py-3 whitespace-nowrap">
-                {getDomainBadge(log.eventDomain)}
-            </td>
-            <td className="px-4 py-3 text-xs font-medium text-slate-800 max-w-[180px] truncate">
-                {getEventLabel(log)}
-            </td>
-            <td className="hidden sm:table-cell px-4 py-3 text-xs text-slate-500 max-w-[120px] truncate">
-                {log.entityType
-                    ? <span>{log.entityType}{log.entityId && <span className="text-slate-400 ml-1">#{log.entityId.slice(-6)}</span>}</span>
-                    : log.productSku
-                        ? <span className="font-mono">{log.productSku}</span>
-                        : <span className="text-slate-300">—</span>
-                }
-            </td>
-            <td className="hidden md:table-cell px-4 py-3 text-xs text-slate-500">
-                {log.actorType ? (ACTOR_TYPE_LABELS[log.actorType] ?? log.actorType) : (log.actorEmail ?? '—')}
-            </td>
-            <td className="px-4 py-3 text-right">
-                <ChevronRight className="w-3.5 h-3.5 text-slate-300 ml-auto" />
-            </td>
-        </tr>
-    );
-
-    const renderSecRow = (ev: SecurityEvent) => (
-        <tr key={ev.id} className="hover:bg-slate-50 transition-colors">
-            <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
-                {format(new Date(ev.createdAt), 'dd MMM, HH:mm', { locale: ru })}
-            </td>
-            <td className="px-4 py-3 whitespace-nowrap">
-                <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
-                    ev.eventType === 'login_failed' ? 'bg-red-100 text-red-700' :
-                    ev.eventType === 'login_success' ? 'bg-emerald-100 text-emerald-700' :
-                    'bg-slate-100 text-slate-600'
-                }`}>
-                    {SEC_EVENT_LABELS[ev.eventType] ?? ev.eventType}
-                </span>
-            </td>
-            <td className="hidden sm:table-cell px-4 py-3 text-xs text-slate-500 font-mono">
-                {ev.userId ? ev.userId.slice(-8) : '—'}
-            </td>
-            <td className="hidden md:table-cell px-4 py-3 text-xs text-slate-500 font-mono">
-                {ev.ip ?? '—'}
-            </td>
-            <td className="hidden lg:table-cell px-4 py-3 text-xs text-slate-400 max-w-[200px] truncate">
-                {ev.userAgent ?? '—'}
-            </td>
-        </tr>
-    );
-
-    // ── Layout ────────────────────────────────────────────────────────────────
+    const activeFilterCount = [domain, fromDate, toDate, entityType].filter(Boolean).length;
 
     return (
-        <div className="space-y-5 animate-fade-in pb-12">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <h1 className="text-xl sm:text-2xl font-bold text-slate-900">История изменений</h1>
-                {tab === 'logs' && logsMeta.retentionDays && (
-                    <span className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400">
-                        <Clock className="w-3.5 h-3.5" /> Хранится {logsMeta.retentionDays} дней
-                    </span>
-                )}
-            </div>
+        <div style={{ paddingBottom: 48 }}>
+            <PageHeader
+                title="История изменений"
+                subtitle={tab === 'logs' && logsMeta.retentionDays ? `Хранится ${logsMeta.retentionDays} дней` : undefined}
+            />
 
-            {/* Read-only banner */}
             {isReadOnly && READ_ONLY_BANNER[accessState] && (
-                <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, background: 'rgba(245,158,11,0.08)', border: `1px solid rgba(245,158,11,0.3)`, borderRadius: 12, padding: '12px 16px', marginBottom: 20, fontFamily: 'Inter', fontSize: 13, color: '#92400e' }}>
+                    <AlertTriangle size={16} style={{ marginTop: 1, flexShrink: 0 }} />
                     <span>{READ_ONLY_BANNER[accessState]}</span>
                 </div>
             )}
 
             {/* Tabs */}
-            <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+            <div style={{ display: 'flex', gap: 4, background: '#f1f5f9', padding: 4, borderRadius: 12, width: 'fit-content', marginBottom: 20 }}>
                 {(['logs', 'security'] as Tab[]).map(t => (
-                    <button
-                        key={t}
-                        onClick={() => setTab(t)}
-                        className={`px-4 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                            tab === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                        }`}
-                    >
-                        {t === 'logs' ? 'Журнал' : (
-                            <span className="flex items-center gap-1.5"><Shield className="w-3.5 h-3.5" />Security</span>
-                        )}
+                    <button key={t} onClick={() => setTab(t)} style={{
+                        padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                        fontFamily: 'Inter', fontSize: 13, fontWeight: 500, transition: 'all 0.15s',
+                        background: tab === t ? '#fff' : 'transparent',
+                        color: tab === t ? S.ink : S.sub,
+                        boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                        display: 'flex', alignItems: 'center', gap: 6,
+                    }}>
+                        {t === 'logs' ? 'Журнал' : <><Shield size={14} />Безопасность</>}
                     </button>
                 ))}
             </div>
 
-            {/* Filters for logs tab */}
-            {tab === 'logs' && (
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-                    <div
-                        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
-                        onClick={() => setShowFilters(f => !f)}
-                    >
-                        <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                            <Filter className="w-4 h-4 text-slate-400" />
-                            Фильтры
-                            {(domain || fromDate || toDate || entityType) && (
-                                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-semibold">
-                                    {[domain, fromDate, toDate, entityType].filter(Boolean).length}
-                                </span>
+            <Card noPad>
+                {/* Toolbar / Filters */}
+                <div style={{ padding: '12px 20px', borderBottom: `1px solid ${S.border}`, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    {tab === 'logs' && (
+                        <>
+                            <button
+                                onClick={() => setShowFilters(f => !f)}
+                                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8, border: `1px solid ${S.border}`, background: showFilters ? '#eff6ff' : '#fff', cursor: 'pointer', fontFamily: 'Inter', fontSize: 13, color: showFilters ? S.blue : S.sub, transition: 'all 0.15s' }}
+                            >
+                                <Filter size={14} />
+                                Фильтры
+                                {activeFilterCount > 0 && (
+                                    <span style={{ background: S.blue, color: '#fff', borderRadius: 999, fontSize: 11, fontWeight: 700, padding: '1px 6px' }}>{activeFilterCount}</span>
+                                )}
+                            </button>
+                            {showFilters && (
+                                <>
+                                    <HiSelect
+                                        value={domain}
+                                        onChange={setDomain}
+                                        options={[{ value: '', label: 'Все домены' }, ...DOMAINS.map(d => ({ value: d, label: DOMAIN_LABELS[d] ?? d }))]}
+                                    />
+                                    <Input value={entityType} onChange={e => setEntityType(e.target.value)} placeholder="Тип: PRODUCT, USER…" style={{ width: 180 }} />
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <FieldLabel>От</FieldLabel>
+                                        <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: 150 }} />
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <FieldLabel>До</FieldLabel>
+                                        <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: 150 }} />
+                                    </div>
+                                    {activeFilterCount > 0 && (
+                                        <Btn variant="ghost" size="sm" onClick={() => { setDomain(''); setFromDate(''); setToDate(''); setEntityType(''); }}>
+                                            <X size={12} /> Сбросить
+                                        </Btn>
+                                    )}
+                                </>
                             )}
-                        </div>
-                        <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${showFilters ? 'rotate-90' : ''}`} />
-                    </div>
-
-                    {showFilters && (
-                        <div className="px-4 pb-4 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Домен</label>
-                                <select
-                                    value={domain}
-                                    onChange={e => setDomain(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:ring-blue-500 focus:border-blue-500"
-                                >
-                                    <option value="">Все домены</option>
-                                    {DOMAINS.map(d => (
-                                        <option key={d} value={d}>{DOMAIN_LABELS[d] ?? d}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Тип сущности</label>
-                                <input
-                                    type="text"
-                                    placeholder="PRODUCT, USER..."
-                                    value={entityType}
-                                    onChange={e => setEntityType(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">От</label>
-                                <input
-                                    type="date"
-                                    value={fromDate}
-                                    onChange={e => setFromDate(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">До</label>
-                                <input
-                                    type="date"
-                                    value={toDate}
-                                    onChange={e => setToDate(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
-                                />
-                            </div>
-                            {(domain || fromDate || toDate || entityType) && (
-                                <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
-                                    <button
-                                        onClick={() => { setDomain(''); setFromDate(''); setToDate(''); setEntityType(''); }}
-                                        className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1"
-                                    >
-                                        <X className="w-3 h-3" /> Сбросить фильтры
-                                    </button>
-                                </div>
-                            )}
+                        </>
+                    )}
+                    {tab === 'security' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <FieldLabel>Тип события</FieldLabel>
+                            <HiSelect
+                                value={secEventType}
+                                onChange={setSecEventType}
+                                options={[{ value: '', label: 'Все события' }, ...Object.entries(SEC_EVENT_LABELS).map(([k, v]) => ({ value: k, label: v }))]}
+                            />
                         </div>
                     )}
                 </div>
-            )}
 
-            {/* Security events filter */}
-            {tab === 'security' && (
-                <div className="bg-white border border-slate-200 rounded-xl shadow-sm px-4 py-3">
-                    <div className="flex items-center gap-3">
-                        <Search className="w-4 h-4 text-slate-400 shrink-0" />
-                        <select
-                            value={secEventType}
-                            onChange={e => setSecEventType(e.target.value)}
-                            className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:ring-blue-500 focus:border-blue-500"
-                        >
-                            <option value="">Все события</option>
-                            {Object.entries(SEC_EVENT_LABELS).map(([k, v]) => (
-                                <option key={k} value={k}>{v}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
-            )}
-
-            {/* Table */}
-            <div className="bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                    {tab === 'logs' ? (
-                        <table className="min-w-full divide-y divide-slate-100">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Время</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Домен</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Событие</th>
-                                    <th className="hidden sm:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Сущность</th>
-                                    <th className="hidden md:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Исполнитель</th>
-                                    <th className="px-4 py-3 w-8" />
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {logsLoading ? (
-                                    <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400 text-sm">Загрузка...</td></tr>
-                                ) : logs.length === 0 ? (
-                                    <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400 text-sm">Записей не найдено</td></tr>
-                                ) : (
-                                    logs.map(renderLogRow)
-                                )}
-                            </tbody>
-                        </table>
+                {/* Table */}
+                {tab === 'logs' ? (
+                    logsLoading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            <Spinner /> Загрузка...
+                        </div>
+                    ) : logs.length === 0 ? (
+                        <EmptyState icon={Clock} title="Записей не найдено" subtitle="Попробуйте изменить фильтры" />
                     ) : (
-                        <table className="min-w-full divide-y divide-slate-100">
-                            <thead className="bg-slate-50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Время</th>
-                                    <th className="px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Событие</th>
-                                    <th className="hidden sm:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">Пользователь</th>
-                                    <th className="hidden md:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">IP</th>
-                                    <th className="hidden lg:table-cell px-4 py-3 text-left text-[11px] font-semibold text-slate-500 uppercase tracking-wider">User Agent</th>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                            <colgroup>
+                                <col style={{ width: 120 }} />
+                                <col style={{ width: '20%' }} />
+                                <col style={{ width: '18%' }} />
+                                <col style={{ width: '12%' }} />
+                                <col />
+                                <col style={{ width: 40 }} />
+                            </colgroup>
+                            <thead>
+                                <tr style={{ borderBottom: `1px solid ${S.border}` }}>
+                                    <th style={thSt}>Дата и время</th>
+                                    <th style={thSt}>Автор</th>
+                                    <th style={thSt}>Действие</th>
+                                    <th style={thSt}>Товар</th>
+                                    <th style={thSt}>Изменения</th>
+                                    <th style={thSt} />
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {secLoading ? (
-                                    <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400 text-sm">Загрузка...</td></tr>
-                                ) : secEvents.length === 0 ? (
-                                    <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400 text-sm">Событий не найдено</td></tr>
-                                ) : (
-                                    secEvents.map(renderSecRow)
-                                )}
+                            <tbody>
+                                {logs.map(log => (
+                                    <tr
+                                        key={log.id}
+                                        style={{ borderBottom: `1px solid ${S.border}`, cursor: 'pointer', transition: 'background 0.12s' }}
+                                        onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                        onClick={() => setSelectedLog(log)}
+                                    >
+                                        <td style={{ padding: '12px 16px', verticalAlign: 'middle' }}>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 500, color: S.ink }}>
+                                                {format(new Date(log.createdAt), 'dd MMM', { locale: ru })}
+                                            </div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
+                                                {format(new Date(log.createdAt), 'HH:mm:ss')}
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                            {getActorCell(log)}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                            {getActionBadge(log)}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                            {getProductCell(log) ?? <span style={{ color: S.muted, fontSize: 13 }}>—</span>}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle', overflow: 'hidden' }}>
+                                            {getChangeSummary(log) ?? <span style={{ color: S.muted, fontSize: 13 }}>—</span>}
+                                        </td>
+                                        <td style={{ padding: '0 12px', verticalAlign: 'middle', textAlign: 'center' }}>
+                                            <ChevronRight size={15} color={S.muted} />
+                                        </td>
+                                    </tr>
+                                ))}
                             </tbody>
                         </table>
-                    )}
-                </div>
+                    )
+                ) : (
+                    secLoading ? (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                            <Spinner /> Загрузка...
+                        </div>
+                    ) : secEvents.length === 0 ? (
+                        <EmptyState icon={Shield} title="Событий не найдено" />
+                    ) : (
+                        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                            <colgroup>
+                                <col style={{ width: 120 }} />
+                                <col style={{ width: '22%' }} />
+                                <col style={{ width: '18%' }} />
+                                <col style={{ width: '14%' }} />
+                                <col />
+                            </colgroup>
+                            <thead>
+                                <tr style={{ borderBottom: `1px solid ${S.border}` }}>
+                                    <th style={thSt}>Дата и время</th>
+                                    <th style={thSt}>Событие</th>
+                                    <th style={thSt}>Пользователь</th>
+                                    <th style={thSt}>IP</th>
+                                    <th style={thSt}>Браузер</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {secEvents.map(ev => (
+                                    <tr
+                                        key={ev.id}
+                                        style={{ borderBottom: `1px solid ${S.border}`, transition: 'background 0.12s' }}
+                                        onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
+                                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                                    >
+                                        <td style={{ padding: '12px 16px', verticalAlign: 'middle' }}>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 500, color: S.ink }}>
+                                                {format(new Date(ev.createdAt), 'dd MMM', { locale: ru })}
+                                            </div>
+                                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted }}>
+                                                {format(new Date(ev.createdAt), 'HH:mm:ss')}
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle' }}>
+                                            {secEventBadge(ev.eventType)}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.sub }}>
+                                            {ev.userId ? ev.userId.slice(-8) : '—'}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle', fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.sub }}>
+                                            {ev.ip ?? '—'}
+                                        </td>
+                                        <td style={{ padding: '0 16px', verticalAlign: 'middle', fontFamily: 'Inter', fontSize: 12, color: S.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                            {ev.userAgent ?? '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )
+                )}
 
                 {/* Pagination */}
                 {(() => {
-                    const meta   = tab === 'logs' ? logsMeta : secMeta;
-                    const page   = tab === 'logs' ? logsPage : secPage;
+                    const meta    = tab === 'logs' ? logsMeta : secMeta;
+                    const page    = tab === 'logs' ? logsPage : secPage;
                     const setPage = tab === 'logs' ? setLogsPage : setSecPage;
-                    return (
-                        <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between">
-                            <button
-                                disabled={page === 1}
-                                onClick={() => setPage(p => p - 1)}
-                                className="px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Назад
-                            </button>
-                            <span className="text-sm text-slate-600">
-                                Стр. <span className="font-semibold">{page}</span> / <span className="font-semibold">{meta.lastPage}</span>
-                                <span className="ml-2 text-slate-400 text-xs">({meta.total} записей)</span>
-                            </span>
-                            <button
-                                disabled={page >= meta.lastPage}
-                                onClick={() => setPage(p => p + 1)}
-                                className="px-4 py-2 border border-slate-300 text-sm font-medium rounded-lg text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                            >
-                                Вперёд
-                            </button>
-                        </div>
-                    );
+                    return <Pagination page={page} totalPages={meta.lastPage} onPage={setPage} total={meta.total} />;
                 })()}
-            </div>
+            </Card>
 
-            {/* Detail panel overlay */}
             {selectedLog && (
                 <>
-                    <div
-                        className="fixed inset-0 z-30 bg-black/20 backdrop-blur-sm"
-                        onClick={() => setSelectedLog(null)}
-                    />
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 30, background: 'rgba(15,23,42,0.2)', backdropFilter: 'blur(2px)' }} onClick={() => setSelectedLog(null)} />
                     <DetailPanel log={selectedLog} onClose={() => setSelectedLog(null)} />
                 </>
             )}
         </div>
+    );
+}
+
+function secEventBadge(eventType: string): React.ReactElement {
+    const cfg =
+        eventType === 'login_failed'  ? { color: '#dc2626', bg: 'rgba(239,68,68,0.08)' } :
+        eventType === 'login_success' ? { color: '#16a34a', bg: 'rgba(16,185,129,0.08)' } :
+        { color: S.sub, bg: '#f1f5f9' };
+    return (
+        <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontFamily: 'Inter', fontSize: 12, fontWeight: 600, background: cfg.bg, color: cfg.color, whiteSpace: 'nowrap' }}>
+            {SEC_EVENT_LABELS[eventType] ?? eventType}
+        </span>
     );
 }

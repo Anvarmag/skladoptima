@@ -29,29 +29,30 @@ const BANNER_CONFIG: Record<string, BannerConfig> = {
     },
 };
 
-const STYLES = {
-    info: 'bg-blue-50 border-blue-200 text-blue-800',
-    warning: 'bg-yellow-50 border-yellow-200 text-yellow-800',
-    error: 'bg-red-50 border-red-200 text-red-800',
+const STYLES: Record<string, { bg: string; border: string; color: string }> = {
+    info:    { bg: 'rgba(59,130,246,0.06)',  border: 'rgba(59,130,246,0.25)',  color: '#1e40af' },
+    warning: { bg: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.3)',   color: '#92400e' },
+    error:   { bg: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.25)',   color: '#991b1b' },
 };
 
-const ICONS = {
-    info: Info,
-    warning: AlertTriangle,
-    error: XCircle,
-};
+const ICONS = { info: Info, warning: AlertTriangle, error: XCircle };
 
 export default function AccessStateBanner({ accessState }: { accessState: string }) {
     const config = BANNER_CONFIG[accessState];
     if (!config) return null;
 
     const Icon = ICONS[config.severity];
+    const st = STYLES[config.severity];
 
     return (
-        <div className={`border rounded-md px-4 py-3 flex items-start gap-3 text-sm ${STYLES[config.severity]}`}>
-            <Icon className="h-4 w-4 mt-0.5 flex-shrink-0" />
+        <div style={{
+            background: st.bg, border: `1px solid ${st.border}`, borderRadius: 10,
+            padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10,
+            fontFamily: 'Inter', fontSize: 13, color: st.color,
+        }}>
+            <Icon size={15} style={{ marginTop: 1, flexShrink: 0 }} />
             <div>
-                <span className="font-medium">{config.message}</span>
+                <span style={{ fontWeight: 600 }}>{config.message}</span>
                 {' '}
                 <span>{config.actions}</span>
             </div>

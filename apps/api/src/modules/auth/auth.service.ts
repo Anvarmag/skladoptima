@@ -440,7 +440,7 @@ export class AuthService {
                 memberships: {
                     where: { status: 'ACTIVE' },
                     include: {
-                        tenant: { select: { id: true, name: true, accessState: true, status: true } },
+                        tenant: { select: { id: true, name: true, accessState: true, status: true, createdAt: true } },
                     },
                 },
                 preferences: { select: { lastUsedTenantId: true, locale: true, timezone: true } },
@@ -470,6 +470,7 @@ export class AuthService {
                 name: activeMembership.tenant.name,
                 accessState: activeMembership.tenant.accessState,
                 role: activeMembership.role,
+                tenantCreatedAt: activeMembership.tenant.createdAt.toISOString(),
               }
             : null;
 

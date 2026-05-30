@@ -1,369 +1,552 @@
 import { Outlet, NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Package, History, LogOut, Settings, ShoppingCart, BarChart3, PieChart, Users, Boxes, Building2, Plug, RefreshCw, Gift, Bell, ClipboardList } from 'lucide-react';
+import {
+    Package, History, LogOut, Settings, ShoppingCart, BarChart3,
+    Users, Building2, Plug, Gift, Bell, ClipboardList, Tag,
+    ChevronDown, ChevronLeft, ChevronRight, X,
+} from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { notificationsApi } from '../api/notifications';
-import AccessStateBanner from '../components/AccessStateBanner';
 import OnboardingWidget from '../components/OnboardingWidget';
 
+// ─── Design tokens — светлая тема ──────────────────────────────────────────
+const SB = {
+    bg: '#ffffff',
+    border: '#e5e9f0',
+    text: '#64748b',
+    textActive: '#1e40af',
+    sectionLabel: '#94a3b8',
+    hover: '#eff6ff',        // light-blue bg on hover
+    active: '#dbeafe',       // blue-100
+    activeBorder: '#3b82f6', // синяя полоска у активного пункта
+    icon: '#94a3b8',
+    iconActive: '#2563eb',
+};
+
+// ─── Nav structure ──────────────────────────────────────────────────────────
+const NAV_PRIMARY = [
+    { to: '/app',            end: true,  icon: Package,       label: 'Остатки'        },
+    { to: '/app/products',   end: false, icon: Tag,           label: 'Товары'         },
+    { to: '/app/analytics',  end: false, icon: BarChart3,     label: 'Аналитика'      },
+    { to: '/app/orders',     end: false, icon: ShoppingCart,  label: 'Заказы'         },
+    { to: '/app/history',    end: false, icon: History,       label: 'История'        },
+];
+
+const NAV_OPS = [
+    { to: '/app/warehouses',   end: false, icon: Building2,   label: 'Склады'         },
+    { to: '/app/integrations', end: false, icon: Plug,        label: 'Подключения'    },
+];
+
+const NAV_PERSONAL = [
+    { to: '/app/tasks',         end: false, icon: ClipboardList, label: 'Задачи'       },
+    { to: '/app/notifications', end: false, icon: Bell,          label: 'Уведомления', badge: true },
+    { to: '/app/settings',      end: false, icon: Settings,      label: 'Настройки'    },
+];
+
+function useIsDesktop() {
+    const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+    useEffect(() => {
+        const mq = window.matchMedia('(min-width: 768px)');
+        const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+        mq.addEventListener('change', handler);
+        return () => mq.removeEventListener('change', handler);
+    }, []);
+    return isDesktop;
+}
+
+const SIDEBAR_EXPANDED_W = 260;
+const SIDEBAR_COLLAPSED_W = 72;
+
+const TRIAL_DAYS = 14;
+
+function useTrialBanner(activeTenant: { accessState: string; tenantCreatedAt?: string } | null) {
+    const [dismissed, setDismissed] = useState(false);
+    if (!activeTenant || activeTenant.accessState !== 'TRIAL_ACTIVE' || dismissed) return { show: false, daysLeft: 0, dismiss: () => {} };
+    const createdAt = activeTenant.tenantCreatedAt ? new Date(activeTenant.tenantCreatedAt) : null;
+    if (!createdAt) return { show: false, daysLeft: 0, dismiss: () => {} };
+    const trialEnd = new Date(createdAt.getTime() + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    const daysLeft = Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+    return { show: true, daysLeft, dismiss: () => setDismissed(true) };
+}
+
+function pluralDays(n: number) {
+    if (n === 1) return '1 день';
+    if (n >= 2 && n <= 4) return `${n} дня`;
+    return `${n} дней`;
+}
+
 export default function MainLayout() {
-    const { user, activeTenant, logout, isTelegram } = useAuth();
+    const { user, activeTenant, tenants, switchTenant, logout, isTelegram } = useAuth();
     const canSeeTeam = activeTenant?.role !== 'STAFF';
     const isOwner = activeTenant?.role === 'OWNER';
     const navigate = useNavigate();
     const location = useLocation();
+    const isDesktop = useIsDesktop();
 
     const [unreadCount, setUnreadCount] = useState(0);
+    const [tenantOpen, setTenantOpen] = useState(false);
+    const [collapsed, setCollapsed] = useState(false);
+
+    const trial = useTrialBanner(activeTenant);
+
+    const sidebarW = collapsed ? SIDEBAR_COLLAPSED_W : SIDEBAR_EXPANDED_W;
 
     useEffect(() => {
         if (!activeTenant) return;
         notificationsApi.getInbox({ limit: 1, unreadOnly: true })
             .then(r => setUnreadCount(r.unreadCount))
-            .catch(() => { /* non-critical */ });
+            .catch(() => {});
     }, [activeTenant]);
 
-    // Telegram BackButton support
     useEffect(() => {
         const tg = window.Telegram?.WebApp;
         if (!tg || !isTelegram) return;
-
-        const isMainPage = location.pathname === '/app';
-        if (isMainPage) {
-            tg.BackButton.hide();
-        } else {
-            tg.BackButton.show();
-        }
-
-        const handleBack = () => navigate(-1);
-        tg.BackButton.onClick(handleBack);
-        return () => tg.BackButton.offClick(handleBack);
+        const isMain = location.pathname === '/app';
+        isMain ? tg.BackButton.hide() : tg.BackButton.show();
+        const back = () => navigate(-1);
+        tg.BackButton.onClick(back);
+        return () => tg.BackButton.offClick(back);
     }, [location.pathname, isTelegram, navigate]);
 
-    const handleLogout = async () => {
-        await logout();
-        navigate('/login');
-    };
+    const handleLogout = async () => { await logout(); navigate('/login'); };
 
-    const navClass = ({ isActive }: { isActive: boolean }) =>
-        `group flex items-center px-4 py-3 text-sm font-medium rounded-md transition-colors ${isActive
-            ? 'bg-blue-50 text-blue-700'
-            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-        }`;
-
-    const iconClass = (isActive: boolean) =>
-        `mr-3 flex-shrink-0 h-6 w-6 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-500'}`;
-
-    const mobileNavClass = ({ isActive }: { isActive: boolean }) =>
-        `flex flex-col items-center justify-center py-2 px-1 text-[10px] font-medium transition-colors ${isActive
-            ? 'text-blue-600'
-            : 'text-slate-400'
-        }`;
-
-    const mobileIconClass = (isActive: boolean) =>
-        `h-5 w-5 mb-0.5 ${isActive ? 'text-blue-600' : 'text-slate-400'}`;
+    const availableTenants = tenants.filter(t => t.isAvailable);
+    const initials = (activeTenant?.name ?? user?.email ?? '?')
+        .split(' ').slice(0, 2).map(w => w[0]?.toUpperCase()).join('');
 
     return (
-        <div className="flex h-screen bg-slate-50">
-            {/* Desktop Sidebar */}
-            <div className="hidden md:flex md:w-64 md:flex-col border-r border-slate-200 bg-white">
-                <Link to="/app" className="flex h-16 shrink-0 items-center px-6 border-b border-slate-200 hover:bg-slate-50 transition-colors">
-                    <Package className="h-8 w-8 text-blue-600 mr-2" />
-                    <div>
-                        <div className="text-xl font-bold text-slate-900 tracking-tight leading-tight">Sklad Optima</div>
-                        {activeTenant?.name && (
-                            <div className="text-[10px] uppercase tracking-wider text-blue-600 font-bold truncate max-w-[160px]">
-                                {activeTenant.name}
+        <div style={{ display: 'flex', height: '100vh', background: '#f1f5f9', fontFamily: "'Inter', sans-serif" }}>
+
+            {/* ── Desktop Sidebar ── */}
+            {isDesktop && (
+                <aside style={{
+                    width: sidebarW,
+                    flexShrink: 0,
+                    height: '100vh',
+                    position: 'sticky',
+                    top: 0,
+                    background: SB.bg,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    borderRight: `1px solid ${SB.border}`,
+                    transition: 'width 0.2s ease',
+                    overflow: 'hidden',
+                }}>
+                    {/* Logo + collapse toggle */}
+                    <div style={{
+                        padding: collapsed ? '16px 0' : '16px 14px 10px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: collapsed ? 'center' : 'space-between',
+                        gap: 8,
+                        minHeight: 56,
+                    }}>
+                        {!collapsed && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Package size={28} color="#3b82f6" strokeWidth={1.6} />
+                                <span style={{ fontWeight: 700, fontSize: 14, color: '#0f172a', letterSpacing: '-0.01em' }}>
+                                    Sklad Optima
+                                </span>
+                            </div>
+                        )}
+                        {collapsed && (
+                            <Package size={30} color="#3b82f6" strokeWidth={1.6} />
+                        )}
+                        {!collapsed && (
+                            <button
+                                onClick={() => setCollapsed(true)}
+                                title="Свернуть панель"
+                                style={{
+                                    border: 'none', background: 'transparent', cursor: 'pointer',
+                                    padding: 4, borderRadius: 6, color: SB.icon, display: 'flex',
+                                    flexShrink: 0,
+                                }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SB.hover; (e.currentTarget as HTMLButtonElement).style.color = SB.iconActive; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = SB.icon; }}
+                            >
+                                <ChevronLeft size={16} />
+                            </button>
+                        )}
+                    </div>
+
+                    {/* Expand button when collapsed */}
+                    {collapsed && (
+                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 6 }}>
+                            <button
+                                onClick={() => setCollapsed(false)}
+                                title="Развернуть панель"
+                                style={{
+                                    border: 'none', background: 'transparent', cursor: 'pointer',
+                                    padding: 5, borderRadius: 6, color: SB.icon, display: 'flex',
+                                }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SB.hover; (e.currentTarget as HTMLButtonElement).style.color = SB.iconActive; }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = SB.icon; }}
+                            >
+                                <ChevronRight size={16} />
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Tenant selector */}
+                    {activeTenant && !collapsed && (
+                        <div style={{ padding: '0 10px 12px', position: 'relative' }}>
+                            <button
+                                onClick={() => setTenantOpen(o => !o)}
+                                style={{
+                                    width: '100%', padding: '7px 10px', borderRadius: 8,
+                                    border: `1px solid ${SB.border}`,
+                                    background: tenantOpen ? SB.hover : '#f8fafc',
+                                    cursor: availableTenants.length > 1 ? 'pointer' : 'default',
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = SB.hover; }}
+                                onMouseLeave={e => { if (!tenantOpen) (e.currentTarget as HTMLButtonElement).style.background = '#f8fafc'; }}
+                            >
+                                <div style={{
+                                    width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                                    background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <span style={{ fontSize: 9, fontWeight: 800, color: '#fff' }}>
+                                        {initials.slice(0, 2)}
+                                    </span>
+                                </div>
+                                <span style={{
+                                    flex: 1, fontSize: 12, fontWeight: 500, color: '#334155',
+                                    textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                }}>
+                                    {activeTenant.name}
+                                </span>
+                                {availableTenants.length > 1 && (
+                                    <ChevronDown size={13} color={SB.sectionLabel}
+                                        style={{ transform: tenantOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}
+                                    />
+                                )}
+                            </button>
+
+                            {/* Tenant dropdown */}
+                            {tenantOpen && availableTenants.length > 1 && (
+                                <div style={{
+                                    position: 'absolute', top: '100%', left: 10, right: 10, zIndex: 50,
+                                    background: '#fff', borderRadius: 10, border: `1px solid ${SB.border}`,
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.08)', overflow: 'hidden',
+                                }}>
+                                    {availableTenants.map(t => (
+                                        <button
+                                            key={t.id}
+                                            onClick={async () => { setTenantOpen(false); await switchTenant(t.id); }}
+                                            style={{
+                                                width: '100%', padding: '9px 12px', border: 'none', cursor: 'pointer',
+                                                background: t.id === activeTenant.id ? SB.active : 'transparent',
+                                                display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left',
+                                            }}
+                                            onMouseEnter={e => { if (t.id !== activeTenant.id) (e.currentTarget as HTMLButtonElement).style.background = SB.hover; }}
+                                            onMouseLeave={e => { if (t.id !== activeTenant.id) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                                        >
+                                            <div style={{
+                                                width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+                                                background: t.id === activeTenant.id ? '#3b82f6' : '#cbd5e1',
+                                            }} />
+                                            <span style={{
+                                                fontSize: 12, color: '#334155',
+                                                fontWeight: t.id === activeTenant.id ? 600 : 400,
+                                            }}>
+                                                {t.name}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <div style={{ height: 1, background: SB.border, margin: collapsed ? '0 10px 10px' : '0 12px 8px' }} />
+
+                    {/* Nav */}
+                    <nav style={{
+                        flex: 1,
+                        padding: collapsed ? '0 8px' : '0 10px',
+                        overflowY: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 1,
+                    }}>
+                        {NAV_PRIMARY.map(item => (
+                            <SideNavItem key={item.to} {...item} unread={0} collapsed={collapsed} />
+                        ))}
+
+                        {!collapsed && <SectionLabel label="Операции" />}
+                        {collapsed && <div style={{ height: 8 }} />}
+
+                        {NAV_OPS.map(item => (
+                            <SideNavItem key={item.to} {...item} unread={0} collapsed={collapsed} />
+                        ))}
+
+                        {!collapsed && <SectionLabel label="Личное" />}
+                        {collapsed && <div style={{ height: 8 }} />}
+
+                        {NAV_PERSONAL.map(item => (
+                            <SideNavItem
+                                key={item.to} {...item}
+                                unread={item.badge ? unreadCount : 0}
+                                collapsed={collapsed}
+                            />
+                        ))}
+
+                        {canSeeTeam && (
+                            <SideNavItem to="/app/team" end={false} icon={Users} label="Команда" unread={0} collapsed={collapsed} />
+                        )}
+                        {isOwner && (
+                            <SideNavItem to="/app/referrals" end={false} icon={Gift} label="Рефералы" unread={0} collapsed={collapsed} />
+                        )}
+                    </nav>
+
+                    {/* User footer */}
+                    <div style={{ padding: collapsed ? '10px 8px' : '10px 10px', borderTop: `1px solid ${SB.border}` }}>
+                        {collapsed ? (
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>
+                                <button
+                                    onClick={handleLogout}
+                                    title="Выйти"
+                                    style={{
+                                        border: 'none', background: 'transparent', cursor: 'pointer',
+                                        padding: 7, borderRadius: 7, color: SB.icon, display: 'flex',
+                                    }}
+                                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fee2e2'; (e.currentTarget as HTMLButtonElement).style.color = '#ef4444'; }}
+                                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = SB.icon; }}
+                                >
+                                    <LogOut size={15} />
+                                </button>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 8 }}>
+                                <div style={{
+                                    width: 28, height: 28, borderRadius: '50%', flexShrink: 0,
+                                    background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: '#fff' }}>
+                                        {(user?.email ?? '?')[0].toUpperCase()}
+                                    </span>
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{
+                                        fontSize: 11, fontWeight: 600, color: '#334155',
+                                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                    }}>
+                                        {user?.email}
+                                    </div>
+                                    <div style={{ fontSize: 10, color: SB.sectionLabel }}>
+                                        {activeTenant?.role === 'OWNER' ? 'Владелец'
+                                            : activeTenant?.role === 'ADMIN' ? 'Администратор'
+                                            : 'Сотрудник'}
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleLogout}
+                                    title="Выйти"
+                                    style={{
+                                        background: 'transparent', border: 'none', cursor: 'pointer',
+                                        padding: 5, borderRadius: 6, display: 'flex', color: SB.icon,
+                                    }}
+                                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fee2e2'; (e.currentTarget as HTMLButtonElement).style.color = '#ef4444'; }}
+                                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = SB.icon; }}
+                                >
+                                    <LogOut size={14} />
+                                </button>
                             </div>
                         )}
                     </div>
-                </Link>
-                <div className="flex flex-1 flex-col overflow-y-auto">
-                    <nav className="flex-1 space-y-1 px-4 py-6">
-                        <NavLink to="/app" end className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Package className={iconClass(isActive)} />
-                                    Каталог
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/inventory" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Boxes className={iconClass(isActive)} />
-                                    Учёт остатков
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/warehouses" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Building2 className={iconClass(isActive)} />
-                                    Склады
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/integrations" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Plug className={iconClass(isActive)} />
-                                    Подключения
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/sync" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <RefreshCw className={iconClass(isActive)} />
-                                    Синхронизация
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/analytics" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <BarChart3 className={iconClass(isActive)} />
-                                    Аналитика
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/finance" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <PieChart className={iconClass(isActive)} />
-                                    Юнит-экономика
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/history" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <History className={iconClass(isActive)} />
-                                    История
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/orders" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <ShoppingCart className={iconClass(isActive)} />
-                                    Заказы
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/tasks" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <ClipboardList className={iconClass(isActive)} />
-                                    Задачи
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/notifications" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <div className={`relative mr-3 flex-shrink-0 ${isActive ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-500'}`}>
-                                        <Bell className="h-6 w-6" />
-                                        {unreadCount > 0 && (
-                                            <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-600 px-0.5 text-[9px] font-bold text-white">
-                                                {unreadCount > 99 ? '99+' : unreadCount}
-                                            </span>
-                                        )}
-                                    </div>
-                                    Уведомления
-                                </>
-                            )}
-                        </NavLink>
-                        <NavLink to="/app/settings" className={navClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Settings className={iconClass(isActive)} />
-                                    Настройки
-                                </>
-                            )}
-                        </NavLink>
-                        {canSeeTeam && (
-                            <NavLink to="/app/team" className={navClass}>
-                                {({ isActive }) => (
-                                    <>
-                                        <Users className={iconClass(isActive)} />
-                                        Команда
-                                    </>
-                                )}
-                            </NavLink>
-                        )}
-                        {isOwner && (
-                            <NavLink to="/app/referrals" className={navClass}>
-                                {({ isActive }) => (
-                                    <>
-                                        <Gift className={iconClass(isActive)} />
-                                        Рефералы
-                                    </>
-                                )}
-                            </NavLink>
-                        )}
-                    </nav>
+                </aside>
+            )}
+
+            {/* ── Mobile top bar ── */}
+            {!isDesktop && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 40,
+                    height: 52, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    background: '#fff', borderBottom: `1px solid ${SB.border}`, padding: '0 16px',
+                }}>
+                    <Link to="/app" style={{ display: 'flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}>
+                        <Package size={24} color="#3b82f6" strokeWidth={1.6} />
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Sklad Optima</span>
+                    </Link>
+                    <button onClick={handleLogout} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: SB.icon, padding: 6 }}>
+                        <LogOut size={18} />
+                    </button>
                 </div>
-                <div className="border-t border-slate-200 p-4">
-                    <div className="flex items-center">
-                        <div className="ml-3">
-                            <p className="text-sm font-medium text-slate-700">{user?.email}</p>
-                            <button
-                                onClick={handleLogout}
-                                className="text-xs font-medium text-slate-500 hover:text-red-600 flex items-center mt-1"
+            )}
+
+            {/* ── Main content ── */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', marginTop: isDesktop ? 0 : 52 }}>
+                {/* Trial banner */}
+                {trial.show && (
+                    <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '9px 20px',
+                        background: '#fefce8',
+                        borderBottom: '1px solid #fde68a',
+                        flexShrink: 0,
+                    }}>
+                        <span style={{ fontFamily: 'Inter', fontSize: 13, color: '#92400e' }}>
+                            Бесплатный период заканчивается через{' '}
+                            <strong>{pluralDays(trial.daysLeft)}</strong>
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                            <Link
+                                to="/app/settings"
+                                style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: '#b45309', textDecoration: 'underline' }}
                             >
-                                <LogOut className="h-3 w-3 mr-1" />
-                                Выйти
+                                Выбрать тариф
+                            </Link>
+                            <button
+                                onClick={trial.dismiss}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#92400e', display: 'flex' }}
+                            >
+                                <X size={14} />
                             </button>
                         </div>
                     </div>
-                </div>
-            </div>
-
-            {/* Mobile top bar */}
-            <div className="md:hidden flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 fixed top-0 w-full z-10">
-                <Link to="/app" className="flex items-center">
-                    <Package className="h-7 w-7 text-blue-600" />
-                    <div className="ml-2 flex flex-col">
-                        <span className="text-lg font-bold text-slate-900 leading-none">Sklad</span>
-                        {activeTenant?.name && (
-                            <span className="text-[10px] text-blue-600 font-bold truncate max-w-[120px]">
-                                {activeTenant.name}
-                            </span>
-                        )}
-                    </div>
-                </Link>
-                <button onClick={handleLogout} className="text-slate-500 hover:text-slate-900 p-2">
-                    <LogOut className="h-5 w-5" />
-                </button>
-            </div>
-
-            {/* Main content */}
-            <div className="flex flex-1 flex-col overflow-hidden md:mt-0 mt-14">
-                <main className="flex-1 overflow-y-auto bg-slate-50 p-3 sm:p-4 md:p-6 lg:p-8 pb-20 md:pb-8">
-                    {activeTenant && (
-                        <div className="mb-4">
-                            <AccessStateBanner accessState={activeTenant.accessState} />
-                        </div>
-                    )}
+                )}
+                <main style={{
+                    flex: 1, overflowY: 'auto', background: '#f1f5f9',
+                    padding: '20px 24px 24px',
+                    paddingBottom: isDesktop ? 24 : 80,
+                }}>
                     <Outlet />
                 </main>
             </div>
 
             <OnboardingWidget />
 
-            {/* Mobile bottom navigation */}
-            <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-10 safe-area-bottom">
-                <nav className="flex items-stretch justify-around">
-                    <NavLink to="/app" end className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <Package className={mobileIconClass(isActive)} />
-                                <span>Каталог</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/inventory" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <Boxes className={mobileIconClass(isActive)} />
-                                <span>Остатки</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/warehouses" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <Building2 className={mobileIconClass(isActive)} />
-                                <span>Склады</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/analytics" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <BarChart3 className={mobileIconClass(isActive)} />
-                                <span>Аналитика</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/finance" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <PieChart className={mobileIconClass(isActive)} />
-                                <span>Финансы</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/history" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <History className={mobileIconClass(isActive)} />
-                                <span>История</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/orders" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <ShoppingCart className={mobileIconClass(isActive)} />
-                                <span>Заказы</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/tasks" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <ClipboardList className={mobileIconClass(isActive)} />
-                                <span>Задачи</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/notifications" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <div className="relative">
-                                    <Bell className={mobileIconClass(isActive)} />
-                                    {unreadCount > 0 && (
-                                        <span className="absolute -top-1 -right-1 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-600 px-0.5 text-[8px] font-bold text-white">
-                                            {unreadCount > 9 ? '9+' : unreadCount}
-                                        </span>
-                                    )}
-                                </div>
-                                <span>Уведомл.</span>
-                            </>
-                        )}
-                    </NavLink>
-                    <NavLink to="/app/settings" className={mobileNavClass}>
-                        {({ isActive }) => (
-                            <>
-                                <Settings className={mobileIconClass(isActive)} />
-                                <span>Настройки</span>
-                            </>
-                        )}
-                    </NavLink>
-                    {canSeeTeam && (
-                        <NavLink to="/app/team" className={mobileNavClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Users className={mobileIconClass(isActive)} />
-                                    <span>Команда</span>
-                                </>
-                            )}
-                        </NavLink>
+            {/* ── Mobile bottom nav ── */}
+            {!isDesktop && (
+                <div style={{
+                    position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
+                    background: 'rgba(255,255,255,0.95)',
+                    backdropFilter: 'blur(20px) saturate(180%)',
+                    WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                    borderTop: `1px solid ${SB.border}`,
+                    paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                }}>
+                    <div style={{ display: 'flex', padding: '8px 4px 4px' }}>
+                        {[
+                            { to: '/app',           end: true,  icon: Package,      label: 'Остатки'  },
+                            { to: '/app/analytics', end: false, icon: BarChart3,     label: 'Аналитика' },
+                            { to: '/app/orders',    end: false, icon: ShoppingCart,  label: 'Заказы'   },
+                            { to: '/app/settings',  end: false, icon: Settings,      label: 'Ещё'      },
+                        ].map(item => (
+                            <NavLink key={item.to} to={item.to} end={item.end} style={({ isActive }) => ({
+                                flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+                                gap: 3, padding: '6px 4px', textDecoration: 'none', border: 'none',
+                                background: 'transparent', cursor: 'pointer',
+                                color: isActive ? '#2563eb' : '#94a3b8',
+                                fontSize: 10, fontWeight: isActive ? 700 : 500,
+                                letterSpacing: '-0.01em',
+                            })}>
+                                {({ isActive }) => (
+                                    <>
+                                        <item.icon size={22} color={isActive ? '#2563eb' : '#94a3b8'} strokeWidth={isActive ? 2.2 : 1.75} />
+                                        {item.label}
+                                    </>
+                                )}
+                            </NavLink>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Sidebar nav item ────────────────────────────────────────────────────────
+function SideNavItem({
+    to, end, icon: Icon, label, unread, collapsed,
+}: {
+    to: string; end: boolean; icon: React.ElementType; label: string; unread: number; collapsed: boolean;
+}) {
+    return (
+        <NavLink
+            to={to}
+            end={end}
+            title={collapsed ? label : undefined}
+            style={({ isActive }) => ({
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: collapsed ? 'center' : 'flex-start',
+                gap: collapsed ? 0 : 9,
+                padding: collapsed ? '10px 0' : '8px 10px',
+                borderRadius: 8,
+                textDecoration: 'none',
+                transition: 'background 0.1s, color 0.1s',
+                background: isActive ? SB.active : 'transparent',
+                color: isActive ? SB.textActive : SB.text,
+                position: 'relative',
+            })}
+            onMouseEnter={e => {
+                const el = e.currentTarget as HTMLAnchorElement;
+                if (el.getAttribute('aria-current') !== 'page') el.style.background = SB.hover;
+            }}
+            onMouseLeave={e => {
+                const el = e.currentTarget as HTMLAnchorElement;
+                if (el.getAttribute('aria-current') !== 'page') el.style.background = 'transparent';
+            }}
+        >
+            {({ isActive }) => (
+                <>
+                    {/* Синяя полоска слева у активного пункта */}
+                    {isActive && !collapsed && (
+                        <span style={{
+                            position: 'absolute', left: 0, top: '20%', bottom: '20%',
+                            width: 3, borderRadius: 2,
+                            background: SB.activeBorder,
+                        }} />
                     )}
-                    {isOwner && (
-                        <NavLink to="/app/referrals" className={mobileNavClass}>
-                            {({ isActive }) => (
-                                <>
-                                    <Gift className={mobileIconClass(isActive)} />
-                                    <span>Рефералы</span>
-                                </>
-                            )}
-                        </NavLink>
+                    <Icon
+                        size={collapsed ? 22 : 16}
+                        strokeWidth={isActive ? 2.2 : 1.75}
+                        color={isActive ? SB.iconActive : SB.icon}
+                    />
+                    {!collapsed && (
+                        <span style={{
+                            fontSize: 13.5,
+                            fontWeight: isActive ? 600 : 400,
+                            flex: 1,
+                            letterSpacing: '-0.01em',
+                        }}>
+                            {label}
+                        </span>
                     )}
-                </nav>
-            </div>
+                    {!collapsed && unread > 0 && (
+                        <span style={{
+                            background: '#3b82f6', color: '#fff', fontSize: 9, fontWeight: 700,
+                            padding: '1px 5px', borderRadius: 999, lineHeight: '14px',
+                        }}>
+                            {unread > 99 ? '99+' : unread}
+                        </span>
+                    )}
+                    {collapsed && unread > 0 && (
+                        <span style={{
+                            position: 'absolute', top: 4, right: 8,
+                            width: 7, height: 7, borderRadius: '50%',
+                            background: '#3b82f6', border: '1.5px solid #fff',
+                        }} />
+                    )}
+                </>
+            )}
+        </NavLink>
+    );
+}
+
+// ─── Section divider label ──────────────────────────────────────────────────
+function SectionLabel({ label }: { label: string }) {
+    return (
+        <div style={{
+            padding: '10px 10px 4px',
+            fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
+            textTransform: 'uppercase', color: SB.sectionLabel,
+        }}>
+            {label}
         </div>
     );
 }

@@ -40,6 +40,7 @@ import { AnalyticsMetricNames, AnalyticsMetricsRegistry } from './analytics.metr
 export interface AnalyticsPeriodInput {
     periodFrom: Date;
     periodTo: Date;
+    marketplace?: MarketplaceType;
 }
 
 export interface DashboardResponse {
@@ -78,9 +79,29 @@ export interface TopProductRow {
     productId: string;
     sku: string;
     name: string | null;
+    photo: string | null;
     revenueNet: number;
     unitsSold: number;
     ordersCount: number;
+    stockTotal: number;
+    abcGroup: 'A' | 'B' | 'C' | null;
+    daysOfStock: number | null;
+}
+
+export interface ClusterStockRow {
+    warehouseId: string;
+    clusterName: string;
+    stockTotal: number;
+    salesCount: number;
+    daysOfStock: number | null;
+    stockSharePct: number;
+    salesSharePct: number;
+}
+
+export interface ClusterStockResponse {
+    rows: ClusterStockRow[];
+    totals: { stockTotal: number; salesCount: number };
+    period: { from: string; to: string };
 }
 
 export interface ProductDrillDown {
@@ -93,6 +114,7 @@ export interface ProductDrillDown {
         returnsCount: number;
         avgPrice: number;
     };
+    dailySeries: Array<{ date: string; ordersCount: number; revenueNet: number; unitsSold: number }>;
     /** До 30 последних заказов по этому SKU — для drill-down таблицы. */
     recentOrders: Array<{
         marketplace: string;
@@ -117,6 +139,7 @@ export class AnalyticsReadService {
     async getDashboard(tenantId: string, input: AnalyticsPeriodInput): Promise<DashboardResponse> {
         this.metrics.increment(AnalyticsMetricNames.DASHBOARD_OPENS, { tenantId });
         const { from, to } = this._validatePeriod(input);
+        const mp = input.marketplace ?? null;
 
         const rows = await this.prisma.analyticsMaterializedDaily.findMany({
             where: {
@@ -161,14 +184,24 @@ export class AnalyticsReadService {
         const byMpRevenue: Record<string, number> = {};
 
         for (const r of rows) {
-            revenueNet += toNumber(r.revenueNet);
-            ordersCount += r.ordersCount;
-            unitsSold += r.unitsSold;
-            returnsCount += r.returnsCount;
-
             const mpMap = (r.byMarketplace ?? {}) as unknown as Record<string, MarketplaceKpiBreakdown>;
-            for (const [mp, kpi] of Object.entries(mpMap)) {
-                byMpRevenue[mp] = (byMpRevenue[mp] ?? 0) + (kpi?.revenueNet ?? 0);
+
+            if (mp) {
+                // Filter to single marketplace from pre-aggregated byMarketplace breakdown
+                const kpi = mpMap[mp];
+                revenueNet  += kpi?.revenueNet  ?? 0;
+                ordersCount += kpi?.ordersCount ?? 0;
+                unitsSold   += kpi?.unitsSold   ?? 0;
+                returnsCount += 0; // returns not stored per-mp in daily layer
+            } else {
+                revenueNet  += toNumber(r.revenueNet);
+                ordersCount += r.ordersCount;
+                unitsSold   += r.unitsSold;
+                returnsCount += r.returnsCount;
+            }
+
+            for (const [key, kpi] of Object.entries(mpMap)) {
+                byMpRevenue[key] = (byMpRevenue[key] ?? 0) + (kpi?.revenueNet ?? 0);
             }
         }
 
@@ -216,6 +249,7 @@ export class AnalyticsReadService {
         input: AnalyticsPeriodInput,
     ): Promise<RevenueDynamicsResponse> {
         const { from, to } = this._validatePeriod(input);
+        const mp = input.marketplace ?? null;
 
         const rows = await this.prisma.analyticsMaterializedDaily.findMany({
             where: { tenantId, date: { gte: from, lte: to } },
@@ -230,12 +264,20 @@ export class AnalyticsReadService {
 
         return {
             formulaVersion: ANALYTICS_FORMULA_VERSION,
-            series: rows.map((r) => ({
-                date: r.date.toISOString().slice(0, 10),
-                revenueNet: round2(toNumber(r.revenueNet)),
-                ordersCount: r.ordersCount,
-                byMarketplace: (r.byMarketplace ?? {}) as unknown as Record<string, MarketplaceKpiBreakdown>,
-            })),
+            series: rows.map((r) => {
+                const mpMap = (r.byMarketplace ?? {}) as unknown as Record<string, MarketplaceKpiBreakdown>;
+                const mpKpi = mp ? (mpMap[mp] ?? null) : null;
+                return {
+                    date: r.date.toISOString().slice(0, 10),
+                    revenueNet: mp
+                        ? round2(mpKpi?.revenueNet ?? 0)
+                        : round2(toNumber(r.revenueNet)),
+                    ordersCount: mp
+                        ? (mpKpi?.ordersCount ?? 0)
+                        : r.ordersCount,
+                    byMarketplace: mpMap,
+                };
+            }),
         };
     }
 
@@ -277,25 +319,145 @@ export class AnalyticsReadService {
         const skus = grouped
             .map((g) => g.productSku)
             .filter((s): s is string => !!s);
-        const products = await this.prisma.product.findMany({
-            where: { tenantId, sku: { in: skus }, deletedAt: null },
-            select: { id: true, sku: true, name: true },
-        });
+
+        const [products, abcSnap] = await Promise.all([
+            this.prisma.product.findMany({
+                where: { tenantId, sku: { in: skus }, deletedAt: null },
+                select: { id: true, sku: true, name: true, total: true, photo: true },
+            }),
+            this.prisma.analyticsAbcSnapshot.findFirst({
+                where: { tenantId },
+                orderBy: { generatedAt: 'desc' },
+                select: { payload: true },
+            }),
+        ]);
+
         const productBySku = new Map(products.map((p) => [p.sku, p]));
+
+        // Build abcGroup map: productId → group
+        const abcGroupById = new Map<string, 'A' | 'B' | 'C'>();
+        const snapPayload = abcSnap?.payload as any;
+        if (snapPayload?.items && Array.isArray(snapPayload.items)) {
+            for (const item of snapPayload.items) {
+                if (item.productId && item.group) {
+                    abcGroupById.set(item.productId, item.group as 'A' | 'B' | 'C');
+                }
+            }
+        }
+
+        // Period in days for daysOfStock calculation
+        const periodDays = Math.max(
+            1,
+            Math.round((to.getTime() - from.getTime()) / 86_400_000),
+        );
 
         const items: TopProductRow[] = grouped.map((g) => {
             const p = productBySku.get(g.productSku!);
+            const unitsSold = g._sum.quantity ?? 0;
+            const stockTotal = p?.total ?? 0;
+            const dailyRate = unitsSold / periodDays;
+            const daysOfStock = dailyRate > 0 ? Math.round(stockTotal / dailyRate) : null;
             return {
                 productId: p?.id ?? '',
                 sku: g.productSku!,
                 name: p?.name ?? null,
+                photo: p?.photo ?? null,
                 revenueNet: round2(g._sum.totalAmount ?? 0),
-                unitsSold: g._sum.quantity ?? 0,
+                unitsSold,
                 ordersCount: g._count._all,
+                stockTotal,
+                abcGroup: p ? (abcGroupById.get(p.id) ?? null) : null,
+                daysOfStock,
             };
         });
 
         return { items, period: isoRange(from, to) };
+    }
+
+    // ─── Cluster Stock ────────────────────────────────────────────────
+
+    async getClusterStock(
+        tenantId: string,
+        input: AnalyticsPeriodInput,
+    ): Promise<ClusterStockResponse> {
+        const { from, to } = this._validatePeriod(input);
+        const mp = input.marketplace ?? null;
+
+        // Filter warehouses by sourceMarketplace when mp filter is active
+        const warehouses = await this.prisma.warehouse.findMany({
+            where: {
+                tenantId,
+                ...(mp ? { sourceMarketplace: mp as any } : {}),
+            },
+            select: { id: true, name: true, city: true },
+        });
+        const warehouseMap = new Map(warehouses.map(w => [w.id, w]));
+        const warehouseIds = warehouses.map(w => w.id);
+
+        // Stock balances grouped by warehouse
+        const stockBalances = await this.prisma.stockBalance.groupBy({
+            by: ['warehouseId'],
+            where: { tenantId, warehouseId: { in: warehouseIds } },
+            _sum: { onHand: true },
+        });
+
+        // Sales (order items) grouped by warehouseId over period.
+        // OrderItem has no tenantId — filter via the parent order using `is:`.
+        const orderItems = await this.prisma.orderItem.groupBy({
+            by: ['warehouseId'],
+            where: {
+                warehouseId: { in: warehouseIds },
+                order: {
+                    is: {
+                        tenantId,
+                        orderCreatedAt: { gte: from, lt: addDays(to, 1) },
+                    },
+                },
+            },
+            _sum: { quantity: true },
+        });
+
+        const salesByWarehouse = new Map<string, number>();
+        for (const s of orderItems) {
+            if (s.warehouseId) salesByWarehouse.set(s.warehouseId, (s._sum?.quantity ?? 0));
+        }
+
+        const periodDays = Math.max(
+            1,
+            Math.round((to.getTime() - from.getTime()) / 86_400_000),
+        );
+
+        const rows: ClusterStockRow[] = stockBalances.map(b => {
+            const wh = warehouseMap.get(b.warehouseId);
+            const stock = b._sum.onHand ?? 0;
+            const sales = salesByWarehouse.get(b.warehouseId) ?? 0;
+            const dailyRate = sales / periodDays;
+            return {
+                warehouseId: b.warehouseId,
+                clusterName: wh?.name ?? b.warehouseId,
+                stockTotal: stock,
+                salesCount: sales,
+                daysOfStock: dailyRate > 0 ? Math.round(stock / dailyRate) : null,
+                stockSharePct: 0,
+                salesSharePct: 0,
+            };
+        });
+
+        // Sort by stock desc, then compute shares
+        rows.sort((a, b) => b.stockTotal - a.stockTotal);
+        const totalStock = rows.reduce((s, r) => s + r.stockTotal, 0);
+        const totalSales = rows.reduce((s, r) => s + r.salesCount, 0);
+
+        for (const r of rows) {
+            r.stockSharePct = totalStock > 0 ? round2((r.stockTotal / totalStock) * 100) : 0;
+            r.salesSharePct = totalSales > 0 ? round2((r.salesCount / totalSales) * 100) : 0;
+        }
+
+        return {
+            rows,
+            totals: { stockTotal: totalStock, salesCount: totalSales },
+            period: isoRange(from, to),
+        };
     }
 
     // ─── Drill-down ───────────────────────────────────────────────────
@@ -340,16 +502,42 @@ export class AnalyticsReadService {
         let unitsSold = 0;
         let ordersCount = 0;
         let returnsCount = 0;
+        const byDay = new Map<string, { ordersCount: number; revenueNet: number; unitsSold: number }>();
         for (const o of orders) {
             const isReturn = isReturnStatus(o.status);
+            const dayKey = o.marketplaceCreatedAt
+                ? o.marketplaceCreatedAt.toISOString().slice(0, 10)
+                : null;
             if (isReturn) {
                 returnsCount += 1;
                 revenueNet -= o.totalAmount ?? 0;
+                if (dayKey) {
+                    const d = byDay.get(dayKey) ?? { ordersCount: 0, revenueNet: 0, unitsSold: 0 };
+                    d.revenueNet -= o.totalAmount ?? 0;
+                    byDay.set(dayKey, d);
+                }
                 continue;
             }
             revenueNet += o.totalAmount ?? 0;
             unitsSold += o.quantity ?? 0;
             ordersCount += 1;
+            if (dayKey) {
+                const d = byDay.get(dayKey) ?? { ordersCount: 0, revenueNet: 0, unitsSold: 0 };
+                d.ordersCount += 1;
+                d.revenueNet += o.totalAmount ?? 0;
+                d.unitsSold += o.quantity ?? 0;
+                byDay.set(dayKey, d);
+            }
+        }
+
+        // Build complete daily series filling gaps with zeros
+        const dailySeries: ProductDrillDown['dailySeries'] = [];
+        const cur = new Date(from);
+        while (cur <= to) {
+            const key = cur.toISOString().slice(0, 10);
+            const d = byDay.get(key) ?? { ordersCount: 0, revenueNet: 0, unitsSold: 0 };
+            dailySeries.push({ date: key, ordersCount: d.ordersCount, revenueNet: round2(d.revenueNet), unitsSold: d.unitsSold });
+            cur.setUTCDate(cur.getUTCDate() + 1);
         }
 
         const recentOrders = orders.slice(0, 30).map((o) => ({
@@ -373,6 +561,7 @@ export class AnalyticsReadService {
                 returnsCount,
                 avgPrice: unitsSold > 0 ? round2(revenueNet / unitsSold) : 0,
             },
+            dailySeries,
             recentOrders,
         };
     }

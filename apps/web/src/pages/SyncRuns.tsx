@@ -1,11 +1,15 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import {
     RefreshCw, AlertCircle, CheckCircle2, XCircle, PauseCircle,
-    Clock, Loader2, ChevronRight, ArrowLeft, RotateCcw, AlertTriangle,
-    Plus, Lock, FileText, ListTree,
+    Clock, Loader2, ArrowLeft, RotateCcw, AlertTriangle,
+    Lock, ListTree,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import {
+    S, PageHeader, Card, Badge, Btn, TH, FieldLabel, HiSelect,
+    Pagination, EmptyState, SkuTag, Spinner, Modal,
+} from '../components/ui';
 
 // ─────────────────────────────── types ───────────────────────────────
 
@@ -78,6 +82,8 @@ interface AccountOption {
 
 // ─────────────────────────────── helpers ─────────────────────────────
 
+const MARKETPLACE_LABEL: Record<string, string> = { WB: 'Wildberries', OZON: 'Ozon' };
+
 const STATUS_LABEL: Record<SyncRunStatus, string> = {
     QUEUED: 'В очереди',
     IN_PROGRESS: 'Выполняется',
@@ -88,18 +94,18 @@ const STATUS_LABEL: Record<SyncRunStatus, string> = {
     CANCELLED: 'Отменён',
 };
 
-const STATUS_TONE: Record<SyncRunStatus, string> = {
-    QUEUED: 'bg-slate-100 text-slate-700',
-    IN_PROGRESS: 'bg-blue-100 text-blue-800',
-    SUCCESS: 'bg-emerald-100 text-emerald-800',
-    PARTIAL_SUCCESS: 'bg-amber-100 text-amber-800',
-    FAILED: 'bg-red-100 text-red-800',
-    BLOCKED: 'bg-violet-100 text-violet-800',
-    CANCELLED: 'bg-slate-200 text-slate-700',
+const STATUS_BADGE: Record<SyncRunStatus, { color: string; bg: string }> = {
+    QUEUED:         { color: S.sub,   bg: '#f1f5f9' },
+    IN_PROGRESS:    { color: S.blue,  bg: 'rgba(59,130,246,0.08)' },
+    SUCCESS:        { color: S.green, bg: 'rgba(16,185,129,0.08)' },
+    PARTIAL_SUCCESS:{ color: S.amber, bg: 'rgba(245,158,11,0.08)' },
+    FAILED:         { color: S.red,   bg: 'rgba(239,68,68,0.08)' },
+    BLOCKED:        { color: '#7c3aed', bg: 'rgba(124,58,237,0.08)' },
+    CANCELLED:      { color: S.muted, bg: '#f1f5f9' },
 };
 
-// ВАЖНО §10/§20: blocked ≠ failed. Иконка и тон — разные.
-const STATUS_ICON: Record<SyncRunStatus, any> = {
+// ВАЖНО §10/§20: blocked ≠ failed.
+const STATUS_ICON: Record<SyncRunStatus, React.ComponentType<any>> = {
     QUEUED: Clock,
     IN_PROGRESS: Loader2,
     SUCCESS: CheckCircle2,
@@ -115,37 +121,14 @@ const TRIGGER_LABEL: Record<TriggerType, string> = {
     RETRY: 'Повтор',
 };
 
-// Машинные коды → человеческий текст. UX-критичный словарь:
-// пользователь должен сразу понять, что произошло и что делать.
 const BLOCKED_REASON_TEXT: Record<string, { title: string; hint: string }> = {
-    TENANT_TRIAL_EXPIRED: {
-        title: 'Пробный период истёк',
-        hint: 'Оформите подписку — синхронизация возобновится автоматически.',
-    },
-    TENANT_SUSPENDED: {
-        title: 'Доступ приостановлен',
-        hint: 'Обратитесь в службу поддержки.',
-    },
-    TENANT_CLOSED: {
-        title: 'Компания закрыта',
-        hint: 'Доступ к синхронизации недоступен.',
-    },
-    ACCOUNT_INACTIVE: {
-        title: 'Подключение отключено',
-        hint: 'Активируйте подключение в разделе «Подключения».',
-    },
-    CREDENTIALS_INVALID: {
-        title: 'Ключи недействительны',
-        hint: 'Обновите API-ключи в разделе «Подключения».',
-    },
-    CREDENTIALS_NEEDS_RECONNECT: {
-        title: 'Требуется переподключение',
-        hint: 'Перевыпустите токен у маркетплейса и обновите его в подключении.',
-    },
-    CONCURRENCY_GUARD: {
-        title: 'Уже выполняется другой sync',
-        hint: 'Дождитесь завершения текущего запуска и попробуйте снова.',
-    },
+    TENANT_TRIAL_EXPIRED: { title: 'Пробный период истёк', hint: 'Оформите подписку — синхронизация возобновится автоматически.' },
+    TENANT_SUSPENDED: { title: 'Доступ приостановлен', hint: 'Обратитесь в службу поддержки.' },
+    TENANT_CLOSED: { title: 'Компания закрыта', hint: 'Доступ к синхронизации недоступен.' },
+    ACCOUNT_INACTIVE: { title: 'Подключение отключено', hint: 'Активируйте подключение в разделе «Подключения».' },
+    CREDENTIALS_INVALID: { title: 'Ключи недействительны', hint: 'Обновите API-ключи в разделе «Подключения».' },
+    CREDENTIALS_NEEDS_RECONNECT: { title: 'Требуется переподключение', hint: 'Перевыпустите токен у маркетплейса и обновите его в подключении.' },
+    CONCURRENCY_GUARD: { title: 'Уже выполняется другой sync', hint: 'Дождитесь завершения текущего запуска и попробуйте снова.' },
 };
 
 const ERROR_CODE_TEXT: Record<string, string> = {
@@ -163,30 +146,21 @@ const SYNC_TYPE_LABEL: Record<string, string> = {
     PULL_ORDERS: 'Получение заказов',
     PULL_METADATA: 'Карточки товаров',
     FULL_SYNC: 'Полная синхронизация',
+    PULL_FINANCES_WB: 'Финансы WB (комиссия, логистика)',
 };
 
 const STAGE_LABEL: Record<string, string> = {
-    PREFLIGHT: 'Проверка',
-    PULL: 'Загрузка',
-    TRANSFORM: 'Обработка',
-    APPLY: 'Применение',
-    PUSH: 'Отправка',
+    PREFLIGHT: 'Проверка', PULL: 'Загрузка', TRANSFORM: 'Обработка', APPLY: 'Применение', PUSH: 'Отправка',
 };
 
 const ITEM_TYPE_LABEL: Record<string, string> = {
-    STOCK: 'Остаток',
-    ORDER: 'Заказ',
-    PRODUCT: 'Товар',
-    WAREHOUSE: 'Склад',
+    STOCK: 'Остаток', ORDER: 'Заказ', PRODUCT: 'Товар', WAREHOUSE: 'Склад',
 };
 
 function formatDateTime(iso: string | null): string {
     if (!iso) return '—';
     try {
-        return new Date(iso).toLocaleString('ru-RU', {
-            day: '2-digit', month: '2-digit', year: 'numeric',
-            hour: '2-digit', minute: '2-digit',
-        });
+        return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch { return iso; }
 }
 
@@ -200,7 +174,409 @@ function formatDuration(ms: number | null): string {
     return `${m} мин ${sec} с`;
 }
 
-// ─────────────────────────────── component ───────────────────────────
+// ─────────────────────────────── sub-components ───────────────────────────
+
+function StatusBadge({ status }: { status: SyncRunStatus }) {
+    const Icon = STATUS_ICON[status];
+    const cfg = STATUS_BADGE[status];
+    return (
+        <Badge
+            label={STATUS_LABEL[status]}
+            color={cfg.color}
+            bg={cfg.bg}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+        />
+    );
+}
+
+function AlertBox({ color, bg, border, icon: Icon, children }: {
+    color: string; bg: string; border: string;
+    icon: React.ComponentType<any>; children: React.ReactNode;
+}) {
+    return (
+        <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: 10, marginTop: 16 }}>
+            <Icon size={16} color={color} style={{ marginTop: 1, flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>{children}</div>
+        </div>
+    );
+}
+
+function SummaryCard({ label, value, tone }: { label: string; value: string; tone?: 'warn' }) {
+    const warn = tone === 'warn';
+    return (
+        <div style={{
+            border: `1px solid ${warn ? 'rgba(245,158,11,0.3)' : S.border}`,
+            borderRadius: 12, padding: '12px 16px',
+            background: warn ? 'rgba(245,158,11,0.06)' : '#fff',
+        }}>
+            <div style={{ fontFamily: 'Inter', fontSize: 11, fontWeight: 700, color: S.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4 }}>{label}</div>
+            <div style={{ fontFamily: 'Inter', fontSize: 14, fontWeight: 600, color: warn ? '#92400e' : S.ink }}>{value}</div>
+        </div>
+    );
+}
+
+function RunListItem({ run, accountLabel, onClick }: {
+    run: SyncRunRow; accountLabel: string; onClick: () => void;
+}) {
+    const [hovered, setHovered] = useState(false);
+    return (
+        <div
+            onClick={onClick}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+            style={{
+                display: 'flex', alignItems: 'center', minHeight: 60, padding: '0 20px',
+                borderBottom: `1px solid ${S.border}`, cursor: 'pointer',
+                background: hovered ? S.bg : '#fff', transition: 'background 0.1s', gap: 16,
+            }}
+        >
+            <div style={{ flexShrink: 0 }}>
+                <StatusBadge status={run.status} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'Inter', fontSize: 13 }}>
+                    <span style={{ fontWeight: 600, color: S.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{accountLabel}</span>
+                    <span style={{ color: S.muted }}>·</span>
+                    <span style={{ color: S.sub }}>{TRIGGER_LABEL[run.triggerType]}</span>
+                    {run.attemptNumber > 1 && (
+                        <span style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted }}>(попытка {run.attemptNumber}/{run.maxAttempts})</span>
+                    )}
+                </div>
+                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {run.syncTypes.map(t => SYNC_TYPE_LABEL[t] ?? t).join(', ') || '—'}
+                </div>
+                {run.status === 'BLOCKED' && run.blockedReason && (
+                    <div style={{ fontFamily: 'Inter', fontSize: 11, color: '#7c3aed', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Lock size={10} />{BLOCKED_REASON_TEXT[run.blockedReason]?.title ?? run.blockedReason}
+                    </div>
+                )}
+                {run.status === 'FAILED' && run.errorCode && (
+                    <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.red, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <AlertCircle size={10} />{ERROR_CODE_TEXT[run.errorCode] ?? run.errorCode}
+                    </div>
+                )}
+                {run.status === 'PARTIAL_SUCCESS' && (
+                    <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.amber, marginTop: 3 }}>
+                        Обработано {run.processedCount}, ошибок {run.errorCount}
+                    </div>
+                )}
+            </div>
+            <div style={{ flexShrink: 0, textAlign: 'right' }}>
+                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{formatDateTime(run.createdAt)}</div>
+                <div style={{ fontFamily: 'Inter', fontSize: 11, color: S.muted, marginTop: 2 }}>{formatDuration(run.durationMs)}</div>
+            </div>
+            <AlertCircle size={15} color={S.muted} style={{ flexShrink: 0, opacity: 0.4 }} />
+        </div>
+    );
+}
+
+function RunDetailView({ run, accountLabel, onRetry, canRetry, externalBlocked }: {
+    run: SyncRunDetail;
+    accountLabel: (id: string | null) => string;
+    onRetry: (id: string) => void;
+    canRetry: boolean;
+    externalBlocked: boolean;
+}) {
+    const isRetryEligible = (run.status === 'FAILED' || run.status === 'PARTIAL_SUCCESS') && run.attemptNumber < run.maxAttempts;
+    const blockedHint = run.blockedReason ? BLOCKED_REASON_TEXT[run.blockedReason] : null;
+    const errorHint = run.errorCode ? ERROR_CODE_TEXT[run.errorCode] : null;
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <Card>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                            <StatusBadge status={run.status} />
+                            <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{TRIGGER_LABEL[run.triggerType]}</span>
+                            {run.originRunId && (
+                                <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>
+                                    · попытка {run.attemptNumber} из {run.maxAttempts}
+                                </span>
+                            )}
+                        </div>
+                        <h2 style={{ fontFamily: 'Inter', fontSize: 18, fontWeight: 700, color: S.ink, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {accountLabel(run.accountId)}
+                        </h2>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, color: S.sub, marginTop: 4 }}>
+                            {run.syncTypes.map(t => SYNC_TYPE_LABEL[t] ?? t).join(', ') || '—'}
+                        </div>
+                    </div>
+                    {isRetryEligible && (
+                        <Btn
+                            variant="secondary"
+                            onClick={() => onRetry(run.id)}
+                            disabled={!canRetry}
+                            title={!canRetry ? (externalBlocked ? 'Повтор недоступен в текущем тарифном статусе' : 'Недостаточно прав') : ''}
+                        >
+                            {!canRetry ? <Lock size={14} /> : <RotateCcw size={14} />}
+                            Повторить
+                        </Btn>
+                    )}
+                </div>
+
+                {run.status === 'BLOCKED' && blockedHint && (
+                    <AlertBox color="#7c3aed" bg="rgba(124,58,237,0.06)" border="rgba(124,58,237,0.2)" icon={PauseCircle}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: '#4c1d95' }}>{blockedHint.title}</div>
+                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: '#6d28d9', marginTop: 4 }}>{blockedHint.hint}</div>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: '#7c3aed', marginTop: 6 }}>{run.blockedReason}</div>
+                    </AlertBox>
+                )}
+
+                {run.status === 'FAILED' && (
+                    <AlertBox color={S.red} bg="rgba(239,68,68,0.06)" border="rgba(239,68,68,0.2)" icon={XCircle}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: '#7f1d1d' }}>Запуск завершился с ошибкой</div>
+                        {errorHint && <div style={{ fontFamily: 'Inter', fontSize: 12, color: '#991b1b', marginTop: 4 }}>{errorHint}</div>}
+                        {run.errorCode && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: S.red, marginTop: 6 }}>{run.errorCode}</div>}
+                        {run.errorMessage && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: S.red, marginTop: 4, wordBreak: 'break-all' }}>{run.errorMessage}</div>}
+                        {run.nextAttemptAt && (
+                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: '#991b1b', marginTop: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Clock size={12} />Автоповтор: {formatDateTime(run.nextAttemptAt)}
+                            </div>
+                        )}
+                    </AlertBox>
+                )}
+
+                {run.status === 'PARTIAL_SUCCESS' && (
+                    <AlertBox color={S.amber} bg="rgba(245,158,11,0.06)" border="rgba(245,158,11,0.2)" icon={AlertTriangle}>
+                        <div style={{ fontFamily: 'Inter', fontSize: 13, color: '#92400e' }}>
+                            Часть элементов не была обработана. Подробности — в списке ниже.
+                        </div>
+                    </AlertBox>
+                )}
+            </Card>
+
+            {/* Summary cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+                <SummaryCard label="Создан" value={formatDateTime(run.createdAt)} />
+                <SummaryCard label="Длительность" value={formatDuration(run.durationMs)} />
+                <SummaryCard label="Обработано" value={String(run.processedCount)} />
+                <SummaryCard label="Ошибок" value={String(run.errorCount)} tone={run.errorCount > 0 ? 'warn' : undefined} />
+            </div>
+
+            {run.originRun && (
+                <div style={{ background: S.bg, border: `1px solid ${S.border}`, borderRadius: 10, padding: '10px 14px', fontFamily: 'Inter', fontSize: 12, color: S.sub }}>
+                    Этот запуск — повтор run <SkuTag>{run.originRun.id.slice(0, 8)}</SkuTag> (статус: {STATUS_LABEL[run.originRun.status]}).
+                </div>
+            )}
+
+            {/* Items */}
+            {run.items.length > 0 && (
+                <Card noPad>
+                    <div style={{ padding: '12px 20px', borderBottom: `1px solid ${S.border}`, background: S.bg, fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink }}>
+                        Проблемные элементы ({run.items.length})
+                    </div>
+                    {run.items.map(item => {
+                        const itemBadge =
+                            item.status === 'FAILED'   ? { color: S.red,   bg: 'rgba(239,68,68,0.08)' } :
+                            item.status === 'CONFLICT' ? { color: S.amber, bg: 'rgba(245,158,11,0.08)' } :
+                            { color: '#7c3aed', bg: 'rgba(124,58,237,0.08)' };
+                        return (
+                            <div key={item.id} style={{ padding: '12px 20px', borderBottom: `1px solid ${S.border}` }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                    <Badge label={item.status} color={itemBadge.color} bg={itemBadge.bg} />
+                                    <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{STAGE_LABEL[item.stage]}</span>
+                                    <span style={{ color: S.muted }}>·</span>
+                                    <span style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>{ITEM_TYPE_LABEL[item.itemType]}</span>
+                                </div>
+                                <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: S.ink, wordBreak: 'break-all' }}>{item.itemKey}</div>
+                                {item.error && (
+                                    <pre style={{ marginTop: 8, fontSize: 11, fontFamily: "'JetBrains Mono', monospace", background: S.bg, border: `1px solid ${S.border}`, borderRadius: 8, padding: '8px 12px', overflowX: 'auto' }}>
+                                        {JSON.stringify(item.error, null, 2)}
+                                    </pre>
+                                )}
+                            </div>
+                        );
+                    })}
+                </Card>
+            )}
+
+            {/* Conflicts */}
+            {run.conflicts.length > 0 && (
+                <Card noPad style={{ border: `1px solid rgba(245,158,11,0.3)` }}>
+                    <div style={{ padding: '12px 20px', borderBottom: `1px solid rgba(245,158,11,0.2)`, background: 'rgba(245,158,11,0.06)', fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: '#92400e' }}>
+                        Конфликты ({run.conflicts.length})
+                    </div>
+                    {run.conflicts.map(c => (
+                        <div key={c.id} style={{ padding: '12px 20px', borderBottom: `1px solid rgba(245,158,11,0.15)` }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                <Badge
+                                    label={c.resolvedAt ? 'Закрыт' : 'Открыт'}
+                                    color={c.resolvedAt ? S.green : S.amber}
+                                    bg={c.resolvedAt ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)'}
+                                />
+                                <span style={{ fontFamily: 'Inter', fontSize: 12, fontWeight: 600, color: S.ink }}>{c.conflictType}</span>
+                            </div>
+                            <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>
+                                {c.entityType}: <SkuTag>{c.entityId ?? '—'}</SkuTag>
+                            </div>
+                        </div>
+                    ))}
+                </Card>
+            )}
+
+            {run.items.length === 0 && run.conflicts.length === 0 && run.status === 'SUCCESS' && (
+                <div style={{ background: 'rgba(16,185,129,0.06)', border: `1px solid rgba(16,185,129,0.2)`, borderRadius: 10, padding: '14px 18px', fontFamily: 'Inter', fontSize: 13, color: '#065f46', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <CheckCircle2 size={16} color={S.green} />
+                    Все элементы обработаны успешно. Подробной построчной истории нет — это нормально для штатного запуска.
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ConflictsTabView({ conflicts, loading, filter, onFilterChange, onResolve, onOpenRun, canResolve }: {
+    conflicts: SyncConflictRow[];
+    loading: boolean;
+    filter: 'open' | 'resolved' | 'all';
+    onFilterChange: (f: 'open' | 'resolved' | 'all') => void;
+    onResolve: (id: string) => void;
+    onOpenRun: (runId: string) => void;
+    accountLabel: (id: string | null) => string;
+    canResolve: boolean;
+}) {
+    const FILTER_OPTIONS = [
+        { value: 'open', label: 'Открытые' },
+        { value: 'resolved', label: 'Закрытые' },
+        { value: 'all', label: 'Все' },
+    ] as const;
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 6 }}>
+                {FILTER_OPTIONS.map(f => (
+                    <Btn
+                        key={f.value}
+                        size="sm"
+                        variant={filter === f.value ? 'primary' : 'secondary'}
+                        onClick={() => onFilterChange(f.value)}
+                    >
+                        {f.label}
+                    </Btn>
+                ))}
+            </div>
+            <Card noPad>
+                {loading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                        <Spinner /> Загрузка…
+                    </div>
+                ) : conflicts.length === 0 ? (
+                    <EmptyState icon={CheckCircle2} title={filter === 'open' ? 'Открытых конфликтов нет' : 'Список пуст'} />
+                ) : (
+                    conflicts.map(c => (
+                        <div key={c.id} style={{ padding: '14px 20px', borderBottom: `1px solid ${S.border}`, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                    <Badge
+                                        label={c.resolvedAt ? 'Закрыт' : 'Открыт'}
+                                        color={c.resolvedAt ? S.green : S.amber}
+                                        bg={c.resolvedAt ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)'}
+                                    />
+                                    <span style={{ fontFamily: 'Inter', fontSize: 13, fontWeight: 600, color: S.ink }}>{c.conflictType}</span>
+                                </div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.sub }}>
+                                    {c.entityType}: <SkuTag>{c.entityId ?? '—'}</SkuTag>
+                                </div>
+                                <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, marginTop: 4 }}>
+                                    <button
+                                        onClick={() => onOpenRun(c.runId)}
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: S.blue, fontFamily: 'Inter', fontSize: 12, textDecoration: 'underline', padding: 0 }}
+                                    >
+                                        Запуск {c.runId.slice(0, 8)}…
+                                    </button>
+                                    <span style={{ margin: '0 6px' }}>·</span>
+                                    {formatDateTime(c.createdAt)}
+                                </div>
+                            </div>
+                            {!c.resolvedAt && canResolve && (
+                                <Btn variant="success" size="sm" onClick={() => onResolve(c.id)}>
+                                    Закрыть
+                                </Btn>
+                            )}
+                        </div>
+                    ))
+                )}
+            </Card>
+        </div>
+    );
+}
+
+function CreateRunModal({ accounts, accountId, setAccountId, types, setTypes, error, submitting, onClose, onSubmit }: {
+    accounts: AccountOption[];
+    accountId: string;
+    setAccountId: (v: string) => void;
+    types: string[];
+    setTypes: (v: string[]) => void;
+    error: string | null;
+    submitting: boolean;
+    onClose: () => void;
+    onSubmit: () => void;
+}) {
+    const AVAILABLE_TYPES = ['PULL_STOCKS', 'PULL_ORDERS', 'PULL_METADATA', 'PUSH_STOCKS', 'PULL_FINANCES_WB'];
+
+    const toggleType = (t: string) => {
+        if (types.includes(t)) setTypes(types.filter(x => x !== t));
+        else setTypes([...types, t]);
+    };
+
+    return (
+        <Modal open onClose={onClose} title="Запустить синхронизацию" width={440}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                    <FieldLabel>Подключение</FieldLabel>
+                    <HiSelect
+                        value={accountId}
+                        onChange={setAccountId}
+                        options={[
+                            { value: '', label: '— выберите —' },
+                            ...accounts.map(a => ({ value: a.id, label: `${a.label} (${MARKETPLACE_LABEL[a.marketplace] ?? a.marketplace})` })),
+                        ]}
+                        style={{ width: '100%' }}
+                    />
+                    {accounts.length === 0 && (
+                        <div style={{ fontFamily: 'Inter', fontSize: 12, color: S.muted, marginTop: 6 }}>
+                            Активных подключений нет. Перейдите в раздел «Подключения», чтобы добавить.
+                        </div>
+                    )}
+                </div>
+                <div>
+                    <FieldLabel>Что синхронизировать</FieldLabel>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {AVAILABLE_TYPES.map(t => (
+                            <label key={t} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontFamily: 'Inter', fontSize: 13, color: S.ink }}>
+                                <input
+                                    type="checkbox"
+                                    checked={types.includes(t)}
+                                    onChange={() => toggleType(t)}
+                                    style={{ accentColor: S.blue }}
+                                />
+                                {SYNC_TYPE_LABEL[t]}
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                {error && (
+                    <div style={{ background: 'rgba(239,68,68,0.06)', border: `1px solid rgba(239,68,68,0.2)`, borderRadius: 8, padding: '10px 14px', fontFamily: 'Inter', fontSize: 13, color: S.red }}>
+                        {error}
+                    </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 4 }}>
+                    <Btn variant="secondary" onClick={onClose}>Отмена</Btn>
+                    <Btn
+                        variant="primary"
+                        onClick={onSubmit}
+                        disabled={submitting || !accountId || types.length === 0}
+                    >
+                        {submitting && <Spinner size={14} color="#fff" />}
+                        Запустить
+                    </Btn>
+                </div>
+            </div>
+        </Modal>
+    );
+}
+
+// ─────────────────────────────── main component ───────────────────────────
 
 export default function SyncRuns() {
     const { activeTenant } = useAuth();
@@ -212,7 +588,6 @@ export default function SyncRuns() {
     const role = activeTenant?.role;
     const canTriggerSync = role === 'OWNER' || role === 'ADMIN';
 
-    // ─── runs list state
     const [runs, setRuns] = useState<SyncRunRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [filterStatus, setFilterStatus] = useState<SyncRunStatus | ''>('');
@@ -222,12 +597,10 @@ export default function SyncRuns() {
         total: 0, page: 1, limit: 20, lastPage: 1,
     });
 
-    // ─── detail
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [detail, setDetail] = useState<SyncRunDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
 
-    // ─── manual sync modal
     const [accounts, setAccounts] = useState<AccountOption[]>([]);
     const [showCreate, setShowCreate] = useState(false);
     const [createAccountId, setCreateAccountId] = useState<string>('');
@@ -235,7 +608,6 @@ export default function SyncRuns() {
     const [createSubmitting, setCreateSubmitting] = useState(false);
     const [createError, setCreateError] = useState<string | null>(null);
 
-    // ─── conflicts tab
     const [activeTab, setActiveTab] = useState<'runs' | 'conflicts'>('runs');
     const [conflicts, setConflicts] = useState<SyncConflictRow[]>([]);
     const [conflictsLoading, setConflictsLoading] = useState(false);
@@ -260,13 +632,9 @@ export default function SyncRuns() {
 
     const loadAccounts = useCallback(async () => {
         try {
-            const res = await axios.get('/marketplace-accounts', {
-                params: { lifecycleStatus: 'ACTIVE' },
-            });
-            setAccounts(res.data ?? []);
-        } catch {
-            // не критично
-        }
+            const res = await axios.get('/marketplace-accounts', { params: { lifecycleStatus: 'ACTIVE' } });
+            setAccounts(res.data?.data ?? []);
+        } catch { /* не критично */ }
     }, []);
 
     const loadConflicts = useCallback(async () => {
@@ -283,9 +651,7 @@ export default function SyncRuns() {
 
     useEffect(() => { loadRuns(); }, [loadRuns]);
     useEffect(() => { loadAccounts(); }, [loadAccounts]);
-    useEffect(() => {
-        if (activeTab === 'conflicts') loadConflicts();
-    }, [activeTab, loadConflicts]);
+    useEffect(() => { if (activeTab === 'conflicts') loadConflicts(); }, [activeTab, loadConflicts]);
 
     const openDetail = useCallback(async (id: string) => {
         setSelectedId(id);
@@ -302,21 +668,12 @@ export default function SyncRuns() {
     }, []);
 
     const submitCreateRun = useCallback(async () => {
-        if (!createAccountId) {
-            setCreateError('Выберите подключение.');
-            return;
-        }
-        if (createTypes.length === 0) {
-            setCreateError('Выберите хотя бы один тип синхронизации.');
-            return;
-        }
+        if (!createAccountId) { setCreateError('Выберите подключение.'); return; }
+        if (createTypes.length === 0) { setCreateError('Выберите хотя бы один тип синхронизации.'); return; }
         setCreateError(null);
         setCreateSubmitting(true);
         try {
-            const res = await axios.post('/sync/runs', {
-                accountId: createAccountId,
-                syncTypes: createTypes,
-            });
+            const res = await axios.post('/sync/runs', { accountId: createAccountId, syncTypes: createTypes });
             setShowCreate(false);
             setTopMessage({
                 kind: res.data.status === 'BLOCKED' ? 'warn' : 'ok',
@@ -325,15 +682,11 @@ export default function SyncRuns() {
                     : 'Синхронизация поставлена в очередь.',
             });
             await loadRuns();
-            // Сразу открыть карточку нового run.
             await openDetail(res.data.id);
         } catch (e: any) {
             const code = e?.response?.data?.code;
-            if (code === 'MARKETPLACE_ACCOUNT_NOT_FOUND') {
-                setCreateError('Подключение не найдено.');
-            } else {
-                setCreateError(e?.response?.data?.message ?? 'Не удалось создать запуск.');
-            }
+            if (code === 'MARKETPLACE_ACCOUNT_NOT_FOUND') setCreateError('Подключение не найдено.');
+            else setCreateError(e?.response?.data?.message ?? 'Не удалось создать запуск.');
         } finally {
             setCreateSubmitting(false);
         }
@@ -369,185 +722,173 @@ export default function SyncRuns() {
 
     const accountLabel = useCallback((id: string | null) => {
         if (!id) return '—';
-        const acc = accounts.find((a) => a.id === id);
-        return acc ? `${acc.label} (${acc.marketplace})` : id.slice(0, 8) + '…';
+        const acc = accounts.find(a => a.id === id);
+        return acc ? `${acc.label} (${MARKETPLACE_LABEL[acc.marketplace] ?? acc.marketplace})` : id.slice(0, 8) + '…';
     }, [accounts]);
 
-    // ───────────────────────── render: detail view ─────────────────────────
-
+    // ─── detail view
     if (selectedId) {
         return (
-            <div className="space-y-4">
-                <button
-                    onClick={() => { setSelectedId(null); setDetail(null); }}
-                    className="inline-flex items-center text-sm text-slate-600 hover:text-slate-900"
-                >
-                    <ArrowLeft className="h-4 w-4 mr-1" />
-                    К истории запусков
-                </button>
-
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <Btn variant="ghost" onClick={() => { setSelectedId(null); setDetail(null); }} style={{ alignSelf: 'flex-start' }}>
+                    <ArrowLeft size={14} /> К истории запусков
+                </Btn>
                 {detailLoading && (
-                    <div className="bg-white border border-slate-200 rounded-lg p-6 flex items-center text-slate-500 text-sm">
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Загрузка деталей…
-                    </div>
+                    <Card style={{ display: 'flex', alignItems: 'center', gap: 10, color: S.sub, fontSize: 13, fontFamily: 'Inter' }}>
+                        <Spinner /> Загрузка деталей…
+                    </Card>
                 )}
-
-                {detail && <RunDetailView
-                    run={detail}
-                    accountLabel={accountLabel}
-                    onRetry={submitRetry}
-                    canRetry={canTriggerSync && !externalBlocked}
-                    externalBlocked={externalBlocked}
-                />}
+                {detail && (
+                    <RunDetailView
+                        run={detail}
+                        accountLabel={accountLabel}
+                        onRetry={submitRetry}
+                        canRetry={canTriggerSync && !externalBlocked}
+                        externalBlocked={externalBlocked}
+                    />
+                )}
             </div>
         );
     }
 
-    // ───────────────────────── render: list view ─────────────────────────
+    // ─── list view
+    const msgColors = {
+        ok:   { color: S.green, bg: 'rgba(16,185,129,0.06)',  border: 'rgba(16,185,129,0.2)' },
+        warn: { color: S.amber, bg: 'rgba(245,158,11,0.06)',  border: 'rgba(245,158,11,0.2)' },
+        err:  { color: S.red,   bg: 'rgba(239,68,68,0.06)',   border: 'rgba(239,68,68,0.2)' },
+    };
+
+    const statusOptions = [
+        { value: '', label: 'Все статусы' },
+        ...(Object.keys(STATUS_LABEL) as SyncRunStatus[]).map(s => ({ value: s, label: STATUS_LABEL[s] })),
+    ];
+    const accountOptions = [
+        { value: '', label: 'Все подключения' },
+        ...accounts.map(a => ({ value: a.id, label: `${a.label} (${MARKETPLACE_LABEL[a.marketplace] ?? a.marketplace})` })),
+    ];
 
     return (
-        <div className="space-y-4">
-            {topMessage && (
-                <div className={`rounded-md border px-4 py-3 text-sm ${
-                    topMessage.kind === 'ok' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-                    topMessage.kind === 'warn' ? 'bg-amber-50 border-amber-200 text-amber-800' :
-                    'bg-red-50 border-red-200 text-red-800'
-                }`}>
-                    <button onClick={() => setTopMessage(null)} className="float-right text-xs">×</button>
-                    {topMessage.text}
-                </div>
-            )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {topMessage && (() => {
+                const c = msgColors[topMessage.kind];
+                return (
+                    <div style={{ background: c.bg, border: `1px solid ${c.border}`, borderRadius: 10, padding: '10px 16px', fontFamily: 'Inter', fontSize: 13, color: c.color, display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ flex: 1 }}>{topMessage.text}</span>
+                        <button onClick={() => setTopMessage(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                );
+            })()}
 
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Синхронизация</h1>
-                    <p className="text-sm text-slate-500 mt-1">История запусков, ошибки и конфликты по подключённым маркетплейсам.</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={loadRuns}
-                        className="inline-flex items-center px-3 py-2 text-sm border border-slate-300 rounded-md text-slate-700 hover:bg-slate-50"
+            <PageHeader
+                title="Синхронизация"
+                subtitle="История запусков, ошибки и конфликты по подключённым маркетплейсам."
+            >
+                <Btn variant="secondary" onClick={loadRuns}>
+                    <RefreshCw size={14} style={{ animation: loading ? 'spin 0.7s linear infinite' : 'none' }} />
+                    Обновить
+                </Btn>
+                {canTriggerSync && (
+                    <Btn
+                        variant="primary"
+                        onClick={() => { setShowCreate(true); setCreateError(null); }}
+                        disabled={externalBlocked}
+                        title={externalBlocked ? 'Запуск синхронизации недоступен в текущем тарифном статусе' : ''}
                     >
-                        <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
-                        Обновить
-                    </button>
-                    {canTriggerSync && (
-                        <button
-                            onClick={() => { setShowCreate(true); setCreateError(null); }}
-                            disabled={externalBlocked}
-                            title={externalBlocked ? 'Запуск синхронизации недоступен в текущем тарифном статусе' : ''}
-                            className="inline-flex items-center px-3 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                        >
-                            {externalBlocked ? <Lock className="h-4 w-4 mr-1.5" /> : <Plus className="h-4 w-4 mr-1.5" />}
-                            Запустить sync
-                        </button>
-                    )}
-                </div>
-            </div>
+                        {externalBlocked ? <Lock size={14} /> : <CheckCircle2 size={14} />}
+                        Запустить sync
+                    </Btn>
+                )}
+            </PageHeader>
 
             {/* Tabs */}
-            <div className="border-b border-slate-200">
-                <nav className="flex gap-6 -mb-px">
-                    <button
-                        onClick={() => setActiveTab('runs')}
-                        className={`pb-3 px-1 text-sm font-medium border-b-2 ${
-                            activeTab === 'runs' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-                        }`}
-                    >
-                        <ListTree className="h-4 w-4 inline mr-1.5" />
-                        История запусков
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('conflicts')}
-                        className={`pb-3 px-1 text-sm font-medium border-b-2 ${
-                            activeTab === 'conflicts' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-                        }`}
-                    >
-                        <AlertCircle className="h-4 w-4 inline mr-1.5" />
-                        Конфликты
-                    </button>
-                </nav>
+            <div style={{ display: 'flex', borderBottom: `1px solid ${S.border}`, gap: 0 }}>
+                {([
+                    { id: 'runs', label: 'История запусков', icon: ListTree },
+                    { id: 'conflicts', label: 'Конфликты', icon: AlertCircle },
+                ] as const).map(t => {
+                    const active = activeTab === t.id;
+                    const Icon = t.icon;
+                    return (
+                        <button
+                            key={t.id}
+                            onClick={() => setActiveTab(t.id)}
+                            style={{
+                                padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer',
+                                fontFamily: 'Inter', fontSize: 13, fontWeight: 500,
+                                color: active ? S.blue : S.sub,
+                                borderBottom: active ? `2px solid ${S.blue}` : '2px solid transparent',
+                                marginBottom: -1, display: 'flex', alignItems: 'center', gap: 6,
+                                transition: 'color 0.15s',
+                            }}
+                        >
+                            <Icon size={15} />{t.label}
+                        </button>
+                    );
+                })}
             </div>
 
             {activeTab === 'runs' && (
                 <>
                     {/* Filters */}
-                    <div className="bg-white border border-slate-200 rounded-lg p-4 flex flex-wrap items-end gap-3">
-                        <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Статус</label>
-                            <select
-                                value={filterStatus}
-                                onChange={(e) => { setFilterStatus(e.target.value as any); setPage(1); }}
-                                className="text-sm border border-slate-300 rounded px-3 py-1.5"
-                            >
-                                <option value="">Все</option>
-                                {(Object.keys(STATUS_LABEL) as SyncRunStatus[]).map((s) => (
-                                    <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                                ))}
-                            </select>
+                    <Card style={{ padding: '14px 20px' }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 }}>
+                            <div>
+                                <FieldLabel>Статус</FieldLabel>
+                                <HiSelect
+                                    value={filterStatus}
+                                    onChange={v => { setFilterStatus(v as any); setPage(1); }}
+                                    options={statusOptions}
+                                />
+                            </div>
+                            <div>
+                                <FieldLabel>Подключение</FieldLabel>
+                                <HiSelect
+                                    value={filterAccount}
+                                    onChange={v => { setFilterAccount(v); setPage(1); }}
+                                    options={accountOptions}
+                                />
+                            </div>
+                            <div style={{ marginLeft: 'auto', fontFamily: 'Inter', fontSize: 12, color: S.muted, alignSelf: 'center' }}>
+                                Всего: {meta.total}
+                            </div>
                         </div>
-                        <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Подключение</label>
-                            <select
-                                value={filterAccount}
-                                onChange={(e) => { setFilterAccount(e.target.value); setPage(1); }}
-                                className="text-sm border border-slate-300 rounded px-3 py-1.5"
-                            >
-                                <option value="">Все</option>
-                                {accounts.map((a) => (
-                                    <option key={a.id} value={a.id}>{a.label} ({a.marketplace})</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="ml-auto text-xs text-slate-500">
-                            Всего: {meta.total}
-                        </div>
-                    </div>
+                    </Card>
 
                     {/* List */}
-                    <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+                    <Card noPad>
+                        {/* Header row */}
+                        <div style={{ display: 'flex', alignItems: 'center', padding: '10px 4px', background: S.bg, borderBottom: `1px solid ${S.border}` }}>
+                            <div style={{ width: 120, padding: '0 16px' }}><TH>Статус</TH></div>
+                            <TH flex={3}>Подключение / Типы</TH>
+                            <TH flex={1} align="right">Дата / Длительность</TH>
+                            <div style={{ width: 32 }} />
+                        </div>
                         {loading ? (
-                            <div className="p-12 flex items-center justify-center text-slate-500 text-sm">
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Загрузка…
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '48px 0', fontFamily: 'Inter', fontSize: 13, color: S.muted }}>
+                                <Spinner /> Загрузка…
                             </div>
                         ) : runs.length === 0 ? (
-                            <div className="p-12 text-center text-slate-500 text-sm">
-                                История пуста. Запустите первую синхронизацию или дождитесь автоматического запуска.
-                            </div>
+                            <EmptyState icon={RefreshCw} title="История пуста" subtitle="Запустите первую синхронизацию или дождитесь автоматического запуска." />
                         ) : (
-                            <ul className="divide-y divide-slate-200">
-                                {runs.map((run) => (
-                                    <RunListItem
-                                        key={run.id}
-                                        run={run}
-                                        accountLabel={accountLabel(run.accountId)}
-                                        onClick={() => openDetail(run.id)}
-                                    />
-                                ))}
-                            </ul>
+                            runs.map(run => (
+                                <RunListItem
+                                    key={run.id}
+                                    run={run}
+                                    accountLabel={accountLabel(run.accountId)}
+                                    onClick={() => openDetail(run.id)}
+                                />
+                            ))
                         )}
-                    </div>
-
-                    {/* Pagination */}
-                    {meta.lastPage > 1 && (
-                        <div className="flex items-center justify-center gap-2 text-sm">
-                            <button
-                                disabled={page <= 1}
-                                onClick={() => setPage(page - 1)}
-                                className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
-                            >
-                                Назад
-                            </button>
-                            <span className="text-slate-600">Стр. {meta.page} из {meta.lastPage}</span>
-                            <button
-                                disabled={page >= meta.lastPage}
-                                onClick={() => setPage(page + 1)}
-                                className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
-                            >
-                                Вперёд
-                            </button>
-                        </div>
-                    )}
+                        {meta.lastPage > 1 && (
+                            <Pagination
+                                page={page}
+                                totalPages={meta.lastPage}
+                                onPage={setPage}
+                                total={meta.total}
+                                shown={runs.length}
+                            />
+                        )}
+                    </Card>
                 </>
             )}
 
@@ -564,10 +905,9 @@ export default function SyncRuns() {
                 />
             )}
 
-            {/* Create modal */}
             {showCreate && (
                 <CreateRunModal
-                    accounts={accounts.filter((a) => a.lifecycleStatus === 'ACTIVE')}
+                    accounts={accounts.filter(a => a.lifecycleStatus === 'ACTIVE')}
                     accountId={createAccountId}
                     setAccountId={setCreateAccountId}
                     types={createTypes}
@@ -578,411 +918,6 @@ export default function SyncRuns() {
                     onSubmit={submitCreateRun}
                 />
             )}
-        </div>
-    );
-}
-
-// ─────────────────────────────── subcomponents ─────────────────────────
-
-function StatusBadge({ status }: { status: SyncRunStatus }) {
-    const Icon = STATUS_ICON[status];
-    const animated = status === 'IN_PROGRESS' ? 'animate-spin' : '';
-    return (
-        <span className={`inline-flex items-center text-xs font-medium px-2 py-1 rounded ${STATUS_TONE[status]}`}>
-            <Icon className={`h-3 w-3 mr-1 ${animated}`} />
-            {STATUS_LABEL[status]}
-        </span>
-    );
-}
-
-function RunListItem({ run, accountLabel, onClick }: {
-    run: SyncRunRow;
-    accountLabel: string;
-    onClick: () => void;
-}) {
-    return (
-        <li>
-            <button
-                onClick={onClick}
-                className="w-full px-4 py-3 text-left hover:bg-slate-50 transition-colors flex items-center gap-4"
-            >
-                <div className="flex-shrink-0">
-                    <StatusBadge status={run.status} />
-                </div>
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium text-slate-900 truncate">{accountLabel}</span>
-                        <span className="text-slate-400">·</span>
-                        <span className="text-slate-600">{TRIGGER_LABEL[run.triggerType]}</span>
-                        {run.attemptNumber > 1 && (
-                            <span className="text-xs text-slate-500">(попытка {run.attemptNumber}/{run.maxAttempts})</span>
-                        )}
-                    </div>
-                    <div className="text-xs text-slate-500 mt-0.5 truncate">
-                        {run.syncTypes.map((t) => SYNC_TYPE_LABEL[t] ?? t).join(', ') || '—'}
-                    </div>
-                    {run.status === 'BLOCKED' && run.blockedReason && (
-                        <div className="text-xs text-violet-700 mt-1">
-                            <Lock className="h-3 w-3 inline mr-1" />
-                            {BLOCKED_REASON_TEXT[run.blockedReason]?.title ?? run.blockedReason}
-                        </div>
-                    )}
-                    {run.status === 'FAILED' && run.errorCode && (
-                        <div className="text-xs text-red-700 mt-1">
-                            <AlertCircle className="h-3 w-3 inline mr-1" />
-                            {ERROR_CODE_TEXT[run.errorCode] ?? run.errorCode}
-                        </div>
-                    )}
-                    {run.status === 'PARTIAL_SUCCESS' && (
-                        <div className="text-xs text-amber-700 mt-1">
-                            Обработано {run.processedCount}, ошибок {run.errorCount}
-                        </div>
-                    )}
-                </div>
-                <div className="flex-shrink-0 text-right">
-                    <div className="text-xs text-slate-500">{formatDateTime(run.createdAt)}</div>
-                    <div className="text-xs text-slate-400 mt-0.5">{formatDuration(run.durationMs)}</div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-slate-400 flex-shrink-0" />
-            </button>
-        </li>
-    );
-}
-
-function RunDetailView({ run, accountLabel, onRetry, canRetry, externalBlocked }: {
-    run: SyncRunDetail;
-    accountLabel: (id: string | null) => string;
-    onRetry: (id: string) => void;
-    canRetry: boolean;
-    externalBlocked: boolean;
-}) {
-    const isRetryEligible = (run.status === 'FAILED' || run.status === 'PARTIAL_SUCCESS') && run.attemptNumber < run.maxAttempts;
-    const blockedHint = run.blockedReason ? BLOCKED_REASON_TEXT[run.blockedReason] : null;
-    const errorHint = run.errorCode ? ERROR_CODE_TEXT[run.errorCode] : null;
-
-    return (
-        <div className="space-y-4">
-            <div className="bg-white border border-slate-200 rounded-lg p-5">
-                <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-3 mb-2">
-                            <StatusBadge status={run.status} />
-                            <span className="text-xs text-slate-500">{TRIGGER_LABEL[run.triggerType]}</span>
-                            {run.originRunId && (
-                                <span className="text-xs text-slate-500">
-                                    · попытка {run.attemptNumber} из {run.maxAttempts}
-                                </span>
-                            )}
-                        </div>
-                        <h2 className="text-lg font-semibold text-slate-900 truncate">
-                            {accountLabel(run.accountId)}
-                        </h2>
-                        <div className="text-sm text-slate-500 mt-1">
-                            {run.syncTypes.map((t) => SYNC_TYPE_LABEL[t] ?? t).join(', ') || '—'}
-                        </div>
-                    </div>
-                    <div className="flex-shrink-0">
-                        {isRetryEligible && (
-                            <button
-                                onClick={() => onRetry(run.id)}
-                                disabled={!canRetry}
-                                title={!canRetry ? (externalBlocked ? 'Повтор недоступен в текущем тарифном статусе' : 'Недостаточно прав') : ''}
-                                className="inline-flex items-center px-3 py-2 text-sm bg-amber-600 text-white rounded-md hover:bg-amber-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                            >
-                                {!canRetry ? <Lock className="h-4 w-4 mr-1.5" /> : <RotateCcw className="h-4 w-4 mr-1.5" />}
-                                Повторить
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {/* BLOCKED block — UX-критично: явно отделено от FAILED */}
-                {run.status === 'BLOCKED' && blockedHint && (
-                    <div className="mt-4 bg-violet-50 border border-violet-200 rounded-md p-4">
-                        <div className="flex items-start gap-2">
-                            <PauseCircle className="h-4 w-4 text-violet-700 mt-0.5 flex-shrink-0" />
-                            <div className="flex-1">
-                                <div className="text-sm font-medium text-violet-900">{blockedHint.title}</div>
-                                <div className="text-xs text-violet-700 mt-1">{blockedHint.hint}</div>
-                                <div className="text-xs text-violet-600 mt-2 font-mono">{run.blockedReason}</div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* FAILED block */}
-                {run.status === 'FAILED' && (
-                    <div className="mt-4 bg-red-50 border border-red-200 rounded-md p-4">
-                        <div className="flex items-start gap-2">
-                            <XCircle className="h-4 w-4 text-red-700 mt-0.5 flex-shrink-0" />
-                            <div className="flex-1">
-                                <div className="text-sm font-medium text-red-900">Запуск завершился с ошибкой</div>
-                                {errorHint && <div className="text-xs text-red-700 mt-1">{errorHint}</div>}
-                                {run.errorCode && <div className="text-xs text-red-600 mt-2 font-mono">{run.errorCode}</div>}
-                                {run.errorMessage && (
-                                    <div className="text-xs text-red-600 mt-1 font-mono break-all">{run.errorMessage}</div>
-                                )}
-                                {run.nextAttemptAt && (
-                                    <div className="text-xs text-red-700 mt-2">
-                                        <Clock className="h-3 w-3 inline mr-1" />
-                                        Автоповтор: {formatDateTime(run.nextAttemptAt)}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* PARTIAL_SUCCESS */}
-                {run.status === 'PARTIAL_SUCCESS' && (
-                    <div className="mt-4 bg-amber-50 border border-amber-200 rounded-md p-4">
-                        <div className="flex items-start gap-2">
-                            <AlertTriangle className="h-4 w-4 text-amber-700 mt-0.5 flex-shrink-0" />
-                            <div className="text-sm text-amber-900">
-                                Часть элементов не была обработана. Подробности — в списке ниже.
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Summary cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <SummaryCard label="Создан" value={formatDateTime(run.createdAt)} />
-                <SummaryCard label="Длительность" value={formatDuration(run.durationMs)} />
-                <SummaryCard label="Обработано" value={String(run.processedCount)} />
-                <SummaryCard label="Ошибок" value={String(run.errorCount)} tone={run.errorCount > 0 ? 'warn' : undefined} />
-            </div>
-
-            {run.originRun && (
-                <div className="bg-slate-50 border border-slate-200 rounded-md p-3 text-xs text-slate-600">
-                    Этот запуск — повтор run <span className="font-mono">{run.originRun.id.slice(0, 8)}</span> (статус: {STATUS_LABEL[run.originRun.status]}).
-                </div>
-            )}
-
-            {/* Items */}
-            {run.items.length > 0 && (
-                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
-                        Проблемные элементы ({run.items.length})
-                    </div>
-                    <ul className="divide-y divide-slate-200">
-                        {run.items.map((item) => (
-                            <li key={item.id} className="px-4 py-3 text-sm">
-                                <div className="flex items-center gap-2">
-                                    <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                                        item.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                                        item.status === 'CONFLICT' ? 'bg-amber-100 text-amber-800' :
-                                        'bg-violet-100 text-violet-800'
-                                    }`}>{item.status}</span>
-                                    <span className="text-xs text-slate-500">{STAGE_LABEL[item.stage]}</span>
-                                    <span className="text-xs text-slate-400">·</span>
-                                    <span className="text-xs text-slate-600">{ITEM_TYPE_LABEL[item.itemType]}</span>
-                                </div>
-                                <div className="font-mono text-xs text-slate-700 mt-1 break-all">{item.itemKey}</div>
-                                {item.error && (
-                                    <pre className="mt-2 text-xs bg-slate-50 border border-slate-200 rounded p-2 overflow-x-auto">
-{JSON.stringify(item.error, null, 2)}
-                                    </pre>
-                                )}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
-            {/* Conflicts */}
-            {run.conflicts.length > 0 && (
-                <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
-                    <div className="px-4 py-3 border-b border-amber-200 bg-amber-50 text-sm font-medium text-amber-900">
-                        Конфликты ({run.conflicts.length})
-                    </div>
-                    <ul className="divide-y divide-amber-200">
-                        {run.conflicts.map((c) => (
-                            <li key={c.id} className="px-4 py-3 text-sm">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium text-amber-800">{c.conflictType}</span>
-                                    {c.resolvedAt && (
-                                        <span className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">Закрыт</span>
-                                    )}
-                                </div>
-                                <div className="text-xs text-slate-600 mt-1">
-                                    {c.entityType}: <span className="font-mono">{c.entityId ?? '—'}</span>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
-            {run.items.length === 0 && run.conflicts.length === 0 && run.status === 'SUCCESS' && (
-                <div className="bg-emerald-50 border border-emerald-200 rounded-md p-4 text-sm text-emerald-800">
-                    Все элементы обработаны успешно. Подробной построчной истории нет — это нормально для штатного запуска.
-                </div>
-            )}
-        </div>
-    );
-}
-
-function SummaryCard({ label, value, tone }: { label: string; value: string; tone?: 'warn' }) {
-    return (
-        <div className={`border rounded-md p-3 ${tone === 'warn' ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-white'}`}>
-            <div className="text-xs text-slate-500">{label}</div>
-            <div className={`text-sm font-medium mt-1 ${tone === 'warn' ? 'text-amber-900' : 'text-slate-900'}`}>{value}</div>
-        </div>
-    );
-}
-
-function ConflictsTabView({ conflicts, loading, filter, onFilterChange, onResolve, onOpenRun, accountLabel, canResolve }: {
-    conflicts: SyncConflictRow[];
-    loading: boolean;
-    filter: 'open' | 'resolved' | 'all';
-    onFilterChange: (f: 'open' | 'resolved' | 'all') => void;
-    onResolve: (id: string) => void;
-    onOpenRun: (runId: string) => void;
-    accountLabel: (id: string | null) => string;
-    canResolve: boolean;
-}) {
-    return (
-        <div className="space-y-3">
-            <div className="flex items-center gap-2">
-                {(['open', 'resolved', 'all'] as const).map((f) => (
-                    <button
-                        key={f}
-                        onClick={() => onFilterChange(f)}
-                        className={`px-3 py-1.5 text-xs rounded ${
-                            filter === f ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
-                        }`}
-                    >
-                        {f === 'open' ? 'Открытые' : f === 'resolved' ? 'Закрытые' : 'Все'}
-                    </button>
-                ))}
-            </div>
-            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                {loading ? (
-                    <div className="p-12 flex items-center justify-center text-slate-500 text-sm">
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" /> Загрузка…
-                    </div>
-                ) : conflicts.length === 0 ? (
-                    <div className="p-12 text-center text-slate-500 text-sm">
-                        {filter === 'open' ? 'Открытых конфликтов нет.' : 'Список пуст.'}
-                    </div>
-                ) : (
-                    <ul className="divide-y divide-slate-200">
-                        {conflicts.map((c) => (
-                            <li key={c.id} className="px-4 py-3 text-sm">
-                                <div className="flex items-start justify-between gap-3">
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                                                c.resolvedAt ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                                            }`}>{c.resolvedAt ? 'Закрыт' : 'Открыт'}</span>
-                                            <span className="text-xs font-medium text-slate-700">{c.conflictType}</span>
-                                        </div>
-                                        <div className="text-xs text-slate-600">
-                                            {c.entityType}: <span className="font-mono">{c.entityId ?? '—'}</span>
-                                        </div>
-                                        <div className="text-xs text-slate-500 mt-1">
-                                            <button onClick={() => onOpenRun(c.runId)} className="underline hover:text-blue-700">
-                                                Запуск {c.runId.slice(0, 8)}…
-                                            </button>
-                                            <span className="mx-1">·</span>
-                                            {formatDateTime(c.createdAt)}
-                                        </div>
-                                    </div>
-                                    {!c.resolvedAt && canResolve && (
-                                        <button
-                                            onClick={() => onResolve(c.id)}
-                                            className="px-2.5 py-1 text-xs border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50"
-                                        >
-                                            Закрыть
-                                        </button>
-                                    )}
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                )}
-            </div>
-        </div>
-    );
-}
-
-function CreateRunModal({ accounts, accountId, setAccountId, types, setTypes, error, submitting, onClose, onSubmit }: {
-    accounts: AccountOption[];
-    accountId: string;
-    setAccountId: (v: string) => void;
-    types: string[];
-    setTypes: (v: string[]) => void;
-    error: string | null;
-    submitting: boolean;
-    onClose: () => void;
-    onSubmit: () => void;
-}) {
-    // §10/§13/§17: tenant full sync НЕ выводится в UI как MVP-функция.
-    const AVAILABLE_TYPES = ['PULL_STOCKS', 'PULL_ORDERS', 'PULL_METADATA', 'PUSH_STOCKS'];
-
-    const toggleType = (t: string) => {
-        if (types.includes(t)) setTypes(types.filter((x) => x !== t));
-        else setTypes([...types, t]);
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg max-w-md w-full">
-                <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-slate-900">Запустить синхронизацию</h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-slate-600">×</button>
-                </div>
-                <div className="p-5 space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Подключение</label>
-                        <select
-                            value={accountId}
-                            onChange={(e) => setAccountId(e.target.value)}
-                            className="w-full text-sm border border-slate-300 rounded px-3 py-2"
-                        >
-                            <option value="">— выберите —</option>
-                            {accounts.map((a) => (
-                                <option key={a.id} value={a.id}>{a.label} ({a.marketplace})</option>
-                            ))}
-                        </select>
-                        {accounts.length === 0 && (
-                            <div className="text-xs text-slate-500 mt-1">Активных подключений нет. Перейдите в раздел «Подключения», чтобы добавить.</div>
-                        )}
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Что синхронизировать</label>
-                        <div className="space-y-1.5">
-                            {AVAILABLE_TYPES.map((t) => (
-                                <label key={t} className="flex items-center text-sm">
-                                    <input
-                                        type="checkbox"
-                                        checked={types.includes(t)}
-                                        onChange={() => toggleType(t)}
-                                        className="mr-2"
-                                    />
-                                    {SYNC_TYPE_LABEL[t]}
-                                </label>
-                            ))}
-                        </div>
-                    </div>
-                    {error && (
-                        <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">{error}</div>
-                    )}
-                </div>
-                <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
-                    <button onClick={onClose} className="px-3 py-2 text-sm border border-slate-300 rounded text-slate-700 hover:bg-slate-50">Отмена</button>
-                    <button
-                        onClick={onSubmit}
-                        disabled={submitting || !accountId || types.length === 0}
-                        className="px-3 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed"
-                    >
-                        {submitting && <Loader2 className="h-4 w-4 mr-1.5 animate-spin inline" />}
-                        Запустить
-                    </button>
-                </div>
-            </div>
         </div>
     );
 }

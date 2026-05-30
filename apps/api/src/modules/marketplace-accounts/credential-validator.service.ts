@@ -81,7 +81,9 @@ export class CredentialValidator {
             );
             return { ok: true };
         } catch (err) {
-            return this._mapAxiosError(err as AxiosError);
+            const e = err as AxiosError;
+            this.logger.error(`[Ozon validate] status=${e.response?.status} body=${JSON.stringify(e.response?.data)}`);
+            return this._mapAxiosError(e);
         }
     }
 
