@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, ChevronUp, CheckCircle, Circle, SkipForward, ExternalLink, Trophy } from 'lucide-react';
+import { X, ChevronUp, CheckCircle, Circle, SkipForward, ExternalLink, Trophy, AlertCircle, Check } from 'lucide-react';
 import { onboardingApi, OnboardingState, OnboardingStep } from '../api/onboarding';
 
 const BLOCK_LABELS: Record<string, string> = {
@@ -14,37 +14,58 @@ export default function OnboardingWidget() {
     const navigate = useNavigate();
     const [state, setState] = useState<OnboardingState | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
     const [isOpen, setIsOpen] = useState(true);
     const [showCongrats, setShowCongrats] = useState(false);
+    const [actionError, setActionError] = useState<string | null>(null);
 
-    useEffect(() => {
+    const showError = (msg: string) => {
+        setActionError(msg);
+        setTimeout(() => setActionError(null), 3000);
+    };
+
+    const loadState = () => {
+        setLoadError(false);
+        setLoading(true);
         onboardingApi.getState()
             .then((s) => {
                 setState(s);
                 if (s?.status === 'CLOSED') setIsOpen(false);
             })
-            .catch(() => {})
+            .catch(() => setLoadError(true))
             .finally(() => setLoading(false));
-    }, []);
+    };
+
+    useEffect(() => { loadState(); }, []);
 
     const handleClose = async () => {
-        try { await onboardingApi.close(); } catch { /* non-fatal */ }
-        setIsOpen(false);
-        setState((prev) => prev ? { ...prev, status: 'CLOSED' } : prev);
+        try {
+            await onboardingApi.close();
+            setIsOpen(false);
+            setState((prev) => prev ? { ...prev, status: 'CLOSED' } : prev);
+        } catch {
+            showError('Не удалось свернуть');
+        }
     };
 
     const handleReopen = async () => {
         try {
             const s = await onboardingApi.reopen();
             if (s) setState(s);
-        } catch { /* non-fatal */ }
-        setIsOpen(true);
+            setIsOpen(true);
+        } catch {
+            showError('Не удалось возобновить');
+        }
     };
 
     const handleComplete = async () => {
-        try { await onboardingApi.complete(); } catch { /* non-fatal */ }
-        setShowCongrats(true);
-        setTimeout(() => { setShowCongrats(false); setState(null); }, 3000);
+        try {
+            await onboardingApi.complete();
+            setShowCongrats(true);
+            setTimeout(() => { setShowCongrats(false); setState(null); }, 3000);
+        } catch {
+            showError('Не удалось завершить настройку');
+        }
     };
 
     const handleCtaClick = async (step: OnboardingStep) => {
@@ -52,8 +73,17 @@ export default function OnboardingWidget() {
         try {
             const updated = await onboardingApi.updateStep(step.key, 'viewed');
             if (updated) setState(updated);
-        } catch { /* non-fatal */ }
+        } catch { /* навигация происходит в любом случае */ }
         navigate(step.ctaLink);
+    };
+
+    const handleDoneClick = async (step: OnboardingStep) => {
+        try {
+            const updated = await onboardingApi.updateStep(step.key, 'done');
+            if (updated) setState(updated);
+        } catch {
+            showError('Не удалось отметить шаг');
+        }
     };
 
     if (showCongrats) {
@@ -65,7 +95,23 @@ export default function OnboardingWidget() {
         );
     }
 
-    if (loading || !state || state.status === 'COMPLETED') return null;
+    if (loading) return null;
+
+    if (loadError) {
+        return (
+            <div className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50">
+                <button
+                    onClick={loadState}
+                    className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm px-4 py-2.5 rounded-full shadow-lg transition-colors"
+                >
+                    <AlertCircle className="h-4 w-4 text-amber-500" />
+                    <span>Онбординг недоступен — повторить</span>
+                </button>
+            </div>
+        );
+    }
+
+    if (!state || state.status === 'COMPLETED') return null;
 
     const { progress } = state;
     const completed = progress.done + progress.skipped;
@@ -113,10 +159,22 @@ export default function OnboardingWidget() {
                 </div>
             )}
 
+            {/* Action error banner */}
+            {actionError && (
+                <div className="px-4 py-2 bg-red-50 border-b border-red-100">
+                    <p className="text-xs text-red-600">{actionError}</p>
+                </div>
+            )}
+
             {/* Steps */}
             <div className="py-1 max-h-64 overflow-y-auto">
                 {state.steps.map((step) => (
-                    <StepRow key={step.key} step={step} onCtaClick={() => handleCtaClick(step)} />
+                    <StepRow
+                        key={step.key}
+                        step={step}
+                        onCtaClick={() => handleCtaClick(step)}
+                        onDoneClick={() => handleDoneClick(step)}
+                    />
                 ))}
             </div>
 
@@ -135,10 +193,15 @@ export default function OnboardingWidget() {
     );
 }
 
-function StepRow({ step, onCtaClick }: { step: OnboardingStep; onCtaClick: () => void }) {
+function StepRow({ step, onCtaClick, onDoneClick }: {
+    step: OnboardingStep;
+    onCtaClick: () => void;
+    onDoneClick: () => void;
+}) {
     const isDone = step.status === 'DONE';
     const isSkipped = step.status === 'SKIPPED';
     const faded = isDone || isSkipped;
+    const showDoneButton = !faded && step.status === 'VIEWED' && !step.autoCompleteEvent && !step.isCtaBlocked;
 
     return (
         <div className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${faded ? '' : 'hover:bg-slate-50'}`}>
@@ -154,6 +217,15 @@ function StepRow({ step, onCtaClick }: { step: OnboardingStep; onCtaClick: () =>
             <p className={`flex-1 text-sm min-w-0 truncate ${faded ? 'line-through text-slate-400' : 'text-slate-700'}`}>
                 {step.title}
             </p>
+            {showDoneButton && (
+                <button
+                    onClick={onDoneClick}
+                    className="flex-shrink-0 p-1 text-green-500 hover:text-green-700 transition-colors"
+                    title="Отметить выполненным"
+                >
+                    <Check className="h-3.5 w-3.5" />
+                </button>
+            )}
             {!faded && !step.isCtaBlocked && step.ctaLink && (
                 <button
                     onClick={onCtaClick}
